@@ -458,6 +458,10 @@ fn res_imports() {
                         content = read_file(path);
                     }
                     if str_len(content) == 0 {
+                        path = "src/runtime/" + fs_path + ".cr";
+                        content = read_file(path);
+                    }
+                    if str_len(content) == 0 {
                         path = fs_path + ".cr";
                         content = read_file(path);
                     }

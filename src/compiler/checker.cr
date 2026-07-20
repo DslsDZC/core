@@ -37,6 +37,7 @@ fn init_builtins() {
     bi_add("load8", TI_INT);
     bi_add("store8", TI_INT);
     bi_add("load64", TI_INT);
+    bi_add("r64", TI_INT);
     bi_add("alloc", TI_STR);
     bi_add("get_arg", TI_STR);
     bi_add("w32", TI_UNIT);
@@ -1399,6 +1400,19 @@ fn infer_expr(node: int) -> int {
                 }
                 return sym_type(si);  // return type
             }
+            // Check runtime builtins (no .cr body, implemented in rt.s)
+            bi : ., mut = 0;
+            loop {
+                if bi >= g_rt_builtin_count { break; }
+                if r64(g_rt_builtin_names, bi * 8) == func_ni {
+                    return r64(g_rt_builtin_ret_types, bi * 8);
+                }
+                bi = bi + 1;
+            }
+            // Not found in symbol table or builtins — report error
+            name := istr_get(func_ni);
+            check_error(EC_N_FUNC, "Undefined function '" + name + "'", ast_line(node), ast_col(node));
+            return TI_NEVER;
         }
         // Infer arg types (for side effects)
         an : ., mut = first_arg;
@@ -1648,6 +1662,7 @@ fn infer_expr(node: int) -> int {
                     if fi >= si_field_count(si) { break; }
                     if si_field_name(si, fi) == field_ni {
                         ast_set_data(node, fi);  // store field index for ir_gen
+                        ast_set_c(node, struct_ni);  // store struct name for ELF backend
                         // Resolve field type, substituting generic params if needed
                         ft_node := si_field_type_node(si, fi);
                         if ft_node >= 0 {

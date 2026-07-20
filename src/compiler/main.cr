@@ -24,11 +24,10 @@ fn read_source_file(path: string) -> string {
 }
 
 fn read_project_dir(dir: string) -> string {
-    cfg := load_project(dir);
-    g_source_dir = cfg.source_dir;
-    if str_len(cfg.main_source) > 0 {
-        print_project_info(cfg);
-        return cfg.main_source;
+    source := load_project(dir);
+    g_source_dir = g_project_source_dir;
+    if str_len(source) > 0 {
+        return source;
     }
     println("error: no main.cr found in directory");
     return "";

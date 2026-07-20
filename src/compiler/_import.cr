@@ -16,10 +16,14 @@ import module
 import toml
 import project
 import os
+import fmt
 import io
 import interp
 import dump
 import ext_mgr
 import ext_safety
 import pass
+import opt
+import rt
+import main
 import entry
