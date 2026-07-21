@@ -2,78 +2,66 @@
 
 ## 已完成
 
-### P0（2026-07-23）
-- **ELF struct/array/enum 寻址修复**：`emit_instr()` 的 disp32 写入补上当前指令基址 `pos`，修复字段、常量索引和 enum tag 位移写到 ELF 缓冲区错误位置的问题。
-- **变量数组索引修复**：修正 `IR_LOAD_INDEX_VAR` 的 REX.X，以及 `IR_STORE_INDEX_VAR` 的 REX/ModRM/SIB 寄存器角色。
-- **corec2 自举阻塞解除**：全新构建验证 `corec2 --help`、tokenizer/check 和 `corec2 -> corec3` 均正常。
-- **O1 自举稳定性验证**：完整 `corec -> corec2 -> corec3` 在 O0/O1 下均成功，产物可继续 check/build。
-- **原生回归测试**：新增 struct 读写、array 常量/变量索引读写、enum tag 与 O1 aggregate ELF 运行测试。
+### P0 全量修复（2026-07-23, PR #16, RhineIris）
+- **ELF struct/array/enum 寻址修复**：`emit_instr()` 的 disp32 写入补上当前指令基址 `pos`
+- **变量数组索引修复**：修正 `IR_LOAD_INDEX_VAR`/`IR_STORE_INDEX_VAR` 的 REX/ModRM/SIB
+- **corec2 自举阻塞解除**：corec2 --help、tokenizer/check 和 corec2→corec3 均正常
+- **O1 自举稳定性**：corec→corec2→corec3 在 O0/O1 下均成功
+- **原生回归测试**：struct、array、enum tag、O1 aggregate ELF
 
-### 本阶段（2025-07-17 大规模修复）
-- **Token 冲突修复**: T_YIELD/T_INTERFACE(67→97), T_UNSAFE/T_COLON_EQ(68→98)
-- **Lexer 关键字补全**: 补充 flow, yield, interface, type, mod, as, auto, fileid, move, in, None, Some, unit 共 14 个
-- **解释器修复**:
-  - 结构体字段访问（LOAD_FIELD/STORE_FIELD ptr+offset 解引用）
-  - 数组索引/修改（LOAD_INDEX/STORE_INDEX/LOAD_INDEX_VAR/STORE_INDEX_VAR）
-  - 动态堆分配（ALLOC_STRUCT/ALLOC_ARRAY 真正分配内存）
-- **ELF 后端 BSS 修复**:
-  - BSS 地址自动计算（基于实际 cp + 4096，确保在代码段后）
-  - `return 42` → 正常工作 ✅
-  - 函数调用 → 正确传参/返回 ✅
-  - type 别名 → 正确解析 ✅
-
-### 本阶段（PR #9 合并后，2025-07-09）
-- tokenizer 参数化 `tokenize(_src: string)` — 不依赖全局 `g_source` BSS 地址
-- `cur_char_at(src, pos, max_len)` / `peek_at()` 替代 `cur_char()`/`peek()`
-- `g_extra_lets` drain 修复（`g_global_let_count` 递增）— 批量声明不再丢失
-- ELF 后端 rip_patch 复位（`res_labels` 后清空 scratch 污染）
-- 诊断非致命 warning
-- `ir_gen_globals()` 全局去重
-- `.ccr v3` 格式 + key-value 元数据段
-- 寄存器分配（线性扫描，14 regs）
-- 指令编码去魔数化（`emit_rex`/`emit_modrm`/`emit_sib`）
-- 单遍 backpatching
-- 多轮 ELF 编码 bug 修复（store8 al→dl, argv 寄存器, REX 编码等）
-- `emit_alloc_body` `globals_size` 参数（堆在全局变量之后）
-
-### 之前完成
-- 全部 `[int; MAX_*]` → 动态 byte buffer
-- 字符串长度 header、lexer int-based char
-- EXPR_ARG 链表、SYM_SO_FN 生存期、函数名精简（358 处）
-- RawRef\<T\> 方案定稿、Zed 扩展
-- Panic handler（`src/stdlib/panic.cr`）
-- Arena 内存模型设计（`docs/memory-model.md`）
-
-## 编译器扩展系统
-- **ext_mgr.cr**: 插件注册表 + 钩子调度 | `ext_reg(hook, plugin_id)`, `ext_dispatch_*()`
-- **ext_safety.cr**: 安全检查插件 | `CORE_SAFE=1` 启用，监听 `EXT_HOOK_ARRAY_ACCESS`
-- **pass.cr**: 钩子调度器 | `pass_before_array_access()` 分发到已注册插件
-- **未来**: `.so` 动态加载插件（架构已留好）
-
-## 标准库新增
-- **trace.cr**: `trace_assert()`, `trace_dbg()` 运行时诊断
-- **assert.cr**: `assert()`, `assert_eq()`, `debug_assert()`, `unreachable()`, `todo()`, `check_bounds()`
+### 本阶段（2025-07-22 自举链修复 + 后端项目化）
+- **前端自举贯通**: corec2 → corec10 全线贯通 ✅
+- **import/module 修复**: import opt/rt/main，搜索路径加 runtime/compiler
+- **project.cr 重构**: 全局变量代替 ProjectConfig 结构体返回
+- **checker 强化**: 未定义函数报 EC_N_FUNC；添加 r64 内建
+- **后端项目化**: src/arch/linux/ld/ 独立项目（Core.toml + _import.cr + main.cr）
 
 ## 剩余工作
 
-### 1. 解释器局限
+### 1. 后端自举
+corearch 作为独立项目已可构建（`build src/arch/linux/ld/`），但生成的 corearch 运行时除零崩溃（SIGFPE）。
+
+堆栈信息：
+- `build/corearch`（Python 引导版）处理 .ccr 正常工作
+- `build/corec build src/arch/linux/ld/` 构建出新 corearch
+- 新 corearch 处理 .ccr 时在 Phase 3 完成前 SIGFPE（`idiv r11`，r11=0）
+- 地址：`0x420479`，`then_1298+256`
+- r11 从 `[rbp-0x128]` 加载，值为 0
+
+尝试过的修复：
+- `e2_w32(buf, cp, fo)` → `e2_w32(buf, pos+cp, fo)`：PR #16 已修，struct 对了但除零仍在
+- `res_labels()` 调用：SIGSEGV（`r64(NULL, 24)`），堆损坏追不到源头
+- scratch buffer 64→256：无效
+- `g_x86_is_global` 预分配：无效
+- 页面对齐/BSS 改 modulo：治标不治本
+
+可能的方向：
+- `res_labels()` 里 `emit_instr(scratch, 0)` 走完整发射路径，期间某些全局数组未分配或已被损坏
+- 尝试不用 `scratch` 而是单独写一个纯 sizing 的循环（不调 `emit_instr`）
+- 或等更熟悉 ELF 后端的人排查 `then_1286` 处的 `r64(NULL, 24)` 访问
+
+### 2. 解释器局限
 - **for 循环**: label/branch 与 dataflow 顺序执行不兼容
-- **递归/跨函数调用**: inline 执行不支持 IR_CALL（仅 main→callee 单层可用）
-- **字符串**: syscall3 在解释器返回 0，print/str_len 等不可用
+- **递归/跨函数调用**: inline 执行不支持 IR_CALL
 - **泛型函数**: 类型检查通过但解释器返回 255
 
-### 2. go 并发 + flow + yield
-解释器数据流图不包含 IR_SPAWN/CALL 节点。
+### 3. go/flow/yield 并发
+- 数据流图不包含 IR_SPAWN/CALL 节点
 
-### 3. 标准库补全
-- 字符串操作（split/join/replace）
-- JSON 序列化
-- 集合类完整实现
+### 4. 标准库补全
+- 字符串操作、JSON 序列化、集合类
 
 ## 架构规划
 
-### Arena 内存模型
-见 `docs/memory-model.md`。堆按数据流子图划分独立 Arena，指针碰撞分配，游标重置回收。
+### 指针安全模型
+见 `docs/pointer-model.md`。裸指针 + 数据流图 provenance 推导，编译器自动验证，退路 `unsafe`。
 
-### RawRef\<T\>
-unsafe fn 域内可用，方法式读写/算术，null 允许（UB）。
+### Arena 内存模型
+见 `docs/memory-model.md`。堆按数据流子图划分独立 Arena，指针碰撞分配，游标重置回收。Arena 边界对应数据流子图边界，不是独立的概念——由图的推导给出。
+
+### 文档更新
+- `docs/pointer-model.md` — 新写，指针安全完整设计
+- `docs/language-syntax.md` — 指针语法已更新
+- `docs/memory-model.md` — RawRef 已替换为通用 unsafe 引用
+- `docs/dataflow-design.md` — 新增指针安全章节
+- `docs/project-book.md` — 新增指针安全章节

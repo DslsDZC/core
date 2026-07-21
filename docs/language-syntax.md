@@ -5,7 +5,8 @@ Core 语言语法
 ## 设计哲学
 
 - 类型自动推导，所有权由编译器管理，并发原语仅两个关键字。
-- 无指针、无未定义行为，高级结构完整保留到编译后端，供验证与静态分析。
+- 裸指针，和 C 一样自由，编译器通过数据流图自动验证安全。
+- 编译时执行由数据流图自动推导，无需关键字。`@comptime` 提供"算不了就报错"的保证。
 - requires / ensures 规约与函数体并列，可选编写，参与静态检查。
 - 同步调用与 go/await 并发构造统一映射为数据流图。
 
@@ -21,11 +22,16 @@ Core 语言语法
 ## 关键字
 fn struct enum interface impl type mut move go await flow auto
 if else match for loop return break continue
-pub mod import as unsafe
+pub mod import as unsafe comptime
 requires ensures old result self Self
 true false unit None Some
 
-注意：* 不作为指针语法，-> 仅用于返回类型，& 仅用于借用引用（不允许取地址运算）。
+注意：* 用于解引用指针，-> 仅用于返回类型，& 取地址。指针安全由数据流图自动验证，详见 `docs/pointer-model.md`。
+
+`@` 开头的是编译器内建原语，不通过标准库实现：
+- `@typeInfo` `@field` `@hasField` `@fields` `@sizeOf` `@alignOf` — 类型内省
+- `@comptime` `@inline` `@unroll` `@section` — 编译控制
+- `@no_bounds_check` `@fast` — 安全检查（unsafe 范畴）
 
 ---
 
@@ -202,23 +208,71 @@ addr := 0x1000_u64;
 count := 100_i32;
 ```
 
-### 3.3 引用
+### 3.3 指针
 
-- &T —— 不可变借用
-- &mut T —— 可变借用，独占
-
-引用不是地址，不能算术运算，不能从整数强转。
+Core 的指针是裸地址，和 C 一样自由，但编译器通过数据流图自动验证安全。
 
 ```core
-x := 5;
-r := &x;        // r: &int
-y : ., mut = 10;
-rm := &mut y;   // rm: &mut int
+p := &arr[0];      // 取地址，编译器记下 provenance
+p = p + n;         // 偏移，随便算
+x := *p;           // 解引用，编译器验证 offset ∈ [0, len)
+ptr := cast<int*>(addr);  // 显式转换
 ```
 
-使用引用与被引用对象完全相同，无需解引用操作符。
+指针安全基于数据流图的 provenance 推导，详见 `docs/pointer-model.md`。
 
-### 3.4 可选类型
+### 3.4 编译时执行
+
+Core 的编译时执行以`数据流图的自动推导为主，`@comptime` 兜底为辅。
+
+```core
+// 自动推导——图看见输入全是常量，自动编译期执行
+x := fibonacci(40);
+cfg := read_file("config.toml");
+z := arr[3];            // offset 已知，编译期消错
+
+// 强制——算不了就报错
+@comptime {
+    x := fibonacci(40);
+    cfg := read_file("config.toml");
+}
+```
+
+详见 `docs/comptime.md`。
+
+### 3.5 @ 内建原语
+
+`@` 开头的标识符是编译器内建的能力入口，不通过标准库实现。分三类：
+
+**元数据查询**——编译期查询类型信息，零运行时开销：
+
+```core
+@sizeOf(T)            // 类型大小
+@alignOf(T)           // 类型对齐
+@fields(T)            // 字段名列表
+@field(T, name)       // 字段偏移和类型
+@hasField(T, name)    // 字段是否存在
+@typeInfo(T)          // 完整类型结构
+```
+
+**编译控制**——不改变语义，只改变编译方式：
+
+```core
+@inline(fn)           // 提示内联
+@unroll(n)            // 展开循环
+@section(name)        // 指定代码段
+@comptime(expr)       // 强制编译期执行
+```
+
+**安全检查**——unsafe 范畴，调用方自己保证：
+
+```core
+@no_bounds_check      // 跳过边界检查
+```
+
+详见 `docs/at-intrinsics.md`。
+
+### 3.6 可选类型
 
 ```core
 maybe: int? = Some(5);

@@ -101,13 +101,15 @@ Arena 方案的核心前提：**子图内分配的引用不会逃逸到子图之
 3. **全局逃逸禁止**：Arena A 内分配的对象不能赋值给全局变量
 4. **跨 Arena 引用禁止**：Arena A 内的指针不能指向 Arena B 内的对象
 
-### 例外：RawRef\<T\>
+### 例外：跨 Arena 引用
 
-以下情况允许跨 Arena 引用，但必须在 `unsafe` 块中显式声明：
+跨 Arena 引用（Arena A 的指针指向 Arena B 的数据）需要 `unsafe`，和所有数据流图无法追踪 provenance 的情况一样。详见 `docs/pointer-model.md`。
 
-- 内核级共享数据结构（如进程控制块）
-- 硬件寄存器映射
-- 跨 Arena 的只读共享
+```core
+unsafe {
+    ref := &arena_b.data;  // 跨 Arena 引用，编译器无法自动验证
+}
+```
 
 `unsafe` 块在此处的作用不是"关掉检查"，而是"我知道这违反规则，但我保证安全"。
 

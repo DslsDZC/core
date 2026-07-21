@@ -617,12 +617,6 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
         do2 := g2_slot(d);
         if s1 >= 0 {
             isg : ., mut = r64(g_x86_is_global, s1 * 8);
-            if s1 >= 690 && s1 <= 710 {
-                print("  DBG LOAD s1="); print(int_str(s1));
-                print(" cap="); print(int_str(g_x86_global_cap));
-                print(" isg="); print_i(isg);
-                println("");
-            }
             if isg != 0 {
                 grow_rip_patch(g_x86_rip_patch_count + 1);
                 w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, pos + cp + 3);

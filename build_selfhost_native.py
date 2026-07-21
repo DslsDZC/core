@@ -158,6 +158,7 @@ def main():
             'src/compiler/dyn_arr.cr',
             'src/arch/linux/ld/sizes.cr',
             'src/arch/linux/ld/instr.cr',
+            'src/arch/linux/ld/resolve.cr',
             'src/arch/linux/ld/elf.cr',
             'src/arch/linux/ld/ld.cr',
             'src/compiler/ccr_io.cr',

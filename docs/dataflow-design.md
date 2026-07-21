@@ -166,3 +166,15 @@ Core 的数据流图可以高效映射到多种底层硬件：
 ## 结论
 
 Core 的数据流执行模型将并发原语（go、await、flow、recv、yield）统一为图结构——同一张图同时服务于运行时调度、编译期分析和形式化验证。
+
+## 7. 指针安全
+
+数据流图的另一个消费端是指针安全验证。图中每个值的出生节点记录了它的来源（provenance）。
+
+```
+ALLOC(arr[16]) ──→ ADDR(&arr[0]) ──→ ADD(p + n) ──→ DEREF(*p)
+                      ↓                  ↓              ↓
+                  provenance=arr    offset=n       验证 offset < 16
+```
+
+编译器在 DEREF 节点处自动验证当前偏移是否在分配范围内。从 ALLOC 到 DEREF 的路径就是安全证明。不需要 borrow checker、Arena tag、或 RawRef 等额外概念。详见 `docs/pointer-model.md`。
