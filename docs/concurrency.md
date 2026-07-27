@@ -2,7 +2,7 @@
 
 ## 设计原则
 
-- **只有一张图。** go/flow/yield/await 都是图上的节点和边，不是额外的运行时概念。
+- **只有一张图。** go/flow/yield/await/walk 都是图上的节点和边，不是额外的运行时概念。
 - **有 OS 用 OS 线程，无 OS 抢占式时间片。** 没有 actor、没有 CSP、没有 async/await 关键字。
 
 ## 原语
@@ -67,47 +67,25 @@ v = await c;        // 等待 counter 输出下一个值
 
 `await` 在图上是一个同步点：当前节点等待目标子图的输出边就绪。
 
-### 组合使用
+### walk
+
+在节点间移动执行，状态在移动过程中保留。
 
 ```core
-flow worker(id: int) -> int {
-    loop {
-        result := compute(id);
-        yield result;
-    }
-}
-
-fn main() {
-    w1 := go worker(1);
-    w2 := go worker(2);
-
-    v1 := await w1;
-    v2 := await w2;
-    println(v1 + v2);
+walker process(data: [int]) {
+    result := compute(data);       // 当前节点上执行
+    step @("node2");               // 移动到 node2，状态保留
+    save(result);                  // 在 node2 上存储
+    step @("node3");               // 移动到 node3
+    report(result);                // 在 node3 上输出
 }
 ```
 
-### 与静态类型的边界
+`walk` 激活一个 walker 实例。walker 不是在新节点上启动新执行——而是将当前执行上下文（栈、局部变量）序列化后传输到目标节点继续执行。
 
-```core
-flow producer() -> int {
-    yield 42;
-}
+`step` 暂停当前 walker，将状态传输到目标节点，在目标节点上恢复执行。
 
-c := go producer();
-x : int := await c;    // ✅ 类型匹配
-y : string := await c; // 编译错误：int 不能赋给 string
-```
-
-```core
-flow producer() -> dyn {
-    if cond { yield 42; }
-    else    { yield "hello"; }
-}
-
-c := go producer();
-x := await c;           // x 是 dyn，运行时确定
-```
+走完的 walker 和 flow 一样可以被 `await`。
 
 ## 图上的表示
 
@@ -119,6 +97,9 @@ yield val    → 暂停当前节点，值沿输出边传递
 
 await c      → 等待目标节点的输出边有值
                边就绪 → 节点继续
+
+walk fn()    → 创建 walker 实例
+step @("n")  → 序列化当前上下文，传输到目标节点，恢复
 ```
 
 ```
@@ -127,19 +108,24 @@ await c      → 等待目标节点的输出边有值
                          │  ctx │──→ yield 2 ───→ await
                          │  ctx │──→ yield 3 ───→ await
                          └──────┘
-每个 go 创建独立上下文
-每个 yield 产生一个输出值
+
+                         ┌──────┐         ┌──────┐         ┌──────┐
+        walk process() ─→│node1  │──step──→│node2  │──step──→│node3  │
+                         │ state │         │ state │         │ state │
+                         └──────┘         └──────┘         └──────┘
 ```
 
 ## 与其它模型的对应
 
-| Core | OS 线程 | Go goroutine | Python generator |
-|------|---------|-------------|-----------------|
-| `flow` | 函数 | `func` | `def` |
-| `go` | `pthread_create` | `go` | — |
-| `yield` | — | 无直接对应 | `yield` |
-| `await` | `pthread_join` | `wg.Wait` | — |
+| Core | OS 线程 | Go goroutine | Erlang |
+|------|---------|-------------|--------|
+| `flow` | 函数 | `func` | `spawn` |
+| `go` | `pthread_create` | `go` | `spawn` |
+| `yield` | — | — | — |
+| `await` | `pthread_join` | `wg.Wait` | `receive` |
+| `walk` | 线程迁移（已废弃） | — | 无直接对应 |
+| `step` | — | — | — |
 
 ## 当前状态
 
-词法和解析器已支持 `flow`、`go`、`yield`、`await` 关键字。图上的子图实例化、节点暂停/恢复尚未完全实现。
+词法和解析器已支持 `flow`、`go`、`yield`、`await` 关键字。`walker` 和 `step` 尚未实现。图上的子图实例化、节点暂停/恢复、跨节点状态传输尚未完全实现。
