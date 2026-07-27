@@ -45,7 +45,7 @@ unsafe {
 }
 ```
 
-用户不需要学习 borrow lifetime、RawRef、Arena tag 等概念，不需要 `@ptrFromInt` 之类的内置函数。指针的操作和 C 一样自由。
+用户不需要学习 borrow lifetime、RawRef、Arena tag 等概念，不需要 `@ptrFromInt` 之类的内置函数。指针的操作和 C 一样自由。动态类型（`dyn`）作为类型标注时，指针的行为也由图自动管理。
 
 ## Pass 1: PointerAnalysis
 
