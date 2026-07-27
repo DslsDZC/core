@@ -175,7 +175,7 @@ fn layout() {
 // Emit — write chunk data to output buffer
 // ============================================================
 
-fn w32s(buf: string, pos: int, v: int) { uv : ., mut = v; if uv < 0 { uv = uv + 4294967296; } w32(buf, pos, uv); }
+fn w32s(buf: string, pos: int, v: int) { w32(buf, pos, v); }
 
 fn emit(buf: string, total: int, is_so: int) {
     // Zero buffer
@@ -313,7 +313,10 @@ fn emit(buf: string, total: int, is_so: int) {
             pi : ., mut = 0; loop { if pi >= g_plt_count { break; }
                 ro := p+pi*24;
                 w64(buf,ro,gv3+24+pi*8);
-                w64(buf,ro+8,(pi+1)*4294967296+7);
+                rinfo := pi + 1;
+                rinfo = rinfo * 65536;
+                rinfo = rinfo * 65536 + 7;
+                w64(buf,ro+8,rinfo);
                 w64(buf,ro+16,0);
                 pi=pi+1; } }
         i = i + 1; } }

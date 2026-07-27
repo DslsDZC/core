@@ -1,5 +1,13 @@
 # 更新日志
 
+## 2026-07-27
+### [fix] complete self-hosted corearch backend
+- Remove out-of-range 2^31/2^32 literals from backend encoding and use signed-safe 32/64-bit byte writers.
+- Fix signed CCR operand decoding so sentinel values remain negative across bootstrap stages.
+- Include v3 optimization metadata in CCR size calculation and validate metadata bounds while loading.
+- Give optimization metadata independent 64-byte slots with capacity tracking and copy-on-grow.
+- Add a three-stage corearch bootstrap regression with byte-identical output, O0/O2 CCR loading, and native ELF execution.
+
 ## 2026-07-23
 ### [fix] complete P0 native aggregate and self-host regressions
 - Fix disp32 emission to use the current instruction base for struct fields, constant array indices, enum tags, and enum construction.

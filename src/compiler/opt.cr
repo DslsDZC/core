@@ -287,14 +287,15 @@ fn alloc_registers() {
             ei : ., mut = g_opt_meta_count;
             grow_opt_meta(ei + 1);
             // Write key(u32) + data_len(u32) header using store8
-            store8(g_opt_meta, ei*16, 0); store8(g_opt_meta, ei*16+1, 0);
-            store8(g_opt_meta, ei*16+2, 0); store8(g_opt_meta, ei*16+3, 0);  // OPT_KEY_REG_ASSIGN=0
+            eo := ei * OPT_META_STRIDE;
+            store8(g_opt_meta, eo, 0); store8(g_opt_meta, eo+1, 0);
+            store8(g_opt_meta, eo+2, 0); store8(g_opt_meta, eo+3, 0);  // OPT_KEY_REG_ASSIGN=0
             dl : ., mut = 4 + rc * 8;
-            store8(g_opt_meta, ei*16+4, dl%256); store8(g_opt_meta, ei*16+5, (dl/256)%256);
-            store8(g_opt_meta, ei*16+6, (dl/65536)%256); store8(g_opt_meta, ei*16+7, (dl/16777216)%256);
+            store8(g_opt_meta, eo+4, dl%256); store8(g_opt_meta, eo+5, (dl/256)%256);
+            store8(g_opt_meta, eo+6, (dl/65536)%256); store8(g_opt_meta, eo+7, (dl/16777216)%256);
             // Write count
-            store8(g_opt_meta, ei*16+8, rc%256); store8(g_opt_meta, ei*16+9, (rc/256)%256);
-            store8(g_opt_meta, ei*16+10, (rc/65536)%256); store8(g_opt_meta, ei*16+11, (rc/16777216)%256);
+            store8(g_opt_meta, eo+8, rc%256); store8(g_opt_meta, eo+9, (rc/256)%256);
+            store8(g_opt_meta, eo+10, (rc/65536)%256); store8(g_opt_meta, eo+11, (rc/16777216)%256);
             // Write pairs: [var_idx(u32), reg(u32)]...
             di : ., mut = 12;  // after header(8) + count(4)
             vi = 0;
@@ -302,10 +303,10 @@ fn alloc_registers() {
                 rn := r64(var_reg, vi * 8);
                 if rn >= 0 {
                     vw := vs + vi;
-                    store8(g_opt_meta, ei*16+di, vw%256); store8(g_opt_meta, ei*16+di+1, (vw/256)%256);
-                    store8(g_opt_meta, ei*16+di+2, (vw/65536)%256); store8(g_opt_meta, ei*16+di+3, (vw/16777216)%256);
-                    store8(g_opt_meta, ei*16+di+4, rn%256); store8(g_opt_meta, ei*16+di+5, (rn/256)%256);
-                    store8(g_opt_meta, ei*16+di+6, (rn/65536)%256); store8(g_opt_meta, ei*16+di+7, (rn/16777216)%256);
+                    store8(g_opt_meta, eo+di, vw%256); store8(g_opt_meta, eo+di+1, (vw/256)%256);
+                    store8(g_opt_meta, eo+di+2, (vw/65536)%256); store8(g_opt_meta, eo+di+3, (vw/16777216)%256);
+                    store8(g_opt_meta, eo+di+4, rn%256); store8(g_opt_meta, eo+di+5, (rn/256)%256);
+                    store8(g_opt_meta, eo+di+6, (rn/65536)%256); store8(g_opt_meta, eo+di+7, (rn/16777216)%256);
                     di = di + 8;
                 }
             vi = vi + 1; }
@@ -487,7 +488,7 @@ fn optimize_all() {
     // pass_cse skipped — causes GPF in self-compiled binary
     if g_opt_level >= 2 {
         pass_cse();
-        alloc_registers();  // TODO: fix g_opt_meta corruption in ELF backend
+        alloc_registers();
         pass_stack_share();
     }
 }

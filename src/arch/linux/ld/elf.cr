@@ -15,10 +15,7 @@ fn r16(buf: string, pos: int) -> int { return bu8(buf,pos) + bu8(buf,pos+1)*256;
 TEXT_BASE : int = 4194304;  // 0x400000 - base address of code segment
 
 fn w8_signed(buf: string, pos: int, val: int) {
-    uv : ., mut = val;
-    if uv < 0 { uv = uv + 4294967296; }
-    w8(buf, pos, uv % 256); w8(buf, pos+1, (uv/256) % 256);
-    w8(buf, pos+2, (uv/65536) % 256); w8(buf, pos+3, (uv/16777216) % 256);
+    w32(buf, pos, val);
 }
 
 // Emit alloc bump allocator function body
@@ -734,8 +731,11 @@ fi = 0; loop { if fi >= g_ir_func_count { break; }
             rel := target_va - lea_end_va;
             w32(buf, ppos, rel);
             // Verify write: read back and check
-            rbv := bu8(buf,ppos) + bu8(buf,ppos+1)*256 + bu8(buf,ppos+2)*65536 + bu8(buf,ppos+3)*16777216;
-            if rbv >= 2147483648 { rbv = rbv - 4294967296; }
+            rb0 := bu8(buf, ppos); rb1 := bu8(buf, ppos + 1);
+            rb2 := bu8(buf, ppos + 2); rb3 := bu8(buf, ppos + 3);
+            rbv : ., mut = rb0 + rb1 * 256 + rb2 * 65536;
+            if rb3 >= 128 { rbv = rbv + (rb3 - 256) * 16777216; }
+            else { rbv = rbv + rb3 * 16777216; }
             if rbv != rel && gvi >= 0 && gvi < 10 {
                 print("  MISMATCH ppos="); print(int_str(ppos));
                 print(" rel="); print(int_str(rel));

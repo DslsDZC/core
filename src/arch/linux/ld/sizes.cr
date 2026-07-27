@@ -15,7 +15,7 @@ fn sz_mov() -> int { return 3; }
 fn sz_ld(o: int) -> int { if o >= E2_REG_SLOT_BASE { return 3; } if o >= -128 && o <= 127 { return 4; } return 7; }
 fn sz_st(o: int) -> int { if o >= E2_REG_SLOT_BASE { return 3; } if o >= -128 && o <= 127 { return 4; } return 7; }
 fn sz_li(o: int, v: int) -> int {
-    if v < -2147483648 || v >= 2147483648 {
+    if v < -2147483647 - 1 || v > 2147483647 {
         if o >= -128 && o <= 127 { return 14; }  // mov rax,imm64(10) + mov [rbp+disp8],rax(4)
         return 17;  // mov rax,imm64(10) + mov [rbp+disp32],rax(7)
     }
