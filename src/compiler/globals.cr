@@ -109,7 +109,7 @@ g_x86_alloc_patch_pos : string, mut;    g_x86_alloc_patch_cap : int, mut; g_x86_
 // Optimization levels and metadata (extensible key-value store)
 g_opt_level : int, mut;     // 0=none, 1=regalloc, 2=stackshare, 3=cse
 g_opt_meta : string, mut;   // metadata buffer for .ccr v3+
-g_opt_meta_count : int, mut;
+g_opt_meta_count : int, mut; g_opt_meta_cap : int, mut;
 
 // Plugin extension registry: tags and return types from .so/stdlib plugins
 // Each entry: 24 bytes = [ns_ni, name_ni, data_ni]

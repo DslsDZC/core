@@ -9,6 +9,14 @@
 - **O1 自举稳定性**：corec→corec2→corec3 在 O0/O1 下均成功
 - **原生回归测试**：struct、array、enum tag、O1 aggregate ELF
 
+### 后端自举修复（2026-07-27）
+- **corearch 自举贯通**：解除 Phase 3 的 `SIGFPE`/`SIGSEGV`，stage1 → stage2 → stage3 可连续发射且二进制逐字节一致
+- **64 位编码修复**：后端不再使用会被 CCR i32 截断的 `2147483648`/`4294967296` 字面量，`w32`/`w64` 正确编码有符号值
+- **CCR 有符号字段修复**：`buf_read_i32()` 显式符号扩展，避免 `-1` 被当作 `4294967295` 变量下标
+- **CCR 大小修复**：变量条目按实际 12 字节计算，并纳入 v3 优化元数据大小，不再截断文件尾
+- **优化元数据修复**：独立 64 字节槽位、capacity 和扩容复制，O2 寄存器分配 metadata 可序列化并由自举后端读取
+- **后端回归测试**：新增三阶段自举、字节一致、O0/O2 CCR 和原生 ELF 运行验证
+
 ### 本阶段（2025-07-22 自举链修复 + 后端项目化）
 - **前端自举贯通**: corec2 → corec10 全线贯通 ✅
 - **import/module 修复**: import opt/rt/main，搜索路径加 runtime/compiler
@@ -18,37 +26,15 @@
 
 ## 剩余工作
 
-### 1. 后端自举
-corearch 作为独立项目已可构建（`build src/arch/linux/ld/`），但生成的 corearch 运行时除零崩溃（SIGFPE）。
-
-堆栈信息：
-- `build/corearch`（Python 引导版）处理 .ccr 正常工作
-- `build/corec build src/arch/linux/ld/` 构建出新 corearch
-- 新 corearch 处理 .ccr 时在 Phase 3 完成前 SIGFPE（`idiv r11`，r11=0）
-- 地址：`0x420479`，`then_1298+256`
-- r11 从 `[rbp-0x128]` 加载，值为 0
-
-尝试过的修复：
-- `e2_w32(buf, cp, fo)` → `e2_w32(buf, pos+cp, fo)`：PR #16 已修，struct 对了但除零仍在
-- `res_labels()` 调用：SIGSEGV（`r64(NULL, 24)`），堆损坏追不到源头
-- scratch buffer 64→256：无效
-- `g_x86_is_global` 预分配：无效
-- 页面对齐/BSS 改 modulo：治标不治本
-
-可能的方向：
-- `res_labels()` 里 `emit_instr(scratch, 0)` 走完整发射路径，期间某些全局数组未分配或已被损坏
-- 尝试不用 `scratch` 而是单独写一个纯 sizing 的循环（不调 `emit_instr`）
-- 或等更熟悉 ELF 后端的人排查 `then_1286` 处的 `r64(NULL, 24)` 访问
-
-### 2. 解释器局限
+### 1. 解释器局限
 - **for 循环**: label/branch 与 dataflow 顺序执行不兼容
 - **递归/跨函数调用**: inline 执行不支持 IR_CALL
 - **泛型函数**: 类型检查通过但解释器返回 255
 
-### 3. go/flow/yield 并发
+### 2. go/flow/yield 并发
 - 数据流图不包含 IR_SPAWN/CALL 节点
 
-### 4. 标准库补全
+### 3. 标准库补全
 - 字符串操作、JSON 序列化、集合类
 
 ## 架构规划

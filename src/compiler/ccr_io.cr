@@ -29,15 +29,11 @@ fn bw_byte(val: int, shift: int) -> int {
 }
 
 fn buf_write_u32(buf: string, pos: int, val: int) {
-    store8(buf, pos,     bw_byte(val, 0));
-    store8(buf, pos + 1, bw_byte(val, 8));
-    store8(buf, pos + 2, bw_byte(val, 16));
-    store8(buf, pos + 3, bw_byte(val, 24));
+    w32(buf, pos, val);
 }
 
 fn buf_write_i32(buf: string, pos: int, val: int) {
-    if val < 0 { val = val + 4294967296; }  // two's complement
-    buf_write_u32(buf, pos, val);
+    w32(buf, pos, val);
 }
 
 fn buf_read_u32(buf: string, pos: int) -> int {
@@ -49,9 +45,13 @@ fn buf_read_u32(buf: string, pos: int) -> int {
 }
 
 fn buf_read_i32(buf: string, pos: int) -> int {
-    val := buf_read_u32(buf, pos);
-    if val >= 2147483648 { return val - 4294967296; }
-    return val;
+    b0 := load8(buf, pos);
+    b1 := load8(buf, pos + 1);
+    b2 := load8(buf, pos + 2);
+    b3 := load8(buf, pos + 3);
+    val := b0 + b1 * 256 + b2 * 65536;
+    if b3 >= 128 { return val + (b3 - 256) * 16777216; }
+    return val + b3 * 16777216;
 }
 
 // --- Size calculation ---
@@ -70,7 +70,7 @@ fn calc_ccr_size() -> int {
 
     sz = sz + g_ir_func_count * 28;       // func meta
     sz = sz + g_ir_instr_count * 24;       // instrs
-    sz = sz + g_ir_var_count * 16;         // vars
+    sz = sz + g_ir_var_count * 12;         // vars
     sz = sz + g_ir_str_const_count * 4;    // str_consts
 
     // structs
@@ -101,6 +101,15 @@ fn calc_ccr_size() -> int {
 
     // globals: count + pairs of (name_idx, var_idx) = 8 bytes each
     sz = sz + 4 + g_ir_global_count * 8;
+
+    // optimization metadata: count + [key, data_len, data]
+    sz = sz + 4;
+    mi : ., mut = 0;
+    loop {
+        if mi >= g_opt_meta_count { break; }
+        sz = sz + 8 + r32(g_opt_meta, mi * OPT_META_STRIDE + 4);
+        mi = mi + 1;
+    }
 
     return sz;
 }
@@ -243,13 +252,14 @@ fn save_ccr(path: string) -> int {
     mi : ., mut = 0;
     loop {
         if mi >= g_opt_meta_count { break; }
-        mk := r32(g_opt_meta, mi * 16);       // key (u8 padded to u64)
-        md_len := r32(g_opt_meta, mi * 16 + 4); // data length
+        mo := mi * OPT_META_STRIDE;
+        mk := r32(g_opt_meta, mo);       // key (u8 padded to u64)
+        md_len := r32(g_opt_meta, mo + 4); // data length
         buf_write_u32(buf, pos, mk); pos = pos + 4;
         buf_write_u32(buf, pos, md_len); pos = pos + 4;
         di : ., mut = 0;
         loop { if di >= md_len { break; }
-            store8(buf, pos, load8(g_opt_meta, mi * 16 + 8 + di));
+            store8(buf, pos, load8(g_opt_meta, mo + 8 + di));
             pos = pos + 1;
             di = di + 1;
         }
@@ -483,18 +493,22 @@ fn load_ccr(data: string, fsize: int) -> int {
     // Optimization metadata (version >= 3)
     g_opt_meta_count = 0;
     if ver >= 3 {
+        if pos + 4 > fsize { return -1; }
         mc := buf_read_u32(data, pos); pos = pos + 4;
         mi : ., mut = 0;
         loop { if mi >= mc { break; }
+            if pos + 8 > fsize { return -1; }
             mk := buf_read_u32(data, pos); pos = pos + 4;
             md_len := buf_read_u32(data, pos); pos = pos + 4;
+            if md_len > OPT_META_STRIDE - 8 || pos + md_len > fsize { return -1; }
             // Allocate and store entry
             grow_opt_meta(mi + 1);
-            w32(g_opt_meta, mi * 16, mk);
-            w32(g_opt_meta, mi * 16 + 4, md_len);
+            mo := mi * OPT_META_STRIDE;
+            w32(g_opt_meta, mo, mk);
+            w32(g_opt_meta, mo + 4, md_len);
             di : ., mut = 0;
             loop { if di >= md_len { break; }
-                store8(g_opt_meta, mi * 16 + 8 + di, load8(data, pos));
+                store8(g_opt_meta, mo + 8 + di, load8(data, pos));
                 pos = pos + 1;
                 di = di + 1;
             }

@@ -26,13 +26,17 @@ fn r32(buf: string, pos: int) -> int {
     else { v = v + b3 * 16777216; }
     return v; }
 fn w64(buf: string, pos: int, val: int) {
-    // Split 64-bit val into two 32-bit halves without 4294967296 constant
-    lo16 := val % 65536; hi16 := val / 65536;
-    mid16 := hi16 % 65536; hi_hi16 := hi16 / 65536;
-    lo : ., mut = lo16 + mid16 * 65536;
-    hi : ., mut = hi_hi16;
-    if val < 0 { lo = lo; hi = -1; }
-    w32(buf,pos,lo); w32(buf,pos+4,hi); }
+    cur : ., mut = val;
+    i : ., mut = 0;
+    loop {
+        if i >= 8 { break; }
+        byte : ., mut = cur % 256;
+        if byte < 0 { byte = byte + 256; }
+        store8(buf, pos + i, byte);
+        cur = (cur - byte) / 256;
+        i = i + 1;
+    }
+}
 fn r64(buf: string, pos: int) -> int {
     lo := r32(buf,pos); hi := r32(buf,pos+4);
     hi_part := hi * 65536; hi_part = hi_part * 65536;
@@ -599,15 +603,14 @@ fn grow_func_cp(needed: int) {
     g_x86_func_cp = nb; g_x86_func_cp_cap = nc; }
 
 fn grow_opt_meta(needed: int) {
-    // Each entry: 12 bytes fixed header (key+data_len) + data (variable)
-    // g_opt_meta_count = number of entries (not capacity)
-    if needed < g_opt_meta_count { return; }
-    // Always allocate generously: entries * 128 = enough for header + small data
-    nb : ., mut = alloc((needed + 8) * 128);
-    if g_opt_meta_count > 0 {
-        // Copy old entries (no-op for now since grow only expands)
-    }
-    g_opt_meta = nb; }
+    if needed <= g_opt_meta_cap { return; }
+    nc : ., mut = g_opt_meta_cap * 2;
+    if nc < 16 { nc = 16; }
+    if nc < needed { nc = needed + 16; }
+    nb := alloc(nc * OPT_META_STRIDE);
+    _dyncpy(g_opt_meta, g_opt_meta_count * OPT_META_STRIDE, nb);
+    g_opt_meta = nb; g_opt_meta_cap = nc;
+}
 fn grow_func_code_sz(needed: int) {
     if needed < g_x86_func_code_sz_cap { return; }
     nc : ., mut = g_x86_func_code_sz_cap * 2; if nc < 64 { nc = 64; } if nc < needed { nc = needed + 64; }

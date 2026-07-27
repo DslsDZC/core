@@ -26,14 +26,15 @@ fn g2_init() {
 fn get_reg_for_var(var_idx: int) -> int {
     mi : ., mut = 0;
     loop { if mi >= g_opt_meta_count { break; }
-        mk := r32(g_opt_meta, mi * 16);
+        mo := mi * OPT_META_STRIDE;
+        mk := r32(g_opt_meta, mo);
         if mk == OPT_KEY_REG_ASSIGN {
-            data_len := r32(g_opt_meta, mi * 16 + 4);
+            data_len := r32(g_opt_meta, mo + 4);
             di : ., mut = 4;  // skip count u32, pairs start at +4
             loop { if di >= data_len { break; }
-                vi := r32(g_opt_meta, mi * 16 + 8 + di);
+                vi := r32(g_opt_meta, mo + 8 + di);
                 if vi == var_idx {
-                    return r32(g_opt_meta, mi * 16 + 8 + di + 4);
+                    return r32(g_opt_meta, mo + 8 + di + 4);
                 }
                 di = di + 8;
             }
@@ -86,13 +87,10 @@ fn g2_rodata_sz() -> int {
 fn e2_w8(buf: string, pos: int, val: int) { store8(buf, pos, val % 256); }
 fn e2_w16(buf: string, off: int, val: int) { e2_w8(buf, off, val % 256); e2_w8(buf, off+1, (val/256) % 256); }
 fn e2_w32(buf: string, pos: int, val: int) -> int {
-    uv : ., mut = val;
-    if uv < 0 { uv = uv + 4294967296; }  // two's complement for negative rel32
-    e2_w8(buf, pos, uv % 256); e2_w8(buf, pos+1, (uv/256) % 256);
-    e2_w8(buf, pos+2, (uv/65536) % 256); e2_w8(buf, pos+3, (uv/16777216) % 256);
+    w32(buf, pos, val);
     return 4;
 }
-fn e2_w64(buf: string, pos: int, val: int) -> int { e2_w32(buf, pos, val); e2_w32(buf, pos+4, val/4294967296); return 8; }
+fn e2_w64(buf: string, pos: int, val: int) -> int { w64(buf, pos, val); return 8; }
 
 // ── Encoding primitives (computed, no magic numbers) ──
 // REX byte: 0100 WRXB — computed from W/R/X/B flags (0 or 1 each)
@@ -168,12 +166,11 @@ fn e2_st(b: string, p: int, r: int, o: int) -> int {
 fn e2_li(b: string, p: int, o: int, v: int) -> int {
     cp := p;
     // mov [rbp+disp], imm64 — two-step for values outside signed 32-bit range
-    if v < -2147483648 || v >= 2147483648 {
+    if v < -2147483647 - 1 || v > 2147483647 {
         // Step 1: mov rax, imm64 (REX.W + 0xB8 MOV r, imm + rax + 8B imm)
         cp = cp + emit_rex(b, cp, 1, 0, 0, 0);
         e2_w8(b, cp, 184); cp = cp + 1;  // 0xB8 MOV r, imm (reg=0→rax)
-        cp = cp + e2_w32(b, cp, v);
-        cp = cp + e2_w32(b, cp, v/4294967296);
+        cp = cp + e2_w64(b, cp, v);
         // Step 2: mov [rbp+disp], rax (REX.W + 0x89 MOV r/m, r)
         cp = cp + emit_rex(b, cp, 1, 0, 0, 0);
         e2_w8(b, cp, 137); cp = cp + 1;
