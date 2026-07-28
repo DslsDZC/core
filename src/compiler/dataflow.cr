@@ -253,7 +253,8 @@ fn df_graph_to_dot() -> string {
         if ni >= g_df_node_count { break; }
         n_op := r64(g_df_nodes, ni * ESZ_DFNODE + OFF_DF_OPCODE);
         n_dest := r64(g_df_nodes, ni * ESZ_DFNODE + OFF_DF_DEST);
-        label : ., mut = df_opcode_name(n_op);
+        n_s3 := r64(g_df_nodes, ni * ESZ_DFNODE + OFF_DF_S3);
+        label : ., mut = df_opcode_name(n_op, n_s3);
         if n_dest >= 0 {
             vname := get_ir_var_name(n_dest);
             if str_len(vname) > 0 {
@@ -278,9 +279,14 @@ fn df_graph_to_dot() -> string {
     return dot;
 }
 
-fn df_opcode_name(opcode: int) -> string {
+fn df_opcode_name(opcode: int, s3: int) -> string {
     if opcode == IR_CONST { return "const"; }
-    if opcode == IR_BINARY { return "binary"; }
+    if opcode == IR_BINARY {
+        if s3 == OP_PTR_ADD  { return "ptr_add"; }
+        if s3 == OP_PTR_SUB  { return "ptr_sub"; }
+        if s3 == OP_PTR_DIFF { return "ptr_diff"; }
+        return "binary";
+    }
     if opcode == IR_UNARY { return "unary"; }
     if opcode == IR_CALL { return "call"; }
     if opcode == IR_RETURN { return "return"; }

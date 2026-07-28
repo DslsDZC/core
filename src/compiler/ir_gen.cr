@@ -319,6 +319,18 @@ fn gen_expr(node: int) -> int {
                 return v;
             }
         }
+        // Pointer arithmetic: use PTR_ADD/PTR_SUB/PTR_DIFF instead of standard opcodes
+        lk := get_type_kind(lt);
+        if lk == TYP_PTR || get_type_kind(rt) == TYP_PTR {
+            if op == OP_ADD { op = OP_PTR_ADD; }
+            else if op == OP_SUB {
+                if lk == TYP_PTR && get_type_kind(rt) == TYP_PTR {
+                    op = OP_PTR_DIFF;
+                } else {
+                    op = OP_PTR_SUB;
+                }
+            }
+        }
         v := new_ir_var("bin", TI_INT);
         emit(IR_BINARY, v, left_var, right_var, op, 0);
         return v;

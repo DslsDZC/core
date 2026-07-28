@@ -84,6 +84,9 @@ fn ir_interpret() -> int {
             if s3 == 11 { if lv >= rv { w64(g_ir_vals, d * 8, 1); } else { w64(g_ir_vals, d * 8, 0); } }
             if s3 == 12 { if lv != 0 && rv != 0 { w64(g_ir_vals, d * 8, 1); } else { w64(g_ir_vals, d * 8, 0); } }
             if s3 == 13 { if lv != 0 || rv != 0 { w64(g_ir_vals, d * 8, 1); } else { w64(g_ir_vals, d * 8, 0); } }
+            if s3 == 17 { w64(g_ir_vals, d * 8, lv + rv * 8); }   // OP_PTR_ADD
+            if s3 == 18 { w64(g_ir_vals, d * 8, lv - rv * 8); }   // OP_PTR_SUB
+            if s3 == 19 { w64(g_ir_vals, d * 8, (lv - rv) / 8); }  // OP_PTR_DIFF
         }
 
         if op == 3 {  // IR_UNARY
