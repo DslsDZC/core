@@ -1203,6 +1203,13 @@ fn ir_gen_globals() {
         reg_one_global(ast_a(node));
         i = i + 1;
     }
+
+    // Manually register ir_gen.cr's own globals — the parser's auto-detection
+    // of file-scope declarations is known to miss some (see CLAUDE.md Known Issues).
+    reg_one_global(str_intern("g_sg_alloc_total"));
+    reg_one_global(str_intern("g_sg_alloc_cap"));
+    reg_one_global(str_intern("g_sg_arena_var"));
+    reg_one_global(str_intern("g_sg_arena_var_cap"));
 }
 
 // --- AST walk: patch method call names for monomorphization ---
