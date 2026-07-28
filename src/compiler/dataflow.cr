@@ -31,6 +31,38 @@ fn init_df() {
     }
 }
 
+// --- Subgraph management (bare pointer model) ---
+
+fn sg_push(kind: int) {
+    grow_sg(g_sg_count + 1);
+    idx := g_sg_count;
+    w64(g_sgs, idx * ESZ_SG + OFF_SG_KIND, kind);
+    w64(g_sgs, idx * ESZ_SG + OFF_SG_ENTER, g_df_node_count);
+    w64(g_sgs, idx * ESZ_SG + OFF_SG_EXIT, -1);
+    w64(g_sgs, idx * ESZ_SG + OFF_SG_NSTART, g_df_node_count);
+    w64(g_sgs, idx * ESZ_SG + OFF_SG_NCOUNT, 0);
+    // Parent: find innermost currently open subgraph
+    parent := -1;
+    pi := idx - 1;
+    loop { if pi < 0 { break; }
+        if r64(g_sgs, pi * ESZ_SG + OFF_SG_EXIT) < 0 {  // still open
+            parent = pi;
+            break;
+        }
+        pi = pi - 1;
+    }
+    w64(g_sgs, idx * ESZ_SG + OFF_SG_PARENT, parent);
+    g_sg_count = idx + 1;
+}
+
+fn sg_pop() {
+    if g_sg_count <= 0 { return; }
+    idx := g_sg_count - 1;
+    w64(g_sgs, idx * ESZ_SG + OFF_SG_EXIT, g_df_node_count);
+    w64(g_sgs, idx * ESZ_SG + OFF_SG_NCOUNT,
+        g_df_node_count - r64(g_sgs, idx * ESZ_SG + OFF_SG_NSTART));
+}
+
 // --- Node creation ---
 
 fn df_create_node(opcode: int, dest: int, src1: int, src2: int, src3: int, type_kind: int) -> int {
@@ -231,6 +263,7 @@ fn df_begin_func(func_idx: int) {
     if func_idx >= 0 {
         grow_df_arrays(func_idx + 1);
         w64(g_df_func_node_start, func_idx * 8, g_df_node_count);
+        sg_push(SG_FUNC);
     }
 }
 
@@ -238,6 +271,7 @@ fn df_end_func(func_idx: int) {
     if func_idx >= 0 {
         start := r64(g_df_func_node_start, func_idx * 8);
         w64(g_df_func_node_count, func_idx * 8, g_df_node_count - start);
+        sg_pop();
     }
 }
 
