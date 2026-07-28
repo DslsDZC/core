@@ -118,6 +118,9 @@ fn type_equal(t1: int, t2: int) -> bool {
         if k1 == TYP_REF && k2 == TYP_REF {
             return get_type_extra(t1) == get_type_extra(t2) && type_equal(get_type_data(t1), get_type_data(t2));
         }
+        if k1 == TYP_PTR && k2 == TYP_PTR {
+            return type_equal(get_type_data(t1), get_type_data(t2));
+        }
         if k1 == TYP_SLICE && k2 == TYP_SLICE {
             return type_equal(get_type_data(t1), get_type_data(t2));
         }
@@ -328,6 +331,9 @@ fn pop_borrow_scope() {
     }
 }
 
+fn push_unsafe_scope() { push_borrow_scope(); }
+fn pop_unsafe_scope()  { pop_borrow_scope(); }
+
 fn record_borrow_holder(borrower_ni: int, borrowed_ni: int, is_mut: int) {
     grow_holder(g_holder_count + 1);
     w64(g_holder_borrowers, g_holder_count * 8, borrower_ni);
@@ -382,6 +388,11 @@ fn res_type_node(node: int) -> int {
         inner := res_type_node(ast_a(node));
         mut_flag := ast_int_val(node);
         return alloc_type(TYP_REF, inner, mut_flag);
+    }
+    if ast_kind(node) == EXPR_PTRTYPE {
+        // Pointer type *T
+        inner := res_type_node(ast_a(node));
+        return alloc_type(TYP_PTR, inner, 0);  // address_space=0 (tracked)
     }
     if ast_kind(node) == EXPR_GENERIC_APPLY {
         // Generic application: Box[int]
@@ -1159,6 +1170,17 @@ fn infer_expr(node: int) -> int {
         if op == OP_ADD || op == OP_SUB || op == OP_MUL || op == OP_DIV || op == OP_MOD {
             // String concatenation for OP_ADD
             if op == OP_ADD && (lt == TI_STR || rt == TI_STR) { return TI_STR; }
+            // Pointer arithmetic: *T + n or n + *T → *T
+            if (op == OP_ADD || op == OP_SUB) && (get_type_kind(lt) == TYP_PTR && rt == TI_INT) {
+                return lt;  // return the pointer type unchanged
+            }
+            if (op == OP_ADD || op == OP_SUB) && (lt == TI_INT && get_type_kind(rt) == TYP_PTR) {
+                return rt;
+            }
+            // Pointer difference: *T - *T → int
+            if op == OP_SUB && get_type_kind(lt) == TYP_PTR && get_type_kind(rt) == TYP_PTR {
+                return TI_INT;
+            }
             // Check: arithmetic ops require int or float
             if lt != TI_INT && lt != TI_FLOAT && rt != TI_INT && rt != TI_FLOAT {
                 check_error(EC_TB_ADD, "Arithmetic operation requires int or float", ast_line(node), ast_col(node));
@@ -1185,20 +1207,6 @@ fn infer_expr(node: int) -> int {
         }
         if op == UOP_REF {
             operand := ast_a(node);
-            mut_flag := ast_int_val(node);
-            // Borrow check: can we borrow this variable?
-            var_ni := borrow_var_name(operand);
-            if var_ni >= 0 {
-                if !check_borrow(var_ni, mut_flag) {
-                    name := istr_get(var_ni);
-                    if mut_flag != 0 {
-                        check_error(EC_B_BORROW_MUT, "Cannot borrow '" + name + "' as mutable, already borrowed", ast_line(node), ast_col(node));
-                    } else {
-                        check_error(EC_B_BORROW_IMMUT, "Cannot borrow '" + name + "' as immutable, already mutably borrowed", ast_line(node), ast_col(node));
-                    }
-                }
-            }
-            // Get inner type without triggering check_use on the operand
             inner : ., mut = TI_UNIT;
             if ast_kind(operand) == EXPR_IDENT {
                 vi := ast_int_val(operand);
@@ -1207,11 +1215,14 @@ fn infer_expr(node: int) -> int {
             } else {
                 inner = infer_expr(operand);
             }
-            return alloc_type(TYP_REF, inner, mut_flag);
+            return alloc_type(TYP_PTR, inner, 0);
         }
         if op == UOP_DEREF {
             inner := infer_expr(ast_a(node));
             if get_type_kind(inner) == TYP_REF {
+                return get_type_data(inner);
+            }
+            if get_type_kind(inner) == TYP_PTR {
                 return get_type_data(inner);
             }
             if get_type_kind(inner) == TYP_GENERIC_PARAM {
@@ -1832,9 +1843,9 @@ fn infer_expr(node: int) -> int {
         return infer_expr(ast_a(node));
     }
     if ast_kind(node) == EXPR_UNSAFE {
-        push_borrow_scope();
+        push_unsafe_scope();
         ret := infer_expr(ast_a(node));
-        pop_borrow_scope();
+        pop_unsafe_scope();
         return ret;
     }
     if ast_kind(node) == EXPR_TRY {
