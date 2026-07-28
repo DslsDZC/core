@@ -85,7 +85,7 @@ fn g2_rodata_sz() -> int {
 
 // ── Byte encoding helpers ──
 fn e2_w8(buf: string, pos: int, val: int) { store8(buf, pos, val % 256); }
-fn e2_w16(buf: string, off: int, val: int) { e2_w8(buf, off, val % 256); e2_w8(buf, off+1, (val/256) % 256); }
+fn e2_w16(buf: string, off: int, val: int) { w32(buf, off, val); }
 fn e2_w32(buf: string, pos: int, val: int) -> int {
     w32(buf, pos, val);
     return 4;

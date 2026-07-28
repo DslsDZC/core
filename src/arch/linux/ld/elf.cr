@@ -108,7 +108,7 @@ fn sched_reg_one(name: string, offset: int, cp: int) {
     g_x86_func_off_count = g_x86_func_off_count + 1;
 }
 
-fn w16(buf: string, off: int, val: int) {
+fn w16(buf: string, off: int, val: int) { w32(buf, off, val); } 
     w8(buf, off, val % 256); w8(buf, off+1, (val/256) % 256);
 }
 
