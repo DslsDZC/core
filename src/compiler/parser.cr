@@ -253,6 +253,21 @@ fn parse_unary() -> int {
 
 fn parse_postfix() -> int {
     node : ., mut = parse_primary();
+    // Handle cast<T>(expr) syntax — same as expr as T
+    if ast_kind(node) == EXPR_IDENT {
+        ni := ast_int_val(node);
+        if str_eq(istr_get(ni), "cast") != 0 && tok_k(cur_tok()) == T_LT {
+            advance_tok();
+            typ := parse_type();
+            advance_tok();  // skip T_GT
+            if tok_k(cur_tok()) == T_LPAREN {
+                advance_tok();
+                inner := parse_expr(0);
+                advance_tok();  // skip T_RPAREN
+                return alloc_node(EXPR_AS, inner, typ, 0, 0, 0, 0, tok_ln(node), tok_cl(node));
+            }
+        }
+    }
     loop {
         t := cur_tok();
         if tok_k(t) == T_LPAREN {
