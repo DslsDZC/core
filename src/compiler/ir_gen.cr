@@ -1164,7 +1164,6 @@ fn ir_gen_func(fi: int) {
     // Patch arena size and reset before return
     total := r64(g_sg_alloc_total, (g_sg_count - 1) * 8);
     if total > 0 { iri_set_s1(arena_instr, total); }
-    arena_var := r64(g_sg_arena_var, (g_sg_count - 1) * 8);
     emit(IR_ARENA_RESET, -1, arena_var, 0, 0, 0);
 
     // Add return at end if not already terminated
