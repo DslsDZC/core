@@ -1,80 +1,104 @@
-// Arena memory model — per-goroutine bump allocator with free-list recycling.
-//
-// Each `go` node gets its own Arena. Allocation is linear pointer-bump (O(1)).
-// When the node completes, its Arena is reset (cursor → start) and returned to
-// a global free list for reuse.
+// Arena memory model — per-subgraph bump allocator.
+// Each subgraph (function/loop/for/unsafe) gets its own Arena.
+// alloc() checks g_current_arena and uses the arena chunk when set.
 
-import panic;
+// ── Globals (accessed by emit_alloc_body ELF code) ──
+g_current_arena : int, mut = -1;
 
-// ── Arena slot layout (24 bytes each: cursor:8, size:8, next_free:8) ──
-g_arena_free_list : int, mut;      // linked list head (-1 = empty)
-g_arena_count : int, mut;
-g_arena_capacity : int, mut;
-g_arenas : string, mut;            // arena metadata: 24 bytes per slot
+// Arena metadata — dynamic arrays (no fixed limit, grows like g_df_nodes)
+g_arena_cursors : string, mut;     // int[] — bump cursor offset per arena
+g_arena_sizes   : string, mut;     // int[] — chunk capacity per arena
+g_arena_parents : string, mut;     // int[] — parent arena ID (for nesting restore)
 
-// Arena data pool — fixed total heap for all arenas.
-// Each arena slot gets a fixed chunk from this pool: arena_idx * arena_max_size.
-g_arena_pool : string, mut;        // actual backing memory
-g_arena_pool_size : int, mut;      // total pool size
-g_arena_max_size : int, mut;       // max size per arena
+g_arena_pool_data : string, mut;   // pool base address (from alloc)
+g_arena_max_size : int, mut;       // default chunk size per arena
+g_arena_free_list : int, mut = -1; // free list head (-1 = empty)
+g_arena_count : int, mut = 0;      // total slots allocated
+g_arena_cap : int, mut = 0;        // metadata array capacity
+
+// ── Internal: grow metadata arrays ──
+fn _grow_arena_meta(needed: int) {
+    if needed < g_arena_cap { return; }
+    nc : ., mut = g_arena_cap * 2; if nc < 64 { nc = 64; } if nc < needed { nc = needed + 64; }
+    // cursors
+    nb := alloc(nc * 8);
+    zi : ., mut = 0; loop { if zi >= nc * 8 { break; } store8(nb, zi, 0); zi = zi + 1; }
+    if g_arena_cap > 0 { _dyncpy(g_arena_cursors, g_arena_cap * 8, nb); }
+    g_arena_cursors = nb;
+    // sizes
+    nb2 := alloc(nc * 8);
+    zi = 0; loop { if zi >= nc * 8 { break; } store8(nb2, zi, 0); zi = zi + 1; }
+    if g_arena_cap > 0 { _dyncpy(g_arena_sizes, g_arena_cap * 8, nb2); }
+    g_arena_sizes = nb2;
+    // parents
+    nb3 := alloc(nc * 8);
+    zi = 0; loop { if zi >= nc * 8 { break; } store8(nb3, zi, 0); zi = zi + 1; }
+    if g_arena_cap > 0 { _dyncpy(g_arena_parents, g_arena_cap * 8, nb3); }
+    g_arena_parents = nb3;
+    g_arena_cap = nc;
+}
+
+// ── Public API ──
 
 fn arena_init(pool_size: int, arena_size: int) {
+    g_arena_pool_data = alloc(pool_size);
+    g_arena_max_size = arena_size;
     g_arena_free_list = -1;
     g_arena_count = 0;
-    g_arena_capacity = 64;
-    g_arenas = alloc(g_arena_capacity * 24);
-    g_arena_max_size = arena_size;
-    g_arena_pool_size = pool_size;
-    g_arena_pool = alloc(pool_size);
+    g_arena_cap = 0;
+    g_current_arena = -1;
 }
 
 fn arena_new() -> int {
+    ai : ., mut = -1;
+
     // Try free list first
     if g_arena_free_list >= 0 {
-        ai := g_arena_free_list;
-        off := ai * 24;
-        g_arena_free_list = r64(g_arenas, off + 16);  // pop
-        w64(g_arenas, off, 0);                        // cursor = 0
-        return ai;
+        ai = g_arena_free_list;
+        g_arena_free_list = r64(g_arena_parents, ai * 8);  // pop head
     }
-    if g_arena_count >= g_arena_capacity {
-        nc := g_arena_capacity * 2;
-        nb := alloc(nc * 24);
-        _dyncpy(g_arenas, g_arena_capacity * 24, nb);
-        g_arena_capacity = nc;
-        g_arenas = nb;
-    }
-    ai := g_arena_count;
-    off := ai * 24;
-    // Verify pool space
-    if (ai + 1) * g_arena_max_size > g_arena_pool_size {
-        panic.raise("arena pool exhausted");
-    }
-    w64(g_arenas, off, 0);                     // cursor = 0
-    w64(g_arenas, off + 8, g_arena_max_size);   // size
-    w64(g_arenas, off + 16, -1);                // next_free
-    g_arena_count = g_arena_count + 1;
-    return ai;
-}
 
-// Returns pointer to allocated memory within the arena pool
-fn arena_alloc(ai: int, size: int) -> int {
-    off := ai * 24;
-    cursor := r64(g_arenas, off);
-    limit := r64(g_arenas, off + 8);
-    aligned := (size + 7) & -8;  // 8-byte alignment (same as & ~7)
-    if cursor + aligned > limit {
-        panic.raise("arena OOM");
+    if ai < 0 {
+        // Allocate new slot (grow metadata arrays)
+        need := g_arena_count + 1;
+        _grow_arena_meta(need);
+        ai = g_arena_count;
+        g_arena_count = need;
     }
-    w64(g_arenas, off, cursor + aligned);
-    // Return actual address: pool base + arena_offset + old_cursor
-    return ai * g_arena_max_size + cursor;
+
+    // Initialize slot
+    w64(g_arena_cursors, ai * 8, 0);
+    w64(g_arena_sizes, ai * 8, g_arena_max_size);
+    w64(g_arena_parents, ai * 8, -1);
+
+    // Set parent = previous current arena
+    if g_current_arena >= 0 {
+        w64(g_arena_parents, ai * 8, g_current_arena);
+    }
+
+    // Activate
+    g_current_arena = ai;
+    return ai;
 }
 
 fn arena_reset(ai: int) {
     if ai < 0 || ai >= g_arena_count { return; }
-    off := ai * 24;
-    w64(g_arenas, off, 0);
-    w64(g_arenas, off + 16, g_arena_free_list);
+
+    // Save parent BEFORE free list overwrites g_arena_parents[ai]
+    parent := r64(g_arena_parents, ai * 8);
+
+    // Push to free list
+    w64(g_arena_parents, ai * 8, g_arena_free_list);
     g_arena_free_list = ai;
+
+    // Restore parent
+    if parent >= 0 { g_current_arena = parent; }
+    else { g_current_arena = -1; }
+}
+
+fn arena_avail(ai: int) -> int {
+    if ai < 0 || ai >= g_arena_count { return 0; }
+    cursor := r64(g_arena_cursors, ai * 8);
+    limit := r64(g_arena_sizes, ai * 8);
+    return limit - cursor;
 }
