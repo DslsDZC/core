@@ -345,6 +345,33 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
             e2_w8(buf, pos+cp, 211); cp = cp + 1;
             cp = cp + emit_modrm(buf, pos+cp, 3, 5, 10%8);
         }
+        else if s3 == OP_PTR_ADD {  // p + n: scale n by element size (8), add to p
+            // imul r11, 8, r11 — REX.WB + 0x6B + ModRM(3, r11, r11) + imm8
+            cp = cp + emit_rex(buf, pos+cp, 1, 11/8, 0, 11/8);
+            e2_w8(buf, pos+cp, 107); cp = cp + 1;
+            cp = cp + emit_modrm(buf, pos+cp, 3, 11%8, 11%8);
+            e2_w8(buf, pos+cp, 8); cp = cp + 1;
+            // add r10, r11
+            cp = cp + e2_alu(buf, pos+cp, 1);
+        }
+        else if s3 == OP_PTR_SUB {  // p - n: scale n by element size (8), sub from p
+            // imul r11, 8, r11
+            cp = cp + emit_rex(buf, pos+cp, 1, 11/8, 0, 11/8);
+            e2_w8(buf, pos+cp, 107); cp = cp + 1;
+            cp = cp + emit_modrm(buf, pos+cp, 3, 11%8, 11%8);
+            e2_w8(buf, pos+cp, 8); cp = cp + 1;
+            // sub r10, r11
+            cp = cp + e2_alu(buf, pos+cp, 41);
+        }
+        else if s3 == OP_PTR_DIFF {  // p - q: diff in bytes, then /8 → element count
+            // sub r10, r11
+            cp = cp + e2_alu(buf, pos+cp, 41);
+            // sar r10, 3 — divide by 8
+            cp = cp + emit_rex(buf, pos+cp, 1, 0, 0, 10/8);
+            e2_w8(buf, pos+cp, 193); cp = cp + 1;  // 0xC1 SHIFT r/m, imm8
+            cp = cp + emit_modrm(buf, pos+cp, 3, 7, 10%8);  // /7 = SAR
+            e2_w8(buf, pos+cp, 3); cp = cp + 1;    // shift by 3
+        }
         else if s3 == OP_DIV || s3 == OP_MOD {
             cp = cp + e2_mov(buf, pos+cp, 0, 10);
             // cqo: REX.W + 0x99
