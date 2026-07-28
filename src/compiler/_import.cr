@@ -25,6 +25,7 @@ import ext_safety
 import pass
 import opt
 import ptr_analysis
+import region_check
 import rt
 import main
 import entry

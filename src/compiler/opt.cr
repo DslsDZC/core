@@ -478,6 +478,8 @@ fn pass_cse() {
 fn optimize_all() {
     // Pointer analysis (always runs, even at opt_level 0)
     ptr_analysis_all();
+    // RegionCheck: verify DEREF targets are in live subgraphs
+    region_check_all();
     if g_opt_level < 1 { return; }
     fi : ., mut = 0;
     loop {
