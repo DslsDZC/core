@@ -745,6 +745,13 @@ fn parse_stmt() -> int {
         advance_tok();
         return alloc_node(EXPR_STMT, e, 0, 0, 0, 0, 0, tok_ln(t), tok_cl(t));
     }
+    // If the parsed expression is an if-expression that may be followed
+    // by a unary/binary operator (like * or +) on the next line, wrap it
+    // in EXPR_STMT to prevent the operator from being parsed as part of
+    // the if-expression (e.g. "if ... { } *p = 99" parsed as "if * 99").
+    if ast_kind(e) == EXPR_IF {
+        return alloc_node(EXPR_STMT, e, 0, 0, 0, 0, 0, tok_ln(t), tok_cl(t));
+    }
     return e;
 }
 
