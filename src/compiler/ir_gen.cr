@@ -368,8 +368,17 @@ fn gen_expr(node: int) -> int {
     // Unary operation
     if ast_kind(node) == EXPR_UNARY {
         op := ast_c(node);
-        op_var := gen_expr(ast_a(node));
         if op == UOP_REF {
+            inner := ast_a(node);
+            // &arr[i]: compute address directly, don't load then take addr
+            if ast_kind(inner) == EXPR_INDEX {
+                arr_var := gen_expr(ast_a(inner));
+                idx_var := gen_expr(ast_b(inner));
+                v := new_ir_var("addr", TI_UNIT);
+                emit(IR_ADDR_INDEX, v, arr_var, idx_var, 3, 0);
+                return v;
+            }
+            op_var := gen_expr(ast_a(node));
             v := new_ir_var("ref", TI_UNIT);
             emit(IR_REF, v, op_var, ast_int_val(node), 0, 0);
             return v;
@@ -380,6 +389,7 @@ fn gen_expr(node: int) -> int {
             emit(IR_DEREF, dv, inner_var, 0, 0, 0);
             return dv;
         }
+        op_var := gen_expr(ast_a(node));
         v := new_ir_var("un", TI_INT);
         emit(IR_UNARY, v, op_var, 0, op, 0);
         return v;

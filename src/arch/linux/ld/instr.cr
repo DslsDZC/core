@@ -673,17 +673,35 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
     }
 
     if op == IR_DEREF && d >= 0 {
-        do2 := g2_slot(d); o1 := g2_slot(s1);
-        cp = cp + e2_ld(buf, pos+cp, 10, o1);
+        do2 := g2_slot(d);
+        // load pointer from var slot (handles local and global)
+        cp = cp + e2_load_var(buf, pos+cp, 10, s1);
         // mov r10, [r10] — REX.WRB + 0x8B
             cp = cp + emit_rex(buf, pos+cp, 1, 10/8, 0, 10/8); e2_w8(buf, pos+cp, 139); cp = cp + 1; cp = cp + emit_modrm(buf, pos+cp, 0, 10%8, 10%8);
         cp = cp + e2_st(buf, pos+cp, 10, do2);
         return cp;
     }
 
+    if op == IR_ADDR_INDEX && d >= 0 {
+        do2 := g2_slot(d);
+        // load array pointer from arr base slot (handles both local and global)
+        cp = cp + e2_load_var(buf, pos+cp, 10, s1);
+        // load index (handles both local and global)
+        cp = cp + e2_load_var(buf, pos+cp, 11, s2);
+        // lea r10, [r10 + r11*8] = address of arr[i] on heap
+        cp = cp + emit_rex(buf, pos+cp, 1, 10/8, 11/8, 10/8);
+        e2_w8(buf, pos+cp, 141); cp = cp + 1;  // 0x8D LEA
+        cp = cp + emit_modrm(buf, pos+cp, 0, 10%8, 4);  // mod=0, reg=r10, rm=4(SIB)
+        cp = cp + emit_sib(buf, pos+cp, 3, 11%8, 10%8);  // scale=3, index=r11, base=r10
+        cp = cp + e2_st(buf, pos+cp, 10, do2);
+        return cp;
+    }
+
     if op == IR_STORE_PTR {
-        o1 := g2_slot(s1); o2 := g2_slot(s2);
-        cp = cp + e2_ld(buf, pos+cp, 10, o1); cp = cp + e2_ld(buf, pos+cp, 11, o2);
+        // load pointer (handles local and global)
+        cp = cp + e2_load_var(buf, pos+cp, 10, s1);
+        // load value to store (handles local and global)
+        cp = cp + e2_load_var(buf, pos+cp, 11, s2);
         // mov [r10], r11 — REX.WRB + 0x89
             cp = cp + emit_rex(buf, pos+cp, 1, 11/8, 0, 10/8); e2_w8(buf, pos+cp, 137); cp = cp + 1; cp = cp + emit_modrm(buf, pos+cp, 0, 11%8, 10%8);
         return cp;
@@ -766,8 +784,9 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
     }
 
     if op == IR_LOAD_INDEX && d >= 0 {
-        do2 := g2_slot(d); o1 := g2_slot(s1); idx := s3;
-        cp = cp + e2_ld(buf, pos+cp, 10, o1);
+        do2 := g2_slot(d); idx := s3;
+        // load array pointer (handles local and global)
+        cp = cp + e2_load_var(buf, pos+cp, 10, s1);
         // mov r10, [r10 + disp32]
         // mov r10, [r10 + idx*8]
             cp = cp + emit_rex(buf, pos+cp, 1, 10/8, 0, 10/8); e2_w8(buf, pos+cp, 139); cp = cp + 1;
@@ -777,8 +796,11 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
     }
 
     if op == IR_STORE_INDEX {
-        o1 := g2_slot(s1); o2 := g2_slot(s2); idx := s3;
-        cp = cp + e2_ld(buf, pos+cp, 10, o1); cp = cp + e2_ld(buf, pos+cp, 11, o2);
+        idx := s3;
+        // load array pointer (handles local and global)
+        cp = cp + e2_load_var(buf, pos+cp, 10, s1);
+        // load value to store (handles local and global)
+        cp = cp + e2_load_var(buf, pos+cp, 11, s2);
         // mov [r10 + disp32], r11
         // mov [r10 + idx*8], r11
             cp = cp + emit_rex(buf, pos+cp, 1, 11/8, 0, 10/8); e2_w8(buf, pos+cp, 137); cp = cp + 1;
@@ -787,8 +809,11 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
     }
 
     if op == IR_LOAD_INDEX_VAR && d >= 0 {
-        do2 := g2_slot(d); o1 := g2_slot(s1); oi := g2_slot(s2);
-        cp = cp + e2_ld(buf, pos+cp, 10, o1); cp = cp + e2_ld(buf, pos+cp, 11, oi);
+        do2 := g2_slot(d);
+        // load array pointer (handles local and global)
+        cp = cp + e2_load_var(buf, pos+cp, 10, s1);
+        // load index (handles local and global)
+        cp = cp + e2_load_var(buf, pos+cp, 11, s2);
         // mov r10, [r10 + r11*8] — SIB(scale=3, index=r11%8, base=r10%8)
             cp = cp + emit_rex(buf, pos+cp, 1, 10/8, 11/8, 10/8); e2_w8(buf, pos+cp, 139); cp = cp + 1;
             cp = cp + emit_modrm(buf, pos+cp, 0, 10%8, 4); cp = cp + emit_sib(buf, pos+cp, 3, 11%8, 10%8);
@@ -797,8 +822,12 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
     }
 
     if op == IR_STORE_INDEX_VAR && d >= 0 {
-        o1 := g2_slot(s1); oi := g2_slot(s2); ov := g2_slot(d);
-        cp = cp + e2_ld(buf, pos+cp, 10, o1); cp = cp + e2_ld(buf, pos+cp, 11, oi); cp = cp + e2_ld(buf, pos+cp, 12, ov);
+        // load array pointer (handles local and global)
+        cp = cp + e2_load_var(buf, pos+cp, 10, s1);
+        // load index (handles local and global)
+        cp = cp + e2_load_var(buf, pos+cp, 11, s2);
+        // load value to store (handles local and global)
+        cp = cp + e2_load_var(buf, pos+cp, 12, d);
         // mov [r10 + r11*8], r12 — SIB(scale=3, index=r11%8, base=r10%8)
             cp = cp + emit_rex(buf, pos+cp, 1, 12/8, 11/8, 10/8); e2_w8(buf, pos+cp, 137); cp = cp + 1;
             cp = cp + emit_modrm(buf, pos+cp, 0, 12%8, 4); cp = cp + emit_sib(buf, pos+cp, 3, 11%8, 10%8);
