@@ -2,17 +2,12 @@
 // Each subgraph (function/loop/for/unsafe) gets its own Arena.
 // alloc() checks g_current_arena and uses the arena chunk when set.
 
-// ── Globals (accessed by emit_alloc_body ELF code) ──
-g_current_arena : int, mut = -1;
-
 // Arena metadata — dynamic arrays (no fixed limit, grows like g_df_nodes)
 g_arena_cursors : string, mut;     // int[] — bump cursor offset per arena
 g_arena_sizes   : string, mut;     // int[] — chunk capacity per arena
 g_arena_parents : string, mut;     // int[] — parent arena ID (for nesting restore)
 
-g_arena_pool_data : string, mut;   // pool base address (from alloc)
 g_arena_max_size : int, mut;       // default chunk size per arena
-g_arena_free_list : int, mut = -1; // free list head (-1 = empty)
 g_arena_count : int, mut = 0;      // total slots allocated
 g_arena_cap : int, mut = 0;        // metadata array capacity
 

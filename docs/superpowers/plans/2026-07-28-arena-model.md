@@ -14,7 +14,7 @@
 - `alloc()` API unchanged — arena awareness is transparent
 - `g_current_arena = -1` preserves existing global bump behavior
 - All lifecycle management in Core code (`arena.cr`); only bump path is in assembly
-- New IR opcodes: `IR_ARENA_NEW = 30`, `IR_ARENA_RESET = 31`
+- New IR opcodes: `IR_ARENA_NEW = 32`, `IR_ARENA_RESET = 33`
 - ESZ_IRINSTR = 48 bytes (6 fields × 8 bytes). `iri_set_s1(idx, val)` patches instruction field.
 - Chain expansion: arena OOM allocates overflow block from global heap
 
@@ -81,15 +81,15 @@ git commit -m "feat: add arena BSS globals (g_current_arena, g_arena_pool_data, 
 - Modify: `src/compiler/opt.cr`
 
 **Interfaces:**
-- Produces: `IR_ARENA_NEW = 30`, `IR_ARENA_RESET = 31`
+- Produces: `IR_ARENA_NEW = 32`, `IR_ARENA_RESET = 33`
 
 - [ ] **Step 1: Add opcode constants to ast.cr**
 
 Find the IR opcode section (around line 526-530), add after `IR_YIELD`:
 
 ```core
-IR_ARENA_NEW   : int = 30;   // dest=arena_var, src1=size_estimate
-IR_ARENA_RESET : int = 31;   // src1=arena_id (dest=-1)
+IR_ARENA_NEW   : int = 32;   // dest=arena_var, src1=size_estimate
+IR_ARENA_RESET : int = 33;   // src1=arena_id (dest=-1)
 ```
 
 - [ ] **Step 2: Register in dataflow.cr df_opcode_name**
@@ -125,7 +125,7 @@ Also check `resolve.cr` for any opcode switch — add skip cases if found.
 
 ```bash
 git add src/compiler/ast.cr src/compiler/dataflow.cr src/compiler/opt.cr
-git commit -m "feat: add IR_ARENA_NEW(30) and IR_ARENA_RESET(31) opcodes"
+git commit -m "feat: add IR_ARENA_NEW(32) and IR_ARENA_RESET(33) opcodes"
 ```
 
 ---
