@@ -1147,8 +1147,10 @@ fn ir_gen_func(fi: int) {
         }
     }
 
-    // Function-level arena
-    sg_alloc_push(SG_FUNC);
+    // Function-level arena (df_begin_func already pushed SG_FUNC)
+    grow_sg_alloc(g_sg_count + 1);
+    grow_sg_arena_var(g_sg_count + 1);
+    w64(g_sg_alloc_total, (g_sg_count - 1) * 8, 0);
     arena_var := new_ir_var("_arena", TI_INT);
     w64(g_sg_arena_var, (g_sg_count - 1) * 8, arena_var);
     emit(IR_ARENA_NEW, arena_var, 0, 0, 0, 0);
@@ -1160,9 +1162,10 @@ fn ir_gen_func(fi: int) {
     }
 
     // Patch arena size and reset before return
-    total := r64(g_sg_alloc_total, g_sg_count - 1);
+    total := r64(g_sg_alloc_total, (g_sg_count - 1) * 8);
     if total > 0 { iri_set_s1(arena_instr, total); }
-    sg_alloc_pop();
+    arena_var := r64(g_sg_arena_var, (g_sg_count - 1) * 8);
+    emit(IR_ARENA_RESET, -1, arena_var, 0, 0, 0);
 
     // Add return at end if not already terminated
     emit(IR_RETURN, -1, -1, 0, 0, 0);
