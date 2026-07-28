@@ -86,16 +86,16 @@ TYP_PTR : int = 4;    // data=pointee_type, extra=address_space (0=tracked, 1=ex
 
 In `src/compiler/ast.cr` after line 249 (`EXPR_AS : int = 36;`):
 ```crystal
-EXPR_PTRTYPE : int = 41;  // a=inner_type (for \*T in type position)
+EXPR_PTRTYPE : int = 46;  // a=inner_type (for \*T in type position)
 ```
 
 - [ ] **Step 3: Add pointer arithmetic opcodes**
 
 In `src/compiler/ast.cr` after line 276 (`OP_GE : int = 13;`):
 ```crystal
-OP_PTR_ADD  : int = 14;  // p + n (p: \*T, n: int) → scaled by sizeof(T)
-OP_PTR_SUB  : int = 15;  // p - n
-OP_PTR_DIFF : int = 16;  // p - q → element count
+OP_PTR_ADD  : int = 17;  // p + n (p: \*T, n: int) → scaled by sizeof(T)
+OP_PTR_SUB  : int = 18;  // p - n
+OP_PTR_DIFF : int = 19;  // p - q → element count
 ```
 
 - [ ] **Step 4: Commit**
@@ -331,9 +331,9 @@ if op == OP_PTR_DIFF { return "- (diff)"; }
 
 In `src/compiler/interp.cr` after the existing binary op cases:
 ```crystal
-if s3 == 14 { w64(g_ir_vals, d * 8, lv + rv * 8); }   // OP_PTR_ADD
-if s3 == 15 { w64(g_ir_vals, d * 8, lv - rv * 8); }   // OP_PTR_SUB
-if s3 == 16 { w64(g_ir_vals, d * 8, (lv - rv) / 8); }  // OP_PTR_DIFF
+if s3 == 17 { w64(g_ir_vals, d * 8, lv + rv * 8); }   // OP_PTR_ADD
+if s3 == 18 { w64(g_ir_vals, d * 8, lv - rv * 8); }   // OP_PTR_SUB
+if s3 == 19 { w64(g_ir_vals, d * 8, (lv - rv) / 8); }  // OP_PTR_DIFF
 ```
 
 - [ ] **Step 5: Build and test**

@@ -70,6 +70,10 @@ fn parse_type() -> int {
         }
         inner := parse_type();
         res = alloc_node(EXPR_REFTYPE, inner, 0, 0, is_mut, 0, 0, line, col);
+    } else if tok_k(t) == T_STAR {
+        advance_tok();
+        inner := parse_type();
+        res = alloc_node(EXPR_PTRTYPE, inner, 0, 0, 0, 0, 0, line, col);
     } else if tok_k(t) == T_UNIT {
         advance_tok();
         res = alloc_node(0, 0, 0, 0, 0, TY_UNIT, 0, line, col);
