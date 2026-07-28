@@ -248,6 +248,11 @@ fn e2_je(b: string, p: int, rel: int) -> int {
     e2_w8(b, p, 15); e2_w8(b, p+1, 132); e2_w32(b, p+2, rel); return 6;
 }
 
+fn e2_jae(b: string, p: int, rel: int) -> int {
+    // jae rel32 near — 2-byte opcode 0x0F 0x83
+    e2_w8(b, p, 15); e2_w8(b, p+1, 131); e2_w32(b, p+2, rel); return 6;
+}
+
 fn e2_alu(b: string, p: int, op: int) -> int {
     // ALU r/m, r: REX.W + REX.RB (r11, r10) + opcode + ModRM reg=11, rm=10
     cp := p;
@@ -892,6 +897,18 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
         return cp;
     }
 
+    if op == IR_BOUNDS_CHECK && s2 >= 0 {
+        // s1 = index var, s2 = max_len literal — crash if index < 0 or index >= max_len
+        cp = cp + e2_load_var(buf, pos+cp, 10, s1);  // index
+        cp = cp + e2_load_var(buf, pos+cp, 11, s2);  // max_len
+        cp = cp + e2_alu(buf, pos+cp, 57);           // cmp r10, r11
+        // jb +2: if index < max (unsigned below), skip the 2-byte ud2 → continue
+        e2_w8(buf, pos+cp, 114);                      // 0x72 = jb rel8
+        e2_w8(buf, pos+cp+1, 2);                     // skip past ud2
+        cp = cp + 2;
+        w8(buf, cp, 15); w8(buf, cp+1, 11); cp = cp + 2;  // ud2 (SIGILL)
+        return cp;
+    }
 
     return 0;
 }
