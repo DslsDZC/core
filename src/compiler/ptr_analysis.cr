@@ -3,6 +3,20 @@
 // Flow-sensitive, single-function analysis.
 // Used by downstream safety passes (RegionCheck, etc.).
 
+fn pa_in_unsafe(node_seq: int) -> int {
+    si : ., mut = 0;
+    loop { if si >= g_sg_count { break; }
+        kind := r64(g_sgs, si * ESZ_SG + OFF_SG_KIND);
+        if kind == SG_UNSAFE {
+            nstart := r64(g_sgs, si * ESZ_SG + OFF_SG_NSTART);
+            ncount := r64(g_sgs, si * ESZ_SG + OFF_SG_NCOUNT);
+            if node_seq >= nstart && node_seq < nstart + ncount { return 1; }
+        }
+        si = si + 1;
+    }
+    return 0;
+}
+
 fn ptr_analysis_func(nstart: int, ncount: int, vstart: int, vcount: int) {
     // Initialize pts/offset for this function's variables
     vi : ., mut = 0;
@@ -22,6 +36,9 @@ fn ptr_analysis_func(nstart: int, ncount: int, vstart: int, vcount: int) {
         s1 := r64(g_df_nodes, ni * ESZ_DFNODE + OFF_DF_S1);
         s2 := r64(g_df_nodes, ni * ESZ_DFNODE + OFF_DF_S2);
         s3 := r64(g_df_nodes, ni * ESZ_DFNODE + OFF_DF_S3);
+
+        // In unsafe blocks: suppress pointer tracking (pts stays 0)
+        if d >= 0 && pa_in_unsafe(ni) != 0 { ni = ni + 1; continue; }
 
         if d >= 0 {
             // ALLOC creates a new allocation -- it points to itself

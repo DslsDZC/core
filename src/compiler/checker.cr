@@ -331,8 +331,8 @@ fn pop_borrow_scope() {
     }
 }
 
-fn push_unsafe_scope() { push_borrow_scope(); }
-fn pop_unsafe_scope()  { pop_borrow_scope(); }
+fn push_unsafe_scope() { g_unsafe_depth = g_unsafe_depth + 1; }
+fn pop_unsafe_scope()  { if g_unsafe_depth > 0 { g_unsafe_depth = g_unsafe_depth - 1; } }
 
 fn record_borrow_holder(borrower_ni: int, borrowed_ni: int, is_mut: int) {
     grow_holder(g_holder_count + 1);
@@ -392,7 +392,9 @@ fn res_type_node(node: int) -> int {
     if ast_kind(node) == EXPR_PTRTYPE {
         // Pointer type *T
         inner := res_type_node(ast_a(node));
-        return alloc_type(TYP_PTR, inner, 0);  // address_space=0 (tracked)
+        asp : ., mut = 0;
+        if g_unsafe_depth > 0 { asp = 1; }  // unsafe block → external address space
+        return alloc_type(TYP_PTR, inner, asp);
     }
     if ast_kind(node) == EXPR_GENERIC_APPLY {
         // Generic application: Box[int]
@@ -1215,7 +1217,9 @@ fn infer_expr(node: int) -> int {
             } else {
                 inner = infer_expr(operand);
             }
-            return alloc_type(TYP_PTR, inner, 0);
+            asp : ., mut = 0;
+            if g_unsafe_depth > 0 { asp = 1; }
+            return alloc_type(TYP_PTR, inner, asp);
         }
         if op == UOP_DEREF {
             inner := infer_expr(ast_a(node));

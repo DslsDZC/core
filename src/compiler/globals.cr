@@ -37,6 +37,7 @@ g_ifaces : string, mut;          g_iface_count : int, mut;     g_iface_cap : int
 g_impl_for : string, mut;        g_impl_for_count : int, mut;  g_impl_for_cap : int, mut;
 g_generic_constr : string, mut;  g_generic_constr_count : int, mut; g_generic_constr_cap : int, mut;
 g_checker_current_fi : int, mut;
+g_unsafe_depth : int, mut;
 g_borrow_vars : string, mut;          g_borrow_refs : string, mut;       g_borrow_muts : string, mut;
 g_borrow_count : int, mut;            g_borrow_cap : int, mut;
 g_holder_borrowers : string, mut;     g_holder_borrowed : string, mut;   g_holder_is_mut : string, mut;
