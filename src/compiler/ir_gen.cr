@@ -637,11 +637,13 @@ fn gen_expr(node: int) -> int {
         emit(IR_LABEL, -1, header_lbl, 0, 0, 0);
         emit(IR_JUMP, -1, body_lbl, 0, 0, 0);
         emit(IR_LABEL, -1, body_lbl, 0, 0, 0);
+        sg_push(SG_LOOP);
         push_ir_scope();
         push_loop_labels(header_lbl, exit_lbl);
         gen_expr(ast_a(node));
         pop_loop_labels();
         pop_ir_scope();
+        sg_pop();
         emit(IR_JUMP, -1, header_lbl, 0, 0, 0);
         emit(IR_LABEL, -1, exit_lbl, 0, 0, 0);
         return -1;
@@ -700,11 +702,13 @@ fn gen_expr(node: int) -> int {
         emit(IR_BRANCH, -1, cond_var, body_lbl, exit_lbl, 0);
         // Body
         emit(IR_LABEL, -1, body_lbl, 0, 0, 0);
+        sg_push(SG_FOR);
         push_ir_scope();
         push_loop_labels(header_lbl, exit_lbl);
         gen_expr(body);
         pop_loop_labels();
         pop_ir_scope();
+        sg_pop();
         // Increment ivar and jump to header
         one_var := new_ir_var("one", TI_INT);
         emit(IR_CONST, one_var, 1, 0, 0, TI_INT);
@@ -979,7 +983,10 @@ fn gen_expr(node: int) -> int {
         return gen_expr(ast_a(node));
     }
     if ast_kind(node) == EXPR_UNSAFE {
-        return gen_expr(ast_a(node));
+        sg_push(SG_UNSAFE);
+        ret := gen_expr(ast_a(node));
+        sg_pop();
+        return ret;
     }
     if ast_kind(node) == EXPR_AS {
         // Type cast: emit inner expr, result type handled by checker
