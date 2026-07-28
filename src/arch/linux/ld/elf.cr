@@ -20,7 +20,7 @@ fn w8_signed(buf: string, pos: int, val: int) {
 
 // Emit arena-aware dual-path allocator function body
 // Checks g_current_arena: if >=0 uses arena bump, otherwise global bump.
-// Returns bytes written (always 225).
+// Returns bytes written (now ~271 with zero-init + chain-expand fix).
 fn emit_alloc_body(buf: string, pos: int, bss_va: int, globals_size: int) -> int {
     cp := 0;
     fva := TEXT_BASE + pos;
@@ -49,8 +49,8 @@ fn emit_alloc_body(buf: string, pos: int, bss_va: int, globals_size: int) -> int
     w8(buf, pos+cp, 69); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 18); cp = cp + 3;
     // test r10d, r10d — 45 85 D2
     w8(buf, pos+cp, 69); w8(buf, pos+cp+1, 133); w8(buf, pos+cp+2, 210); cp = cp + 3;
-    // js .Lglobal — 78 dis (rel8 = 111 = 0x6F)
-    w8(buf, pos+cp, 120); w8(buf, pos+cp+1, 111); cp = cp + 2;
+    // js .Lglobal — 0F 88 rel32 (rel32 = 153, target moved by Bug 1+2)
+    w8(buf, pos+cp, 15); w8(buf, pos+cp+1, 136); e2_w32(buf, pos+cp+2, 153); cp = cp + 6;
 
     // ── Part 2: Load cursors[ai] and sizes[ai] (31 bytes) ──
     // lea r11, [rip + g_arena_cursors] — e2_lrb, rip_patch #2
@@ -116,15 +116,33 @@ fn emit_alloc_body(buf: string, pos: int, bss_va: int, globals_size: int) -> int
     w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 1); w8(buf, pos+cp+2, 249); cp = cp + 3;
     // cmp rcx, r8 — 4C 39 C1
     w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 57); w8(buf, pos+cp+2, 193); cp = cp + 3;
-    // ja .Lchain — 77 0F (rel8=15)
-    w8(buf, pos+cp, 119); w8(buf, pos+cp+1, 15); cp = cp + 2;
+    // ja .Lchain — 77 21 (rel8=33, shifted by Bug 1 zero-init block)
+    w8(buf, pos+cp, 119); w8(buf, pos+cp+1, 33); cp = cp + 2;
 
     // ── Part 5: Commit cursor update (4 bytes) ──
     // mov [rdx + r10*8], rcx — 4A 89 0C D2
     w8(buf, pos+cp, 74); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 12); w8(buf, pos+cp+3, 210); cp = cp + 4;
 
+    // ── Part 5b: Zero-init newly allocated arena block (18 bytes) ──
+    // Zero old_cursor bytes starting at chunk_start+8 (after header).
+    // rax=old_cursor, r11=chunk_start, rdx=cursors_ptr (no longer needed)
+    // mov rdx, rax (save old_cursor) — 48 89 C2
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 194); cp = cp + 3;
+    // lea rdi, [r11 + 8] — 49 8D 7B 08
+    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 123); w8(buf, pos+cp+3, 8); cp = cp + 4;
+    // mov rcx, rax (old_cursor as count) — 48 89 C1
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 193); cp = cp + 3;
+    // xor eax, eax — 31 C0
+    w8(buf, pos+cp, 49); w8(buf, pos+cp+1, 192); cp = cp + 2;
+    // cld — FC
+    w8(buf, pos+cp, 252); cp = cp + 1;
+    // rep stosb — F3 AA
+    w8(buf, pos+cp, 243); w8(buf, pos+cp+1, 170); cp = cp + 2;
+    // mov rax, rdx (restore old_cursor) — 48 89 D0
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 208); cp = cp + 3;
+
     // ── Part 6: Return arena pointer (11 bytes) ──
-    // add rax, r11 — 4C 01 D8 (rax = old_cursor + chunk_start = data ptr before header)
+    // add rax, r11 — 4C 01 D8 (rax = chunk_start + old_cursor = data ptr before header)
     w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 1); w8(buf, pos+cp+2, 216); cp = cp + 3;
     // mov [rax], r9 — 4C 89 08 (store hidden length header)
     w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 8); cp = cp + 3;
@@ -133,7 +151,7 @@ fn emit_alloc_body(buf: string, pos: int, bss_va: int, globals_size: int) -> int
     // ret
     w8(buf, pos+cp, 195); cp = cp + 1;
 
-    // ── Part 7: .Lchain — arena OOM → chain expand (17 bytes) ──
+    // ── Part 7: .Lchain — arena OOM → chain expand + mark full (41 bytes) ──
     // lea r8, [rip + g_current_arena] — 4C 8D 05 xx xx xx xx, rip_patch #6
     rip_pos5 := pos + cp + 3;
     w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 5);
@@ -145,6 +163,27 @@ fn emit_alloc_body(buf: string, pos: int, bss_va: int, globals_size: int) -> int
     // mov [r8], -1 — 41 C7 00 FF FF FF FF (set g_current_arena = -1)
     w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 199); w8(buf, pos+cp+2, 0);
     e2_w32(buf, pos+cp+3, -1); cp = cp + 7;
+
+    // ── Bug 2 fix: Advance arena cursor to limit (mark full) ──
+    // rdx = cursors array pointer (from Part 2), r10 = arena index (from Part 1)
+    // Load sizes[ai] again (r8 was overwritten by g_current_arena LEA above)
+    // lea rsi, [rip + g_arena_sizes] — 48 8D 35 xx xx xx xx, rip_patch #8
+    rip_pos_sizes := pos + cp + 3;
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 53);
+    e2_w32(buf, pos+cp+3, 0); cp = cp + 7;
+    grow_rip_patch(g_x86_rip_patch_count + 1);
+    w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, rip_pos_sizes);
+    w64(g_x86_rip_patch_globals, g_x86_rip_patch_count * 8, gv_arena_sizes);
+    g_x86_rip_patch_count = g_x86_rip_patch_count + 1;
+    // mov rsi, [rsi] — 48 8B 36 (deref to get sizes array pointer)
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 54); cp = cp + 3;
+    // mov r8, [rsi + r10*8] — 4E 8B 04 D6 (r8 = sizes[ai] = limit)
+    w8(buf, pos+cp, 78); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 4); w8(buf, pos+cp+3, 214); cp = cp + 4;
+    // mov [rdx + r10*8], r8 — 4E 89 04 D2 (cursors[ai] = limit, mark full)
+    w8(buf, pos+cp, 78); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 4); w8(buf, pos+cp+3, 210); cp = cp + 4;
+    // Set r10d = -1 to skip arena restore at .Lglobal's end — 41 BA FF FF FF FF
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 186); e2_w32(buf, pos+cp+2, -1); cp = cp + 6;
+
     // mov rdi, r9 — 49 8B F9 (restore original size for global path alignment)
     w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 249); cp = cp + 3;
 
@@ -561,7 +600,7 @@ fn elf_gen(buf: string) -> int {
     w64(g_x86_func_offsets, g_x86_func_off_count * 16, alloc_ni);
     w64(g_x86_func_offsets, g_x86_func_off_count * 16 + 8, total_code);
     g_x86_func_off_count = g_x86_func_off_count + 1;
-    total_code = total_code + 240;  // arena-aware dual-path alloc body (actual: ~225 bytes)
+    total_code = total_code + 272;  // arena-aware dual-path alloc body (actual: ~271 bytes with zero-init + chain-expand fix)
     // sched_call trampolines (0..4)
     grow_func_offsets(g_x86_func_off_count * 2 + 2);
     w64(g_x86_func_offsets, g_x86_func_off_count * 16, str_intern("sched_call_0"));
