@@ -423,6 +423,10 @@ fn pass_cse() {
             s1 := iri_s1(inst);
             s2 := iri_s2(inst);
 
+            // Skip arena opcodes — side-effecting, not optimizable
+            if op == IR_ARENA_NEW { continue; }
+            if op == IR_ARENA_RESET { continue; }
+
             // Only CSE for pure computations: BINARY, UNARY
             if (op == IR_BINARY || op == IR_UNARY) && d >= 0 {
                 // Check if we've seen this expression

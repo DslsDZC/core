@@ -180,6 +180,10 @@ IR_ARENA_RESET : int = 31;   // arena_reset src1
 | SG_LOOP | `sg_push(SG_LOOP)` 之前 | `sg_pop()` 之后 |
 | SG_FOR | `sg_push(SG_FOR)` 之前 | `sg_pop()` 之后 |
 | SG_UNSAFE | `sg_push(SG_UNSAFE)` 之前 | `sg_pop()` 之后 |
+| SG_FLOW | `sg_push(SG_FLOW)` 之前（编译器插桩点预留） | `sg_pop()` 之后 |
+| SG_GO | `sg_push(SG_GO)` 之前（编译器插桩点预留） | `sg_pop()` 之后 |
+
+> `SG_FLOW` 和 `SG_GO` 的 arena 插桩点已预留。当前编译器未实现 `go`/`flow` 原语，但 arena 层已准备好——`sg_push(SG_FLOW)` 时自动 `arena_new()` 创建独立 arena，`sg_pop()` 时自动 `arena_reset()` 回收。flow/go 的结果跨 arena 拷贝机制在对应原语实现时加入即可。
 
 每次 `arena_new` 创建一个新的 IR 变量 `_arena_N` 存储 arena ID。
 

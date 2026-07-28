@@ -216,6 +216,8 @@ fn df_connect_srcs(node_id: int, opcode: int, s1: int, s2: int, s3: int) {
         df_use_var(node_id, s1);  // enum var
         return;
     }
+    if opcode == IR_ARENA_NEW { df_use_var(node_id, s1); return; }
+    if opcode == IR_ARENA_RESET { df_use_var(node_id, s1); return; }
     // Other opcodes (LABEL, JUMP, ALLOC, ALLOC_STRUCT, ALLOC_ARRAY, PHI):
     // no variable inputs to track
 }
@@ -347,5 +349,7 @@ fn df_opcode_name(opcode: int, s3: int) -> string {
     if opcode == IR_STORE_PTR { return "store_ptr"; }
     if opcode == IR_SPAWN { return "spawn"; }
     if opcode == IR_YIELD { return "yield"; }
+    if opcode == IR_ARENA_NEW { return "arena_new"; }
+    if opcode == IR_ARENA_RESET { return "arena_reset"; }
     return "?";
 }
