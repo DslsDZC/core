@@ -426,6 +426,9 @@ fn pass_cse() {
             // Skip arena opcodes — side-effecting, not optimizable
             if op == IR_ARENA_NEW { ii = ii + 1; continue; }
             if op == IR_ARENA_RESET { ii = ii + 1; continue; }
+            if op == IR_INLINE { ii = ii + 1; continue; }
+            if op == IR_NO_BOUNDS_CHECK { ii = ii + 1; continue; }
+            if op == IR_FAST { ii = ii + 1; continue; }
 
             // Only CSE for pure computations: BINARY, UNARY
             if (op == IR_BINARY || op == IR_UNARY) && d >= 0 {
