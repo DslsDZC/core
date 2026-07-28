@@ -973,5 +973,18 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
         return cp;
     }
 
+    if op == IR_INLINE {
+        // No-op at runtime — just a compile hint
+        return 0;
+    }
+    if op == IR_NO_BOUNDS_CHECK {
+        // No-op — consumed by ProvenanceVerify pass
+        return 0;
+    }
+    if op == IR_FAST {
+        // No-op — consumed by optimization passes
+        return 0;
+    }
+
     return 0;
 }
