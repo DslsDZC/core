@@ -389,6 +389,21 @@ fn emit_start(buf: string, pos: int) -> int {
         cp = cp + emit_modrm(buf, cp, 0, 6, 10%8);
     }
 
+    // Initialize g_current_arena = -1 (no arena active)
+    if gv_current_arena >= 0 {
+        rip_ca := cp + 3;
+        cp = cp + e2_lr(buf, cp, 0);  // lea r10, [rip+0]
+        grow_rip_patch(g_x86_rip_patch_count + 1);
+        w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, rip_ca);
+        w64(g_x86_rip_patch_globals, g_x86_rip_patch_count * 8, gv_current_arena);
+        g_x86_rip_patch_count = g_x86_rip_patch_count + 1;
+        // mov qword [r10], -1  — REX.WB + 0xC7 /0
+        cp = cp + emit_rex(buf, cp, 1, 0, 0, 10/8);
+        e2_w8(buf, cp, 199); cp = cp + 1;      // 0xC7 MOV r/m64, imm32
+        cp = cp + emit_modrm(buf, cp, 0, 0, 10%8);
+        e2_w32(buf, cp, -1); cp = cp + 4;      // immediate = -1 (0xFFFFFFFF)
+    }
+
     g_call_main_pos = cp;
     cp = cp + e2_call(buf, cp, 0);  // call main
 
@@ -411,6 +426,8 @@ fn emit_start_size() -> int {
     sz : ., mut = sz_start_body();
     if gv_argc >= 0 { sz = sz + sz_start_argv_save(); }
     if gv_argv >= 0 { sz = sz + sz_start_argv_save(); }
+    // g_current_arena init: lea(7) + rex+mov+modrm+imm32(7) = 14 bytes
+    if gv_current_arena >= 0 { sz = sz + 14; }
     return sz;
 }
 
