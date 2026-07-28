@@ -62,10 +62,12 @@ fn provenance_verify_func(nstart: int, ncount: int) {
                                 " >= size " + int_str(alloc_size),
                                 0, 0);
                         }
+                    } else if alloc_size >= 0 {
+                        // Known alloc_size, unknown offset → runtime check
+                        // Encode alloc_size in s3 for backend cmp+jae+ud2
+                        w64(g_df_nodes, ni * ESZ_DFNODE + OFF_DF_S3, alloc_size);
                     } else {
-                        // Runtime-determined size or offset: mark DEREF for runtime bounds check
-                        // Flag the DEREF node's s3 field — backend will emit cmp+jb+ud2
-                        w64(g_df_nodes, ni * ESZ_DFNODE + OFF_DF_S3, 1);
+                        // Both unknown → null trap only (s3=0, fast path)
                     }
                 }
                 mask = mask * 2;
