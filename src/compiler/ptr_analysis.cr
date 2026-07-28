@@ -59,28 +59,34 @@ fn pa_has_bit(bitmap: int, bitpos: int) -> int {
 
 // Merge src bits into dst bitmap, return 1 if dst changed
 fn pa_merge_pts(dst_var: int, src_var: int) -> int {
-    prev := r64(g_pts, dst_var * 8);
+    if dst_var < 0 || src_var < 0 { return 0; }
+    if g_pts_cap <= dst_var { grow_pts(dst_var + 1); }
+    if g_pts_cap <= src_var { grow_pts(src_var + 1); }
+    dst := r64(g_pts, dst_var * 8);
     src := r64(g_pts, src_var * 8);
     if src == 0 { return 0; }
-    nval := prev + src;  // union via addition (bits don't overlap in simple case)
-    // But we need proper OR: check each bit
+    // Bitwise OR: start from dst, add any src bits not already set
+    out_val : int, mut = dst;
     changed : int, mut = 0;
     mask : int, mut = 1;
     bi : ., mut = 0;
     loop { if bi >= 64 { break; }
-        if (src / mask) % 2 == 1 && (prev / mask) % 2 == 0 {
-            nval = pa_set_bit(nval, bi);
+        if (src / mask) % 2 == 1 && (out_val / mask) % 2 == 0 {
+            out_val = out_val + mask;
             changed = 1;
         }
         mask = mask * 2;
         bi = bi + 1;
     }
-    w64(g_pts, dst_var * 8, nval);
+    if changed != 0 { w64(g_pts, dst_var * 8, out_val); }
     return changed;
 }
 
 // Merge alloc_pts[alloc_seq] into pts[dst_var], return 1 if changed
 fn pa_merge_alloc_pts(dst_var: int, alloc_seq: int) -> int {
+    if dst_var < 0 || alloc_seq < 0 { return 0; }
+    if g_pts_cap <= dst_var { grow_pts(dst_var + 1); }
+    if g_alloc_pts_cap <= alloc_seq { grow_alloc_pts(alloc_seq + 1); }
     src := r64(g_alloc_pts, alloc_seq * 8);
     if src == 0 { return 0; }
     prev := r64(g_pts, dst_var * 8);
@@ -207,13 +213,37 @@ fn ptr_analysis_func(nstart: int, ncount: int, vstart: int, vcount: int) {
                 // BINARY with PTR ops: propagate with offset
                 if op == IR_BINARY && (s3 == OP_PTR_ADD || s3 == OP_PTR_SUB) && s1 >= 0 {
                     if pa_merge_pts(d, s1) != 0 { changed = 1; }
-                    w64(g_offsets, d * 8, r64(g_offsets, s1 * 8));
+                    // Prov-GC: evaluate constant offsets precisely
+                    base_off := r64(g_offsets, s1 * 8);
+                    off_val : ., mut = 0;
+                    // Check if s2 comes from a CONST instruction
+                    if s2 >= 0 {
+                        prod := r64(g_df_var_producer, s2 * 8);
+                        if prod >= 0 {
+                            prod_op := r64(g_df_nodes, prod * ESZ_DFNODE + OFF_DF_OPCODE);
+                            if prod_op == IR_CONST {
+                                off_val = r64(g_df_nodes, prod * ESZ_DFNODE + OFF_DF_S1);
+                            }
+                        }
+                    }
+                    if s3 == OP_PTR_ADD {
+                        w64(g_offsets, d * 8, base_off + off_val * 8);
+                    } else {
+                        w64(g_offsets, d * 8, base_off - off_val * 8);
+                    }
                 }
 
                 // Copy: LOAD/STORE propagate pts along def-use
                 if (op == IR_LOAD || op == IR_STORE) && s1 >= 0 {
                     if pa_merge_pts(d, s1) != 0 { changed = 1; }
                     w64(g_offsets, d * 8, r64(g_offsets, s1 * 8));
+                }
+
+                // PHI: merge pts from both predecessors (implicit flow)
+                if op == IR_PHI {
+                    if s1 >= 0 && pa_merge_pts(d, s1) != 0 { changed = 1; }
+                    if s2 >= 0 && pa_merge_pts(d, s2) != 0 { changed = 1; }
+                    w64(g_offsets, d * 8, 0);  // approximate offset after merge
                 }
 
                 // CALL: leave pts=0 for now (conservative)

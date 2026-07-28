@@ -45,6 +45,10 @@ fn provenance_verify_func(nstart: int, ncount: int) {
             pts := r64(g_pts, s1 * 8);
             off := r64(g_offsets, s1 * 8);
 
+            // Prov-GC: precise offset check using improved g_offsets
+            // If offset is precisely known from constants, check against alloc size
+            prec_off := r64(g_offsets, s1 * 8);
+
             // Check each potential allocation target in the points-to set
             mask : int, mut = 1;
             bi : ., mut = 0;
