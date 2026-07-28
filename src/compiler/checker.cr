@@ -1371,6 +1371,11 @@ fn infer_expr(node: int) -> int {
         if ast_kind(func_node) == EXPR_IDENT {
             func_ni = ast_int_val(func_node);
         }
+        // @builtin(args) — transfer args from EXPR_CALL to EXPR_AT, then delegate
+        if ast_kind(func_node) == EXPR_AT {
+            ast_set_b(func_node, first_arg);
+            return infer_expr(func_node);
+        }
         // Check builtins (only syscall3 — OS communication, no .cr body)
         if func_ni >= 0 {
             s := istr_get(func_ni);
@@ -1898,6 +1903,85 @@ fn infer_expr(node: int) -> int {
             e = e + 1;
         }
         return alloc_type(TYP_TUPLE, ec, data_start);
+    }
+
+    if ast_kind(node) == EXPR_AT {
+        name_ni := ast_a(node);
+        name := istr_get(name_ni);
+        args := ast_b(node);
+
+        // @sizeOf(T) — 1 type argument
+        if str_eq(name, "sizeOf") != 0 {
+            if args < 0 { check_error(EC_N_UNDEFINED, "@sizeOf requires a type argument", ast_line(node), ast_col(node)); return TI_NEVER; }
+            ti := res_type_node(args);
+            if ti < 0 { check_error(EC_N_UNDEFINED, "@sizeOf: unknown type", ast_line(node), ast_col(node)); return TI_NEVER; }
+            return TI_INT;
+        }
+
+        // @alignOf(T) — 1 type argument
+        if str_eq(name, "alignOf") != 0 {
+            if args < 0 { check_error(EC_N_UNDEFINED, "@alignOf requires a type argument", ast_line(node), ast_col(node)); return TI_NEVER; }
+            ti := res_type_node(args);
+            if ti < 0 { check_error(EC_N_UNDEFINED, "@alignOf: unknown type", ast_line(node), ast_col(node)); return TI_NEVER; }
+            return TI_INT;
+        }
+
+        // @fields(T) — 1 type argument, returns []string
+        if str_eq(name, "fields") != 0 {
+            if args < 0 { check_error(EC_N_UNDEFINED, "@fields requires a type argument", ast_line(node), ast_col(node)); return TI_NEVER; }
+            ti := res_type_node(args);
+            return TI_STR;
+        }
+
+        // @hasField(T, name) — type + string
+        if str_eq(name, "hasField") != 0 {
+            if args < 0 || ast_b(args) < 0 { check_error(EC_N_UNDEFINED, "@hasField requires 2 args", ast_line(node), ast_col(node)); return TI_NEVER; }
+            ti := res_type_node(ast_a(args));
+            return TI_BOOL;
+        }
+
+        // @field(T, name) — type + string, returns FieldInfo
+        if str_eq(name, "field") != 0 {
+            if args < 0 || ast_b(args) < 0 { check_error(EC_N_UNDEFINED, "@field requires 2 args", ast_line(node), ast_col(node)); return TI_NEVER; }
+            ti := res_type_node(ast_a(args));
+            return TI_INT;
+        }
+
+        // @typeInfo(T) — returns TypeInfo
+        if str_eq(name, "typeInfo") != 0 {
+            if args < 0 { check_error(EC_N_UNDEFINED, "@typeInfo requires a type argument", ast_line(node), ast_col(node)); return TI_NEVER; }
+            ti := res_type_node(args);
+            return TI_INT;  // placeholder — returns handle
+        }
+
+        // @comptime(expr) — force compile-time eval
+        if str_eq(name, "comptime") != 0 {
+            if args < 0 { check_error(EC_N_UNDEFINED, "@comptime requires an expression", ast_line(node), ast_col(node)); return TI_NEVER; }
+            v := infer_expr(ast_a(args));
+            ast_set_type_val(node, v);
+            return v;
+        }
+
+        // @inline(fn) — inline hint
+        if str_eq(name, "inline") != 0 {
+            if args < 0 { check_error(EC_N_UNDEFINED, "@inline requires a function argument", ast_line(node), ast_col(node)); return TI_NEVER; }
+            v := infer_expr(ast_a(args));
+            ast_set_type_val(node, v);
+            return v;
+        }
+
+        // @no_bounds_check — no args, unit
+        if str_eq(name, "no_bounds_check") != 0 {
+            return TI_UNIT;
+        }
+
+        // @fast — no args, unit
+        if str_eq(name, "fast") != 0 {
+            return TI_UNIT;
+        }
+
+        check_error(EC_N_UNDEFINED, "unknown @ builtin: " + name, ast_line(node), ast_col(node));
+        return TI_UNIT;
     }
 
     return TI_UNIT;
