@@ -98,6 +98,21 @@ OFF_DF_FIRST_EDGE : int = 48; OFF_DF_EDGE_COUNT : int = 56;
 ESZ_DFEDGE : int = 24;   // from_node,to_node,next_out = 3x8
 OFF_DFE_FROM : int = 0;  OFF_DFE_TO : int = 8;  OFF_DFE_NEXT : int = 16;
 
+// Subgraph entry (48 bytes each)
+ESZ_SG   : int = 48;
+OFF_SG_KIND   : int = 0;   // 0=func, 1=loop, 2=for, 3=flow, 4=unsafe
+OFF_SG_ENTER  : int = 8;   // enter seq number (instruction index)
+OFF_SG_EXIT   : int = 16;  // exit seq number
+OFF_SG_PARENT : int = 24;  // parent subgraph index
+OFF_SG_NSTART : int = 32;  // first DFNode index
+OFF_SG_NCOUNT : int = 40;  // node count
+
+SG_FUNC   : int = 0;
+SG_LOOP   : int = 1;
+SG_FOR    : int = 2;
+SG_FLOW   : int = 3;
+SG_UNSAFE : int = 4;
+
 // InterfaceInfo: fixed-size entry per interface
 // Header(24) + methods[16] * method_entry(88) = 1432 total
 ESZ_IFACEINFO : int = 1432;
@@ -704,3 +719,12 @@ fn grow_gen_constr(needed: int) {
     nc : ., mut = g_generic_constr_cap * 2; if nc < 16 { nc = 16; } if nc < needed { nc = needed + 16; }
     nb := alloc(nc * 8); _dyncpy(g_generic_constr, g_generic_constr_cap * 8, nb);
     g_generic_constr = nb; g_generic_constr_cap = nc; }
+
+fn grow_sg(n: int) {
+    nc := g_sg_cap;
+    if nc == 0 { nc = 16; }
+    loop { if nc > n { break; } nc = nc * 2; }
+    nb := alloc(nc * ESZ_SG);
+    if g_sg_cap > 0 { _dyncpy(g_sgs, g_sg_cap * ESZ_SG, nb); }
+    g_sgs = nb;
+    g_sg_cap = nc; }
