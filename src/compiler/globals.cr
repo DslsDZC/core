@@ -119,6 +119,10 @@ g_sgs : string, mut;             g_sg_count : int, mut;     g_sg_cap : int, mut;
 g_plugin_tags : string, mut;   g_plugin_tag_count : int, mut;   g_plugin_tag_cap : int, mut;
 g_plugin_rtypes : string, mut; g_plugin_rtype_count : int, mut; g_plugin_rtype_cap : int, mut;
 
+// Pointer analysis storage
+g_pts : string, mut;       g_pts_count : int, mut;     g_pts_cap : int, mut;
+g_offsets : string, mut;   g_offsets_count : int, mut; g_offsets_cap : int, mut;
+
 fn grow_plugin_tags(needed: int) {
     if needed < g_plugin_tag_cap { return; }
     ncap : ., mut = g_plugin_tag_cap * 2; if ncap < 8 { ncap = 8; } if ncap < needed { ncap = needed + 8; }

@@ -728,3 +728,19 @@ fn grow_sg(n: int) {
     if g_sg_cap > 0 { _dyncpy(g_sgs, g_sg_cap * ESZ_SG, nb); }
     g_sgs = nb;
     g_sg_cap = nc; }
+
+fn grow_pts(n: int) {
+    nc := g_pts_cap;
+    if nc == 0 { nc = 16; }
+    loop { if nc > n { break; } nc = nc * 2; }
+    nb := alloc(nc * 8);
+    if g_pts_cap > 0 { _dyncpy(g_pts, g_pts_cap * 8, nb); }
+    g_pts = nb; g_pts_cap = nc; }
+
+fn grow_offsets(n: int) {
+    nc := g_offsets_cap;
+    if nc == 0 { nc = 16; }
+    loop { if nc > n { break; } nc = nc * 2; }
+    nb := alloc(nc * 8);
+    if g_offsets_cap > 0 { _dyncpy(g_offsets, g_offsets_cap * 8, nb); }
+    g_offsets = nb; g_offsets_cap = nc; }
