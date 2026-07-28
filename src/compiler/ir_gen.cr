@@ -96,6 +96,18 @@ fn pop_ir_scope() {
     g_ir_local_count = r64(g_ir_local_scopes, g_ir_local_depth * 8);
 }
 
+fn is_ptr_var(var_idx: int) -> int {
+    if var_idx < 0 { return 0; }
+    prod := r64(g_df_var_producer, var_idx * 8);
+    if prod < 0 { return 0; }
+    prod_op := r64(g_df_nodes, prod * ESZ_DFNODE + OFF_DF_OPCODE);
+    if prod_op == IR_ADDR_INDEX || prod_op == IR_REF ||
+       prod_op == IR_ALLOC || prod_op == IR_ALLOC_STRUCT || prod_op == IR_ALLOC_ARRAY {
+        return 1;
+    }
+    return 0;
+}
+
 fn get_ir_var_name(var_idx: int) -> string {
     if var_idx >= 0 && var_idx < g_ir_var_count {
         ni := irv_name(var_idx);
@@ -289,6 +301,7 @@ fn gen_expr(node: int) -> int {
         right_var := gen_expr(right);
         lt := irv_type(left_var);
         rt := irv_type(right_var);
+
         // String equality compares contents, not pointer values.
         if (op == OP_EQ || op == OP_NE) && (lt == TI_STR || rt == TI_STR) {
             eq_ni := str_intern("str_eq");
@@ -320,11 +333,11 @@ fn gen_expr(node: int) -> int {
             }
         }
         // Pointer arithmetic: use PTR_ADD/PTR_SUB/PTR_DIFF instead of standard opcodes
-        lk := get_type_kind(lt);
-        if lk == TYP_PTR || get_type_kind(rt) == TYP_PTR {
+        // Detection uses the producer node's opcode since irv_type stores TI_UNIT for pointers
+        if is_ptr_var(left_var) || is_ptr_var(right_var) {
             if op == OP_ADD { op = OP_PTR_ADD; }
             else if op == OP_SUB {
-                if lk == TYP_PTR && get_type_kind(rt) == TYP_PTR {
+                if is_ptr_var(left_var) && is_ptr_var(right_var) {
                     op = OP_PTR_DIFF;
                 } else {
                     op = OP_PTR_SUB;
@@ -339,6 +352,12 @@ fn gen_expr(node: int) -> int {
     // Assignment
     if ast_kind(node) == EXPR_ASSIGN {
         target := ast_a(node);
+        // Unwrap EXPR_NONE wrapper (added by checker/optimizer to
+        // mark rewritten nodes). Without unwrapping, the target
+        // checks below would miss wrapped UOP_DEREF or INDEX nodes.
+        if ast_kind(target) == EXPR_NONE && ast_a(target) >= 0 {
+            target = ast_a(target);
+        }
         val_node := ast_b(node);
         val_var := gen_expr(val_node);
         if ast_kind(target) == EXPR_IDENT {

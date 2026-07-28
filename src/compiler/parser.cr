@@ -182,6 +182,14 @@ fn parse_expr() -> int {
 
 fn parse_binary(mp: int) -> int {
     left : ., mut = parse_unary();
+    // If the left expression is a block-ending construct (IF, BLOCK, etc.),
+    // don't allow binary operators to extend past it. The next operator
+    // belongs to a new expression, not the current one.
+    // This prevents `if ... { } *p = 99` from parsing `*` as multiplication.
+    lk := ast_kind(left);
+    if lk == EXPR_IF || lk == EXPR_BLOCK || lk == EXPR_LOOP || lk == EXPR_WHILE || lk == EXPR_FOR {
+        return left;
+    }
     loop {
         t := cur_tok();
         k := tok_k(t);
@@ -743,13 +751,6 @@ fn parse_stmt() -> int {
     e := parse_expr();
     if check(T_SEMI) {
         advance_tok();
-        return alloc_node(EXPR_STMT, e, 0, 0, 0, 0, 0, tok_ln(t), tok_cl(t));
-    }
-    // If the parsed expression is an if-expression that may be followed
-    // by a unary/binary operator (like * or +) on the next line, wrap it
-    // in EXPR_STMT to prevent the operator from being parsed as part of
-    // the if-expression (e.g. "if ... { } *p = 99" parsed as "if * 99").
-    if ast_kind(e) == EXPR_IF {
         return alloc_node(EXPR_STMT, e, 0, 0, 0, 0, 0, tok_ln(t), tok_cl(t));
     }
     return e;
