@@ -15,6 +15,22 @@ fn get_alloc_size(alloc_node_seq: int) -> int {
     return -1;  // unknown (defer to runtime check)
 }
 
+fn pv_is_in_unsafe(node_seq: int) -> int {
+    si : ., mut = 0;
+    loop { if si >= g_sg_count { break; }
+        kind := r64(g_sgs, si * ESZ_SG + OFF_SG_KIND);
+        if kind == SG_UNSAFE {
+            nstart := r64(g_sgs, si * ESZ_SG + OFF_SG_NSTART);
+            ncount := r64(g_sgs, si * ESZ_SG + OFF_SG_NCOUNT);
+            if node_seq >= nstart && node_seq < nstart + ncount {
+                return 1;
+            }
+        }
+        si = si + 1;
+    }
+    return 0;
+}
+
 fn provenance_verify_func(nstart: int, ncount: int) {
     ni : ., mut = nstart;
     loop { if ni >= nstart + ncount { break; }
@@ -23,6 +39,9 @@ fn provenance_verify_func(nstart: int, ncount: int) {
         s1 := r64(g_df_nodes, ni * ESZ_DFNODE + OFF_DF_S1);
 
         if op == IR_DEREF && d >= 0 && s1 >= 0 {
+            // Skip checks in unsafe blocks
+            if pv_is_in_unsafe(ni) != 0 { ni = ni + 1; continue; }
+
             pts := r64(g_pts, s1 * 8);
             off := r64(g_offsets, s1 * 8);
 
@@ -39,8 +58,11 @@ fn provenance_verify_func(nstart: int, ncount: int) {
                                 " >= size " + int_str(alloc_size),
                                 0, 0);
                         }
+                    } else {
+                        // Runtime-determined size or offset: emit IR_BOUNDS_CHECK
+                        // s1=index_var (offset placeholder), s2=max_len (alloc_size placeholder)
+                        // Not yet emitted — IR modification post-gen is future work
                     }
-                    // if alloc_size < 0: runtime check needed (not yet implemented)
                 }
                 mask = mask * 2;
                 bi = bi + 1;

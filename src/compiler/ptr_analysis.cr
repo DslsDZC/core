@@ -61,6 +61,15 @@ fn ptr_analysis_func(nstart: int, ncount: int, vstart: int, vcount: int) {
                     w64(g_offsets, d * 8, r64(g_offsets, s1 * 8));
                 }
             }
+
+            // CALL: conservative — leave pts=0 (untrackable).
+            // Passes will not report errors for CALL results since
+            // pts==0 means "no provenance info available".
+            // Future: interprocedural pointer analysis for known callees.
+            if op == IR_CALL {
+                // pts stays 0 (initialized above) = unknown/top
+                w64(g_offsets, d * 8, 0);
+            }
         }
         ni = ni + 1;
     }
