@@ -4,6 +4,43 @@
 
 // (IR globals declared in globals.cr)
 
+// Subgraph-level arena tracking for compile-time size estimation
+g_sg_alloc_total : string, mut;    // per-sg: cumulative alloc size
+g_sg_alloc_cap   : int, mut;
+g_sg_arena_var   : string, mut;    // per-sg: IR var for arena ID
+g_sg_arena_var_cap : int, mut;
+
+fn grow_sg_alloc(needed: int) {
+    if needed < g_sg_alloc_cap { return; }
+    nc := g_sg_alloc_cap * 2; if nc < 64 { nc = 64; } if nc < needed { nc = needed + 64; }
+    nb := alloc(nc * 8); _dyncpy(g_sg_alloc_total, g_sg_alloc_cap * 8, nb); g_sg_alloc_total = nb; g_sg_alloc_cap = nc; }
+
+fn grow_sg_arena_var(needed: int) {
+    if needed < g_sg_arena_var_cap { return; }
+    nc := g_sg_arena_var_cap * 2; if nc < 64 { nc = 64; } if nc < needed { nc = needed + 64; }
+    nb := alloc(nc * 8); _dyncpy(g_sg_arena_var, g_sg_arena_var_cap * 8, nb); g_sg_arena_var = nb; g_sg_arena_var_cap = nc; }
+
+fn sg_alloc_push(kind: int) {
+    grow_sg_alloc(g_sg_count + 1);
+    grow_sg_arena_var(g_sg_count + 1);
+    w64(g_sg_alloc_total, g_sg_count * 8, 0);
+    sg_push(kind);
+}
+
+fn sg_alloc_pop() {
+    total := r64(g_sg_alloc_total, (g_sg_count - 1) * 8);
+    arena_var := r64(g_sg_arena_var, (g_sg_count - 1) * 8);
+    sg_pop();
+    emit(IR_ARENA_RESET, -1, arena_var, 0, 0, 0);
+}
+
+fn track_alloc_size(size: int) {
+    if g_sg_count > 0 {
+        prev := r64(g_sg_alloc_total, (g_sg_count - 1) * 8);
+        w64(g_sg_alloc_total, (g_sg_count - 1) * 8, prev + size);
+    }
+}
+
 fn new_ir_var(name: string, type_idx: int) -> int {
     idx := g_ir_var_count;
     grow_ir_vars(idx + 1);
@@ -27,6 +64,12 @@ fn emit(opcode: int, dest: int, src1: int, src2: int, src3: int, type_kind: int)
     g_ir_instr_count = idx + 1;
     // Build dataflow graph (.cir) in parallel
     df_create_node(opcode, dest, src1, src2, src3, type_kind);
+    // Track allocation size for subgraph arena size estimation
+    if opcode == IR_ALLOC && src1 > 0 { track_alloc_size(src1); }
+    if opcode == IR_ALLOC_STRUCT {
+        track_alloc_size(64);
+    }
+    if opcode == IR_ALLOC_ARRAY && src1 > 0 { track_alloc_size(src1 * 8); }
 }
 
 fn new_label() -> int {
@@ -656,13 +699,19 @@ fn gen_expr(node: int) -> int {
         emit(IR_LABEL, -1, header_lbl, 0, 0, 0);
         emit(IR_JUMP, -1, body_lbl, 0, 0, 0);
         emit(IR_LABEL, -1, body_lbl, 0, 0, 0);
-        sg_push(SG_LOOP);
+        sg_alloc_push(SG_LOOP);
+        arena_var := new_ir_var("_arena", TI_INT);
+        w64(g_sg_arena_var, (g_sg_count - 1) * 8, arena_var);
+        emit(IR_ARENA_NEW, arena_var, 0, 0, 0, 0);
+        arena_instr := g_ir_instr_count - 1;
         push_ir_scope();
         push_loop_labels(header_lbl, exit_lbl);
         gen_expr(ast_a(node));
         pop_loop_labels();
         pop_ir_scope();
-        sg_pop();
+        total := r64(g_sg_alloc_total, g_sg_count - 1);
+        if total > 0 { iri_set_s1(arena_instr, total); }
+        sg_alloc_pop();
         emit(IR_JUMP, -1, header_lbl, 0, 0, 0);
         emit(IR_LABEL, -1, exit_lbl, 0, 0, 0);
         return -1;
@@ -721,13 +770,19 @@ fn gen_expr(node: int) -> int {
         emit(IR_BRANCH, -1, cond_var, body_lbl, exit_lbl, 0);
         // Body
         emit(IR_LABEL, -1, body_lbl, 0, 0, 0);
-        sg_push(SG_FOR);
+        sg_alloc_push(SG_FOR);
+        arena_var := new_ir_var("_arena", TI_INT);
+        w64(g_sg_arena_var, (g_sg_count - 1) * 8, arena_var);
+        emit(IR_ARENA_NEW, arena_var, 0, 0, 0, 0);
+        arena_instr := g_ir_instr_count - 1;
         push_ir_scope();
         push_loop_labels(header_lbl, exit_lbl);
         gen_expr(body);
         pop_loop_labels();
         pop_ir_scope();
-        sg_pop();
+        total := r64(g_sg_alloc_total, g_sg_count - 1);
+        if total > 0 { iri_set_s1(arena_instr, total); }
+        sg_alloc_pop();
         // Increment ivar and jump to header
         one_var := new_ir_var("one", TI_INT);
         emit(IR_CONST, one_var, 1, 0, 0, TI_INT);
@@ -1002,9 +1057,15 @@ fn gen_expr(node: int) -> int {
         return gen_expr(ast_a(node));
     }
     if ast_kind(node) == EXPR_UNSAFE {
-        sg_push(SG_UNSAFE);
+        sg_alloc_push(SG_UNSAFE);
+        arena_var := new_ir_var("_arena", TI_INT);
+        w64(g_sg_arena_var, (g_sg_count - 1) * 8, arena_var);
+        emit(IR_ARENA_NEW, arena_var, 0, 0, 0, 0);
+        arena_instr := g_ir_instr_count - 1;
         ret := gen_expr(ast_a(node));
-        sg_pop();
+        total := r64(g_sg_alloc_total, g_sg_count - 1);
+        if total > 0 { iri_set_s1(arena_instr, total); }
+        sg_alloc_pop();
         return ret;
     }
     if ast_kind(node) == EXPR_AS {
@@ -1086,10 +1147,22 @@ fn ir_gen_func(fi: int) {
         }
     }
 
+    // Function-level arena
+    sg_alloc_push(SG_FUNC);
+    arena_var := new_ir_var("_arena", TI_INT);
+    w64(g_sg_arena_var, (g_sg_count - 1) * 8, arena_var);
+    emit(IR_ARENA_NEW, arena_var, 0, 0, 0, 0);
+    arena_instr := g_ir_instr_count - 1;
+
     // Generate body
     if body >= 0 {
         gen_expr(body);
     }
+
+    // Patch arena size and reset before return
+    total := r64(g_sg_alloc_total, g_sg_count - 1);
+    if total > 0 { iri_set_s1(arena_instr, total); }
+    sg_alloc_pop();
 
     // Add return at end if not already terminated
     emit(IR_RETURN, -1, -1, 0, 0, 0);
