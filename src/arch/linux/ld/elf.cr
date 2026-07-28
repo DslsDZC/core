@@ -206,9 +206,31 @@ fn emit_alloc_body(buf: string, pos: int, bss_va: int, globals_size: int) -> int
     // mov [rip + heap_ptr], r11
     rel2 := bss_va - (fva + cp + 7);
     w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 29); w8_signed(buf, pos+cp+3, rel2); cp = cp + 7;
-    // mov r8, r11 — 4D 89 D8
+    // ── OOM bounds check: .Lretry block ──
+    // Save original heap_ptr, check against heap_end, call heap_expand if OOM.
+    // mov r8, r11 -- 4D 89 D8 (save original heap_ptr)
     w8(buf, pos+cp, 77); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 216); cp = cp + 3;
-    // add r11, rdi — 49 01 FB
+    retry_cp := cp;
+    // lea rdx, [r11 + rdi] -- 4C 8D 14 3F (compute new end = r11 + rdi)
+    w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 20); w8(buf, pos+cp+3, 63); cp = cp + 4;
+    // lea rcx, [rip + heap_end] -- 48 8D 0D xx xx xx xx (heap_end at bss_va+8)
+    heap_end_va : ., mut = bss_va + 8;
+    rel_he := heap_end_va - (fva + cp + 7);
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 13); w8_signed(buf, pos+cp+3, rel_he); cp = cp + 7;
+    // cmp rdx, [rcx] -- 48 3B 11
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 59); w8(buf, pos+cp+2, 17); cp = cp + 3;
+    // jbe +14 (skip call+reload+jmp if within bounds) -- 76 0E
+    w8(buf, pos+cp, 118); w8(buf, pos+cp+1, 14); cp = cp + 2;
+    // call heap_expand -- E8 xx xx xx xx (patched in elf_gen after heap_expand emitted)
+    g_heap_expand_call_pos = pos + cp;
+    e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;
+    // mov r11, [rip + heap_ptr] -- 4C 8B 1D xx xx xx xx (reload heap_ptr after expand)
+    rel_hr := bss_va - (fva + cp + 7);
+    w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 29); w8_signed(buf, pos+cp+3, rel_hr); cp = cp + 7;
+    // jmp .Lretry -- EB xx (short backwards jump to mov r8, r11)
+    jmp_off_val := retry_cp - (cp + 2);
+    w8(buf, pos+cp, 235); w8(buf, pos+cp+1, jmp_off_val % 256); cp = cp + 2;
+    // add r11, rdi -- 49 01 FB (bump r11, only reached when within bounds)
     w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 1); w8(buf, pos+cp+2, 251); cp = cp + 3;
     // mov [rip + heap_ptr], r11
     rel3 := bss_va - (fva + cp + 7);
@@ -247,6 +269,53 @@ fn emit_alloc_body(buf: string, pos: int, bss_va: int, globals_size: int) -> int
     // ret
     w8(buf, pos+cp, 195); cp = cp + 1;
 
+    return cp;
+}
+
+// ── heap_expand: mmap(0, 1GB, 3, 0x22, -1, 0) for OOM recovery ──
+// Called when global bump heap reaches heap_end. Uses mmap syscall to
+// allocate a new 1GiB region, then updates heap_ptr and heap_end.
+fn emit_heap_expand(buf: string, pos: int, bss_va: int) -> int {
+    cp := 0;
+    fva := TEXT_BASE + pos;
+    // xor edi, edi -- 31 FF (addr = NULL, let kernel choose)
+    w8(buf, pos+cp, 49); w8(buf, pos+cp+1, 255); cp = cp + 2;
+    // mov esi, 1073741824 -- BE xx xx xx xx (length = 1 GiB)
+    e2_w8(buf, pos+cp, 190); e2_w32(buf, pos+cp+1, 1073741824); cp = cp + 5;
+    // mov edx, 3 -- BA 03 00 00 00 (prot = PROT_READ|PROT_WRITE)
+    w8(buf, pos+cp, 186); e2_w32(buf, pos+cp+1, 3); cp = cp + 5;
+    // mov r10d, 0x22 -- 41 BA 22 00 00 00 (flags = MAP_PRIVATE|MAP_ANONYMOUS)
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 186); e2_w32(buf, pos+cp+2, 34); cp = cp + 6;
+    // mov r8d, -1 -- 41 B8 FF FF FF FF (fd = -1)
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 184); e2_w32(buf, pos+cp+2, -1); cp = cp + 6;
+    // xor r9d, r9d -- 45 31 C9 (offset = 0)
+    w8(buf, pos+cp, 69); w8(buf, pos+cp+1, 49); w8(buf, pos+cp+2, 201); cp = cp + 3;
+    // mov eax, 9 -- B8 09 00 00 00 (sys_mmap)
+    w8(buf, pos+cp, 184); e2_w32(buf, pos+cp+1, 9); cp = cp + 5;
+    // syscall -- 0F 05
+    w8(buf, pos+cp, 15); w8(buf, pos+cp+1, 5); cp = cp + 2;
+    // test rax, rax -- 48 85 C0 (check if mmap returned negative error)
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 133); w8(buf, pos+cp+2, 192); cp = cp + 3;
+    // js .Lhf -- 78 XX (skip success path if mmap failed, rax has -errno)
+    // Success path: 7+7+7+2+1 = 24 bytes
+    w8(buf, pos+cp, 120); w8(buf, pos+cp+1, 24); cp = cp + 2;
+    // mov [rip + heap_ptr], rax -- 48 89 05 xx xx xx xx
+    rel_hp_s := bss_va - (fva + cp + 7);
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 5); w8_signed(buf, pos+cp+3, rel_hp_s); cp = cp + 7;
+    // lea r11, [rax + 1073741824] -- 4C 8D 98 xx xx xx xx (heap_end = new base + 1GB)
+    w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 152); e2_w32(buf, pos+cp+3, 1073741824); cp = cp + 7;
+    // mov [rip + heap_end], r11 -- 4C 89 1D xx xx xx xx
+    rel_hp_e := (bss_va + 8) - (fva + cp + 7);
+    w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 29); w8_signed(buf, pos+cp+3, rel_hp_e); cp = cp + 7;
+    // xor eax, eax -- 31 C0 (return 0 for success)
+    w8(buf, pos+cp, 49); w8(buf, pos+cp+1, 192); cp = cp + 2;
+    // ret -- C3
+    w8(buf, pos+cp, 195); cp = cp + 1;
+    // .Lhf: mmap failed, return -1
+    // mov rax, -1 -- 48 C7 C0 FF FF FF FF
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 199); w8(buf, pos+cp+2, 192); e2_w32(buf, pos+cp+3, -1); cp = cp + 7;
+    // ret -- C3
+    w8(buf, pos+cp, 195); cp = cp + 1;
     return cp;
 }
 
@@ -385,6 +454,7 @@ gv_arena_cursors : int, mut = -1;
 gv_arena_sizes : int, mut = -1;
 gv_arena_pool_data : int, mut = -1;
 gv_arena_max_size : int, mut = -1;
+g_heap_expand_call_pos : int, mut = -1;
 
 fn emit_start(buf: string, pos: int) -> int {
     cp : ., mut = pos;
@@ -600,7 +670,13 @@ fn elf_gen(buf: string) -> int {
     w64(g_x86_func_offsets, g_x86_func_off_count * 16, alloc_ni);
     w64(g_x86_func_offsets, g_x86_func_off_count * 16 + 8, total_code);
     g_x86_func_off_count = g_x86_func_off_count + 1;
-    total_code = total_code + 272;  // arena-aware dual-path alloc body (actual: ~271 bytes with zero-init + chain-expand fix)
+    total_code = total_code + 310;  // arena-aware dual-path alloc body (~304 bytes with OOM check + zero-init + chain-expand)
+    // heap_expand
+    grow_func_offsets(g_x86_func_off_count * 2 + 2);
+    w64(g_x86_func_offsets, g_x86_func_off_count * 16, str_intern("heap_expand"));
+    w64(g_x86_func_offsets, g_x86_func_off_count * 16 + 8, total_code);
+    g_x86_func_off_count = g_x86_func_off_count + 1;
+    total_code = total_code + 80;  // heap_expand size estimate (~71 bytes)
     // sched_call trampolines (0..4)
     grow_func_offsets(g_x86_func_off_count * 2 + 2);
     w64(g_x86_func_offsets, g_x86_func_off_count * 16, str_intern("sched_call_0"));
@@ -802,6 +878,17 @@ fi = 0; loop { if fi >= g_ir_func_count { break; }
     alloc_start := cp;
     cp = cp + alloc_sz;
 
+    // ── heap_expand ──
+    heap_expand_start : ., mut = cp;
+    cp = cp + emit_heap_expand(buf, cp, bss_va);
+    // Update heap_expand's offset in func_offsets to real position (Phase 3 value)
+    hefi := 0;
+    loop { if hefi >= g_x86_func_off_count { break; }
+        if str_eq(istr_get(r64(g_x86_func_offsets, hefi*16)), "heap_expand") != 0 {
+            w64(g_x86_func_offsets, hefi*16+8, heap_expand_start - 176);
+            break; }
+    hefi = hefi + 1; }
+
     // Update alloc's offset in func_offsets to real position (Phase 3 value)
     afi2 := 0;
     loop { if afi2 >= g_x86_func_off_count { break; }
@@ -921,6 +1008,16 @@ fi = 0; loop { if fi >= g_ir_func_count { break; }
     // The allocator was emitted earlier with a provisional BSS address.
     // Re-emit it in place now that the final data-segment VA is known.
     emit_alloc_body(buf, alloc_start, bss_va, globals_size);
+
+    // Re-emit heap_expand with correct BSS VA
+    emit_heap_expand(buf, heap_expand_start, bss_va);
+
+    // Patch call to heap_expand inside alloc body (re-emit wrote placeholder offset 0)
+    if g_heap_expand_call_pos >= 0 {
+        rel_he_call := heap_expand_start - (g_heap_expand_call_pos + 5);
+        w32(buf, g_heap_expand_call_pos + 1, rel_he_call);
+        g_heap_expand_call_pos = -1;
+    }
 
     // ── Allocate BSS for globals ──
     gi2 := 0; goff : ., mut = 0;
