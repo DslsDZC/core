@@ -369,6 +369,11 @@ fn corec_main() -> int {
         return 0;
     }
 
+    // === Pointer analysis + safety passes (always run, even at opt_level 0) ===
+    ptr_analysis_all();
+    region_check_all();
+    provenance_verify_all();
+
     // === build | ccr need lower_to_ccr ===
     if g_opt_level >= 1 {
         pass_cse();

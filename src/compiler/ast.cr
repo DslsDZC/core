@@ -247,6 +247,7 @@ EXPR_TRY : int = 33;      // a=expr being tried (? operator)
 EXPR_UNSAFE : int = 34;   // a=block body
 EXPR_STRUCTPAT : int = 35; // struct pattern: a=name ni, b=first field pat, c=field count
 EXPR_AS : int = 36;        // a=expr, b=type node (cast: expr as Type)
+EXPR_PTRTYPE : int = 46;  // a=inner_type (for *T in type position)
 
 // Field representation in struct literal: two consecutive AST nodes
 // (name_idx, value_idx, line=line, col=col)
@@ -274,6 +275,9 @@ OP_OR : int = 13;
 OP_ASSIGN : int = 14;
 OP_SHL : int = 15;  // strength reduction: x << n
 OP_SHR : int = 16;  // strength reduction: x >> n
+OP_PTR_ADD  : int = 17;  // p + n (p: *T, n: int) → scaled by sizeof(T)
+OP_PTR_SUB  : int = 18;  // p - n
+OP_PTR_DIFF : int = 19;  // p - q → element count
 
 // Unary operator codes
 UOP_NEG : int = 1;
@@ -295,6 +299,7 @@ TYP_BASE : int = 0;   // data = TY_* constant
 TYP_NAMED : int = 1;  // data = name string index
 TYP_ARRAY : int = 2;  // data = element type idx, extra = size
 TYP_REF : int = 3;    // data = inner type idx, extra = mut flag
+TYP_PTR : int = 4;    // data=pointee_type, extra=address_space (0=tracked, 1=external)
 TYP_GENERIC_PARAM : int = 7;  // data = name string index (unresolved generic param)
 TYP_GENERIC_APPLY : int = 8;  // data = base type idx, extra = arg list start in g_gen_apply_data
 TYP_SLICE : int = 9;   // data = element type idx (dynamic-length view into array)
@@ -539,6 +544,7 @@ IR_LOAD_ENUM_TAG : int = 23;
 IR_SLICE : int = 24;   // dest=slice_var, s1=arr_var, s2=low_var, src3=high_var — create slice ptr from range
 IR_DEREF : int = 25;   // dest=loaded_val, s1=ref_var — load value through pointer stored in ref_var
 IR_STORE_PTR : int = 26; // dest=val_var, s1=ptr_var, s2=val_var — store value through pointer
+IR_ADDR_INDEX : int = 31; // dest=addr, s1=arr_var, s2=index_var, s3=scale — compute &arr[index] without loading
 IR_SPAWN : int = 27;     // dest=result_var, s1=fn_name_ni, s2=first_arg, src3=arg_count, type_kind=spawn_count (-1=dynamic)
 IR_YIELD : int = 28;     // s1=value_var — emit value from flow to consumer channel
 IR_AWAIT : int = 29;     // dest=value_var, s1=future_var — block until future ready, get value

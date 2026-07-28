@@ -37,6 +37,8 @@ g_ifaces : string, mut;          g_iface_count : int, mut;     g_iface_cap : int
 g_impl_for : string, mut;        g_impl_for_count : int, mut;  g_impl_for_cap : int, mut;
 g_generic_constr : string, mut;  g_generic_constr_count : int, mut; g_generic_constr_cap : int, mut;
 g_checker_current_fi : int, mut;
+g_unsafe_depth : int, mut;
+g_alloc_pts : string, mut;     g_alloc_pts_cap : int, mut;
 g_borrow_vars : string, mut;          g_borrow_refs : string, mut;       g_borrow_muts : string, mut;
 g_borrow_count : int, mut;            g_borrow_cap : int, mut;
 g_holder_borrowers : string, mut;     g_holder_borrowed : string, mut;   g_holder_is_mut : string, mut;
@@ -111,10 +113,17 @@ g_opt_level : int, mut;     // 0=none, 1=regalloc, 2=stackshare, 3=cse
 g_opt_meta : string, mut;   // metadata buffer for .ccr v3+
 g_opt_meta_count : int, mut; g_opt_meta_cap : int, mut;
 
+// Subgraph table (for RegionCheck pass lifetime tracking)
+g_sgs : string, mut;             g_sg_count : int, mut;     g_sg_cap : int, mut;
+
 // Plugin extension registry: tags and return types from .so/stdlib plugins
 // Each entry: 24 bytes = [ns_ni, name_ni, data_ni]
 g_plugin_tags : string, mut;   g_plugin_tag_count : int, mut;   g_plugin_tag_cap : int, mut;
 g_plugin_rtypes : string, mut; g_plugin_rtype_count : int, mut; g_plugin_rtype_cap : int, mut;
+
+// Pointer analysis storage
+g_pts : string, mut;       g_pts_count : int, mut;     g_pts_cap : int, mut;
+g_offsets : string, mut;   g_offsets_count : int, mut; g_offsets_cap : int, mut;
 
 fn grow_plugin_tags(needed: int) {
     if needed < g_plugin_tag_cap { return; }

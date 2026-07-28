@@ -96,6 +96,18 @@ fn pop_ir_scope() {
     g_ir_local_count = r64(g_ir_local_scopes, g_ir_local_depth * 8);
 }
 
+fn is_ptr_var(var_idx: int) -> int {
+    if var_idx < 0 { return 0; }
+    prod := r64(g_df_var_producer, var_idx * 8);
+    if prod < 0 { return 0; }
+    prod_op := r64(g_df_nodes, prod * ESZ_DFNODE + OFF_DF_OPCODE);
+    if prod_op == IR_ADDR_INDEX || prod_op == IR_REF ||
+       prod_op == IR_ALLOC || prod_op == IR_ALLOC_STRUCT || prod_op == IR_ALLOC_ARRAY {
+        return 1;
+    }
+    return 0;
+}
+
 fn get_ir_var_name(var_idx: int) -> string {
     if var_idx >= 0 && var_idx < g_ir_var_count {
         ni := irv_name(var_idx);
@@ -289,6 +301,7 @@ fn gen_expr(node: int) -> int {
         right_var := gen_expr(right);
         lt := irv_type(left_var);
         rt := irv_type(right_var);
+
         // String equality compares contents, not pointer values.
         if (op == OP_EQ || op == OP_NE) && (lt == TI_STR || rt == TI_STR) {
             eq_ni := str_intern("str_eq");
@@ -319,6 +332,18 @@ fn gen_expr(node: int) -> int {
                 return v;
             }
         }
+        // Pointer arithmetic: use PTR_ADD/PTR_SUB/PTR_DIFF instead of standard opcodes
+        // Detection uses the producer node's opcode since irv_type stores TI_UNIT for pointers
+        if is_ptr_var(left_var) || is_ptr_var(right_var) {
+            if op == OP_ADD { op = OP_PTR_ADD; }
+            else if op == OP_SUB {
+                if is_ptr_var(left_var) && is_ptr_var(right_var) {
+                    op = OP_PTR_DIFF;
+                } else {
+                    op = OP_PTR_SUB;
+                }
+            }
+        }
         v := new_ir_var("bin", TI_INT);
         emit(IR_BINARY, v, left_var, right_var, op, 0);
         return v;
@@ -327,6 +352,12 @@ fn gen_expr(node: int) -> int {
     // Assignment
     if ast_kind(node) == EXPR_ASSIGN {
         target := ast_a(node);
+        // Unwrap EXPR_NONE wrapper (added by checker/optimizer to
+        // mark rewritten nodes). Without unwrapping, the target
+        // checks below would miss wrapped UOP_DEREF or INDEX nodes.
+        if ast_kind(target) == EXPR_NONE && ast_a(target) >= 0 {
+            target = ast_a(target);
+        }
         val_node := ast_b(node);
         val_var := gen_expr(val_node);
         if ast_kind(target) == EXPR_IDENT {
@@ -368,8 +399,17 @@ fn gen_expr(node: int) -> int {
     // Unary operation
     if ast_kind(node) == EXPR_UNARY {
         op := ast_c(node);
-        op_var := gen_expr(ast_a(node));
         if op == UOP_REF {
+            inner := ast_a(node);
+            // &arr[i]: compute address directly, don't load then take addr
+            if ast_kind(inner) == EXPR_INDEX {
+                arr_var := gen_expr(ast_a(inner));
+                idx_var := gen_expr(ast_b(inner));
+                v := new_ir_var("addr", TI_UNIT);
+                emit(IR_ADDR_INDEX, v, arr_var, idx_var, 3, 0);
+                return v;
+            }
+            op_var := gen_expr(ast_a(node));
             v := new_ir_var("ref", TI_UNIT);
             emit(IR_REF, v, op_var, ast_int_val(node), 0, 0);
             return v;
@@ -380,6 +420,7 @@ fn gen_expr(node: int) -> int {
             emit(IR_DEREF, dv, inner_var, 0, 0, 0);
             return dv;
         }
+        op_var := gen_expr(ast_a(node));
         v := new_ir_var("un", TI_INT);
         emit(IR_UNARY, v, op_var, 0, op, 0);
         return v;
@@ -615,11 +656,13 @@ fn gen_expr(node: int) -> int {
         emit(IR_LABEL, -1, header_lbl, 0, 0, 0);
         emit(IR_JUMP, -1, body_lbl, 0, 0, 0);
         emit(IR_LABEL, -1, body_lbl, 0, 0, 0);
+        sg_push(SG_LOOP);
         push_ir_scope();
         push_loop_labels(header_lbl, exit_lbl);
         gen_expr(ast_a(node));
         pop_loop_labels();
         pop_ir_scope();
+        sg_pop();
         emit(IR_JUMP, -1, header_lbl, 0, 0, 0);
         emit(IR_LABEL, -1, exit_lbl, 0, 0, 0);
         return -1;
@@ -678,11 +721,13 @@ fn gen_expr(node: int) -> int {
         emit(IR_BRANCH, -1, cond_var, body_lbl, exit_lbl, 0);
         // Body
         emit(IR_LABEL, -1, body_lbl, 0, 0, 0);
+        sg_push(SG_FOR);
         push_ir_scope();
         push_loop_labels(header_lbl, exit_lbl);
         gen_expr(body);
         pop_loop_labels();
         pop_ir_scope();
+        sg_pop();
         // Increment ivar and jump to header
         one_var := new_ir_var("one", TI_INT);
         emit(IR_CONST, one_var, 1, 0, 0, TI_INT);
@@ -957,7 +1002,10 @@ fn gen_expr(node: int) -> int {
         return gen_expr(ast_a(node));
     }
     if ast_kind(node) == EXPR_UNSAFE {
-        return gen_expr(ast_a(node));
+        sg_push(SG_UNSAFE);
+        ret := gen_expr(ast_a(node));
+        sg_pop();
+        return ret;
     }
     if ast_kind(node) == EXPR_AS {
         // Type cast: emit inner expr, result type handled by checker

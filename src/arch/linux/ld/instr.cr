@@ -248,6 +248,11 @@ fn e2_je(b: string, p: int, rel: int) -> int {
     e2_w8(b, p, 15); e2_w8(b, p+1, 132); e2_w32(b, p+2, rel); return 6;
 }
 
+fn e2_jae(b: string, p: int, rel: int) -> int {
+    // jae rel32 near — 2-byte opcode 0x0F 0x83
+    e2_w8(b, p, 15); e2_w8(b, p+1, 131); e2_w32(b, p+2, rel); return 6;
+}
+
 fn e2_alu(b: string, p: int, op: int) -> int {
     // ALU r/m, r: REX.W + REX.RB (r11, r10) + opcode + ModRM reg=11, rm=10
     cp := p;
@@ -344,6 +349,33 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
             cp = cp + emit_rex(buf, pos+cp, 1, 0, 0, 10/8);
             e2_w8(buf, pos+cp, 211); cp = cp + 1;
             cp = cp + emit_modrm(buf, pos+cp, 3, 5, 10%8);
+        }
+        else if s3 == OP_PTR_ADD {  // p + n: scale n by element size (8), add to p
+            // imul r11, 8, r11 — REX.WB + 0x6B + ModRM(3, r11, r11) + imm8
+            cp = cp + emit_rex(buf, pos+cp, 1, 11/8, 0, 11/8);
+            e2_w8(buf, pos+cp, 107); cp = cp + 1;
+            cp = cp + emit_modrm(buf, pos+cp, 3, 11%8, 11%8);
+            e2_w8(buf, pos+cp, 8); cp = cp + 1;
+            // add r10, r11
+            cp = cp + e2_alu(buf, pos+cp, 1);
+        }
+        else if s3 == OP_PTR_SUB {  // p - n: scale n by element size (8), sub from p
+            // imul r11, 8, r11
+            cp = cp + emit_rex(buf, pos+cp, 1, 11/8, 0, 11/8);
+            e2_w8(buf, pos+cp, 107); cp = cp + 1;
+            cp = cp + emit_modrm(buf, pos+cp, 3, 11%8, 11%8);
+            e2_w8(buf, pos+cp, 8); cp = cp + 1;
+            // sub r10, r11
+            cp = cp + e2_alu(buf, pos+cp, 41);
+        }
+        else if s3 == OP_PTR_DIFF {  // p - q: diff in bytes, then /8 → element count
+            // sub r10, r11
+            cp = cp + e2_alu(buf, pos+cp, 41);
+            // sar r10, 3 — divide by 8
+            cp = cp + emit_rex(buf, pos+cp, 1, 0, 0, 10/8);
+            e2_w8(buf, pos+cp, 193); cp = cp + 1;  // 0xC1 SHIFT r/m, imm8
+            cp = cp + emit_modrm(buf, pos+cp, 3, 7, 10%8);  // /7 = SAR
+            e2_w8(buf, pos+cp, 3); cp = cp + 1;    // shift by 3
         }
         else if s3 == OP_DIV || s3 == OP_MOD {
             cp = cp + e2_mov(buf, pos+cp, 0, 10);
@@ -673,17 +705,74 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
     }
 
     if op == IR_DEREF && d >= 0 {
-        do2 := g2_slot(d); o1 := g2_slot(s1);
-        cp = cp + e2_ld(buf, pos+cp, 10, o1);
-        // mov r10, [r10] — REX.WRB + 0x8B
-            cp = cp + emit_rex(buf, pos+cp, 1, 10/8, 0, 10/8); e2_w8(buf, pos+cp, 139); cp = cp + 1; cp = cp + emit_modrm(buf, pos+cp, 0, 10%8, 10%8);
+        do2 := g2_slot(d);
+        // s3 encodes bounds info from ProvenanceVerify:
+        //   s3 == 0: no check needed (provenance known)
+        //   s3 != 0: load ptr into r10, then:
+        //     1. page_offset = r10 & 0xFFF
+        //     2. if page_offset >= alloc_size → crash (SIGILL)
+        //     3. if r10 == 0 → crash
+        //     4. safe deref: mov r10, [r10]
+        cp = cp + e2_load_var(buf, pos+cp, 10, s1);
+        if s3 != 0 {
+            alloc_sz := s3;  // encoded alloc_size from ProvenanceVerify
+            // --- cmp + jae + ud2 sequence (doc §ProvenanceVerify) ---
+            // Copy r10 to r11 for offset computation
+            cp = cp + emit_rex(buf, pos+cp, 1, 11/8, 0, 10/8);
+            e2_w8(buf, pos+cp, 137); cp = cp + 1;  // 0x89 MOV r/m, r
+            cp = cp + emit_modrm(buf, pos+cp, 3, 10%8, 11%8);  // mov r11, r10
+            // and r11, 0xFFF (page offset)
+            cp = cp + emit_rex(buf, pos+cp, 1, 0, 0, 11/8);
+            e2_w8(buf, pos+cp, 129); cp = cp + 1;  // 0x81 AND r/m, imm32
+            cp = cp + emit_modrm(buf, pos+cp, 3, 4, 11%8);  // /4 = AND
+            e2_w32(buf, pos+cp, 4095); cp = cp + 4;  // mask 0xFFF
+            // cmp r11, alloc_size
+            cp = cp + emit_rex(buf, pos+cp, 1, 0, 0, 11/8);
+            e2_w8(buf, pos+cp, 129); cp = cp + 1;  // 0x81 CMP r/m, imm32
+            cp = cp + emit_modrm(buf, pos+cp, 3, 7, 11%8);  // /7 = CMP
+            e2_w32(buf, pos+cp, alloc_sz); cp = cp + 4;
+            // jae .crash (2-byte near jae: 0F 83)
+            crash_jmp_pos := pos+cp;
+            cp = cp + e2_jae(buf, pos+cp, 0);  // placeholder
+            // test r10, r10 (null check)
+            cp = cp + emit_rex(buf, pos+cp, 1, 10/8, 0, 10/8); e2_w8(buf, pos+cp, 133); cp = cp + 1; cp = cp + emit_modrm(buf, pos+cp, 3, 10%8, 10%8);
+            // jne .safe (skip ud2 if non-null)
+            safe_jmp_pos := pos+cp;
+            e2_w8(buf, pos+cp, 117); e2_w8(buf, pos+cp+1, 0); cp = cp + 2;  // placeholder
+            // .crash: ud2
+            w8(buf, cp, 15); w8(buf, cp+1, 11); cp = cp + 2;
+            // Patch jae to jump here
+            e2_w32(buf, crash_jmp_pos + 2, (pos+cp) - (crash_jmp_pos + 6));
+            // Patch jne to jump past ud2 to .safe
+            w8(buf, safe_jmp_pos + 1, (pos+cp) - (safe_jmp_pos + 2) + 2);
+            // .safe: deref
+        }
+        // mov r10, [r10]
+        cp = cp + emit_rex(buf, pos+cp, 1, 10/8, 0, 10/8); e2_w8(buf, pos+cp, 139); cp = cp + 1; cp = cp + emit_modrm(buf, pos+cp, 0, 10%8, 10%8);
+        cp = cp + e2_st(buf, pos+cp, 10, do2);
+        return cp;
+    }
+
+    if op == IR_ADDR_INDEX && d >= 0 {
+        do2 := g2_slot(d);
+        // load array pointer from arr base slot (handles both local and global)
+        cp = cp + e2_load_var(buf, pos+cp, 10, s1);
+        // load index (handles both local and global)
+        cp = cp + e2_load_var(buf, pos+cp, 11, s2);
+        // lea r10, [r10 + r11*8] = address of arr[i] on heap
+        cp = cp + emit_rex(buf, pos+cp, 1, 10/8, 11/8, 10/8);
+        e2_w8(buf, pos+cp, 141); cp = cp + 1;  // 0x8D LEA
+        cp = cp + emit_modrm(buf, pos+cp, 0, 10%8, 4);  // mod=0, reg=r10, rm=4(SIB)
+        cp = cp + emit_sib(buf, pos+cp, 3, 11%8, 10%8);  // scale=3, index=r11, base=r10
         cp = cp + e2_st(buf, pos+cp, 10, do2);
         return cp;
     }
 
     if op == IR_STORE_PTR {
-        o1 := g2_slot(s1); o2 := g2_slot(s2);
-        cp = cp + e2_ld(buf, pos+cp, 10, o1); cp = cp + e2_ld(buf, pos+cp, 11, o2);
+        // load pointer (handles local and global)
+        cp = cp + e2_load_var(buf, pos+cp, 10, s1);
+        // load value to store (handles local and global)
+        cp = cp + e2_load_var(buf, pos+cp, 11, s2);
         // mov [r10], r11 — REX.WRB + 0x89
             cp = cp + emit_rex(buf, pos+cp, 1, 11/8, 0, 10/8); e2_w8(buf, pos+cp, 137); cp = cp + 1; cp = cp + emit_modrm(buf, pos+cp, 0, 11%8, 10%8);
         return cp;
@@ -766,8 +855,9 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
     }
 
     if op == IR_LOAD_INDEX && d >= 0 {
-        do2 := g2_slot(d); o1 := g2_slot(s1); idx := s3;
-        cp = cp + e2_ld(buf, pos+cp, 10, o1);
+        do2 := g2_slot(d); idx := s3;
+        // load array pointer (handles local and global)
+        cp = cp + e2_load_var(buf, pos+cp, 10, s1);
         // mov r10, [r10 + disp32]
         // mov r10, [r10 + idx*8]
             cp = cp + emit_rex(buf, pos+cp, 1, 10/8, 0, 10/8); e2_w8(buf, pos+cp, 139); cp = cp + 1;
@@ -777,8 +867,11 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
     }
 
     if op == IR_STORE_INDEX {
-        o1 := g2_slot(s1); o2 := g2_slot(s2); idx := s3;
-        cp = cp + e2_ld(buf, pos+cp, 10, o1); cp = cp + e2_ld(buf, pos+cp, 11, o2);
+        idx := s3;
+        // load array pointer (handles local and global)
+        cp = cp + e2_load_var(buf, pos+cp, 10, s1);
+        // load value to store (handles local and global)
+        cp = cp + e2_load_var(buf, pos+cp, 11, s2);
         // mov [r10 + disp32], r11
         // mov [r10 + idx*8], r11
             cp = cp + emit_rex(buf, pos+cp, 1, 11/8, 0, 10/8); e2_w8(buf, pos+cp, 137); cp = cp + 1;
@@ -787,8 +880,11 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
     }
 
     if op == IR_LOAD_INDEX_VAR && d >= 0 {
-        do2 := g2_slot(d); o1 := g2_slot(s1); oi := g2_slot(s2);
-        cp = cp + e2_ld(buf, pos+cp, 10, o1); cp = cp + e2_ld(buf, pos+cp, 11, oi);
+        do2 := g2_slot(d);
+        // load array pointer (handles local and global)
+        cp = cp + e2_load_var(buf, pos+cp, 10, s1);
+        // load index (handles local and global)
+        cp = cp + e2_load_var(buf, pos+cp, 11, s2);
         // mov r10, [r10 + r11*8] — SIB(scale=3, index=r11%8, base=r10%8)
             cp = cp + emit_rex(buf, pos+cp, 1, 10/8, 11/8, 10/8); e2_w8(buf, pos+cp, 139); cp = cp + 1;
             cp = cp + emit_modrm(buf, pos+cp, 0, 10%8, 4); cp = cp + emit_sib(buf, pos+cp, 3, 11%8, 10%8);
@@ -797,8 +893,12 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
     }
 
     if op == IR_STORE_INDEX_VAR && d >= 0 {
-        o1 := g2_slot(s1); oi := g2_slot(s2); ov := g2_slot(d);
-        cp = cp + e2_ld(buf, pos+cp, 10, o1); cp = cp + e2_ld(buf, pos+cp, 11, oi); cp = cp + e2_ld(buf, pos+cp, 12, ov);
+        // load array pointer (handles local and global)
+        cp = cp + e2_load_var(buf, pos+cp, 10, s1);
+        // load index (handles local and global)
+        cp = cp + e2_load_var(buf, pos+cp, 11, s2);
+        // load value to store (handles local and global)
+        cp = cp + e2_load_var(buf, pos+cp, 12, d);
         // mov [r10 + r11*8], r12 — SIB(scale=3, index=r11%8, base=r10%8)
             cp = cp + emit_rex(buf, pos+cp, 1, 12/8, 11/8, 10/8); e2_w8(buf, pos+cp, 137); cp = cp + 1;
             cp = cp + emit_modrm(buf, pos+cp, 0, 12%8, 4); cp = cp + emit_sib(buf, pos+cp, 3, 11%8, 10%8);
@@ -836,6 +936,18 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
         return cp;
     }
 
+    if op == IR_BOUNDS_CHECK && s2 >= 0 {
+        // s1 = index var, s2 = max_len literal — crash if index < 0 or index >= max_len
+        cp = cp + e2_load_var(buf, pos+cp, 10, s1);  // index
+        cp = cp + e2_load_var(buf, pos+cp, 11, s2);  // max_len
+        cp = cp + e2_alu(buf, pos+cp, 57);           // cmp r10, r11
+        // jb +2: if index < max (unsigned below), skip the 2-byte ud2 → continue
+        e2_w8(buf, pos+cp, 114);                      // 0x72 = jb rel8
+        e2_w8(buf, pos+cp+1, 2);                     // skip past ud2
+        cp = cp + 2;
+        w8(buf, cp, 15); w8(buf, cp+1, 11); cp = cp + 2;  // ud2 (SIGILL)
+        return cp;
+    }
 
     return 0;
 }

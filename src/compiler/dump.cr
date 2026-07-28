@@ -33,11 +33,14 @@ fn binop_name(op: int) -> string {
     if op == 11 { return ">="; }
     if op == 12 { return "&&"; }
     if op == 13 { return "||"; }
+    if op == 17 { return "+ (ptr)"; }
+    if op == 18 { return "- (ptr)"; }
+    if op == 19 { return "- (diff)"; }
     return "?";
 }
 
 fn ir_instr_str(instr_idx: int) -> string {
-    opname := df_opcode_name(iri_op(instr_idx));
+    opname := df_opcode_name(iri_op(instr_idx), iri_s3(instr_idx));
     s : ., mut = "  ";
     s = s + opname;
     pa : ., mut = str_len(opname);

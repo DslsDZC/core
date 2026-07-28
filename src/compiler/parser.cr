@@ -70,6 +70,10 @@ fn parse_type() -> int {
         }
         inner := parse_type();
         res = alloc_node(EXPR_REFTYPE, inner, 0, 0, is_mut, 0, 0, line, col);
+    } else if tok_k(t) == T_STAR {
+        advance_tok();
+        inner := parse_type();
+        res = alloc_node(EXPR_PTRTYPE, inner, 0, 0, 0, 0, 0, line, col);
     } else if tok_k(t) == T_UNIT {
         advance_tok();
         res = alloc_node(0, 0, 0, 0, 0, TY_UNIT, 0, line, col);
@@ -178,6 +182,14 @@ fn parse_expr() -> int {
 
 fn parse_binary(mp: int) -> int {
     left : ., mut = parse_unary();
+    // If the left expression is a block-ending construct (IF, BLOCK, etc.),
+    // don't allow binary operators to extend past it. The next operator
+    // belongs to a new expression, not the current one.
+    // This prevents `if ... { } *p = 99` from parsing `*` as multiplication.
+    lk := ast_kind(left);
+    if lk == EXPR_IF || lk == EXPR_BLOCK || lk == EXPR_LOOP || lk == EXPR_WHILE || lk == EXPR_FOR {
+        return left;
+    }
     loop {
         t := cur_tok();
         k := tok_k(t);
@@ -249,6 +261,21 @@ fn parse_unary() -> int {
 
 fn parse_postfix() -> int {
     node : ., mut = parse_primary();
+    // Handle cast<T>(expr) syntax — same as expr as T
+    if ast_kind(node) == EXPR_IDENT {
+        ni := ast_int_val(node);
+        if str_eq(istr_get(ni), "cast") != 0 && tok_k(cur_tok()) == T_LT {
+            advance_tok();
+            typ := parse_type();
+            advance_tok();  // skip T_GT
+            if tok_k(cur_tok()) == T_LPAREN {
+                advance_tok();
+                inner := parse_expr(0);
+                advance_tok();  // skip T_RPAREN
+                return alloc_node(EXPR_AS, inner, typ, 0, 0, 0, 0, tok_ln(node), tok_cl(node));
+            }
+        }
+    }
     loop {
         t := cur_tok();
         if tok_k(t) == T_LPAREN {
