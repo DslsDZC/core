@@ -126,6 +126,7 @@ def main():
             'src/compiler/parser.cr',
             'src/compiler/checker.cr',
             'src/compiler/opt.cr',
+            'src/compiler/ptr_analysis.cr',
             'src/compiler/diag.cr',
             'src/compiler/ext_mgr.cr',
             'src/compiler/ext_safety.cr',

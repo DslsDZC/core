@@ -24,6 +24,7 @@ import ext_mgr
 import ext_safety
 import pass
 import opt
+import ptr_analysis
 import rt
 import main
 import entry
