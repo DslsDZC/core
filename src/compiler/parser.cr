@@ -412,6 +412,17 @@ fn parse_primary() -> int {
         // Some without parens → treat as identifier (will be resolved by uppercase → enum constructor)
         return alloc_node(EXPR_IDENT, 0, 0, 0, ni, 0, 0, tok_ln(t), tok_cl(t));
     }
+    if tok_k(t) == T_AT {
+        advance_tok();
+        if tok_k(cur_tok()) == T_IDENT {
+            name_ni := str_intern(tok_lx(cur_tok()));
+            advance_tok();
+            // args_node = -1 means no args; parse_postfix will handle (args) as EXPR_CALL
+            return alloc_node(EXPR_AT, name_ni, -1, 0, 0, 0, 0, tok_ln(t), tok_cl(t));
+        }
+        add_error("expected identifier after @");
+        return alloc_node(0, 0, 0, 0, 0, TY_UNIT, 0, tok_ln(t), tok_cl(t));
+    }
     if tok_k(t) == T_IDENT || tok_k(t) == T_SELF || tok_k(t) == T_UNDERSCORE {
         advance_tok();
         name := tok_lx(t);
