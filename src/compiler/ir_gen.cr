@@ -202,6 +202,99 @@ fn get_variant_name_idx(qualified_ni: int) -> int {
     return qualified_ni;
 }
 
+// --- Type metadata helpers for @ builtins ---
+
+// Resolve a type expression node to a TI_* type index.
+// Handles type nodes (ast_kind==0 from parse_type) and EXPR_IDENT
+// (basic type names not in the symbol table).
+fn ti_from_type_expr(node: int) -> int {
+    if node < 0 { return TI_UNIT; }
+    // Type node from parse_type: ast_kind == 0, type_val = TY_*
+    if ast_kind(node) == 0 {
+        tv := ast_type_val(node);
+        if tv == TY_INT { return TI_INT; }
+        if tv == TY_FLOAT { return TI_FLOAT; }
+        if tv == TY_BOOL { return TI_BOOL; }
+        if tv == TY_STRING { return TI_STR; }
+        if tv == TY_CHAR { return TI_CHAR; }
+        if tv == TY_UNIT { return TI_UNIT; }
+        return TI_UNIT;
+    }
+    // EXPR_IDENT from parse_expr: int_val = name string index
+    if ast_kind(node) == EXPR_IDENT {
+        ni := ast_int_val(node);
+        name := istr_get(ni);
+        if str_eq(name, "int") != 0 { return TI_INT; }
+        if str_eq(name, "float") != 0 { return TI_FLOAT; }
+        if str_eq(name, "bool") != 0 { return TI_BOOL; }
+        if str_eq(name, "string") != 0 { return TI_STR; }
+        if str_eq(name, "char") != 0 { return TI_CHAR; }
+        if str_eq(name, "unit") != 0 { return TI_UNIT; }
+        // Named types (structs, enums): look up in symbol table
+        si := find_gsym(ni);
+        if si >= 0 && sym_kind(si) == SYM_TYPE { return sym_type(si); }
+    }
+    // Complex type expressions: delegate to checker's resolver
+    return res_type_node(node);
+}
+
+// Type size in bytes
+fn type_size(ti: int) -> int {
+    if ti == TI_CHAR { return 4; }  // not in type table
+    if ti < 0 || ti >= g_type_count { return 8; }
+    k := get_type_kind(ti);
+    if k == TYP_BASE {
+        d := get_type_data(ti);
+        if d == TY_INT { return 8; }
+        if d == TY_FLOAT { return 8; }
+        if d == TY_BOOL { return 1; }
+        if d == TY_STRING { return 8; }
+        if d == TY_UNIT { return 0; }
+        if d == TY_CHAR { return 4; }
+        return 8;
+    }
+    if k == TYP_ARRAY {
+        elem := get_type_data(ti);
+        cnt := get_type_extra(ti);
+        return type_size(elem) * cnt;
+    }
+    if k == TYP_PTR || k == TYP_REF { return 8; }
+    if k == TYP_SLICE { return 16; }
+    if k == TYP_NAMED { return 64; }
+    return 8;
+}
+
+// Type alignment in bytes
+fn type_align(ti: int) -> int {
+    if ti == TI_CHAR { return 4; }
+    if ti < 0 || ti >= g_type_count { return 8; }
+    k := get_type_kind(ti);
+    if k == TYP_BASE {
+        d := get_type_data(ti);
+        if d == TY_INT { return 8; }
+        if d == TY_FLOAT { return 8; }
+        if d == TY_BOOL { return 1; }
+        if d == TY_STRING { return 8; }
+        if d == TY_CHAR { return 4; }
+        return 8;
+    }
+    if k == TYP_ARRAY { return type_align(get_type_data(ti)); }
+    if k == TYP_PTR || k == TYP_REF { return 8; }
+    if k == TYP_SLICE { return 8; }
+    if k == TYP_NAMED { return 8; }
+    return 8;
+}
+
+// Check if a struct type has a field by name (placeholder — struct field lookup TBD)
+fn ti_has_field(ti: int, name: string) -> int {
+    return 0;
+}
+
+// Get field byte offset (placeholder — struct field layout TBD)
+fn ti_field_offset(ti: int, name: string) -> int {
+    return 0;
+}
+
 // --- IR generation for expressions ---
 // Returns the IR variable index holding the result
 
@@ -537,6 +630,97 @@ fn gen_expr(node: int) -> int {
         ac : ., mut = 0;
     arg_vars = alloc(64 * 8); arg_vars_cap = 64;
         func_ni : ., mut = -1;
+
+        // @builtin(args) — parser wraps @foo(args) as EXPR_CALL(func=EXPR_AT, ...)
+        // so we detect EXPR_AT here and handle it before the normal call dispatch.
+        if ast_kind(func_node) == EXPR_AT {
+            name_ni := ast_a(func_node);
+            name := istr_get(name_ni);
+
+            // @sizeOf(T): emit IR_CONST with type size
+            if str_eq(name, "sizeOf") != 0 {
+                ti := ti_from_type_expr(ast_a(first_arg));
+                sz := type_size(ti);
+                v := new_ir_var("_sizeof", TI_INT);
+                emit(IR_CONST, v, sz, 0, 0, TI_INT);
+                return v;
+            }
+
+            // @alignOf(T): emit IR_CONST with type alignment
+            if str_eq(name, "alignOf") != 0 {
+                ti := ti_from_type_expr(ast_a(first_arg));
+                al := type_align(ti);
+                v := new_ir_var("_alignof", TI_INT);
+                emit(IR_CONST, v, al, 0, 0, TI_INT);
+                return v;
+            }
+
+            // @fields(T): placeholder — returns 0
+            if str_eq(name, "fields") != 0 {
+                v := new_ir_var("_fields", TI_STR);
+                emit(IR_CONST, v, 0, 0, 0, TI_STR);
+                return v;
+            }
+
+            // @hasField(T, name): check field existence
+            if str_eq(name, "hasField") != 0 {
+                ti := ti_from_type_expr(ast_a(first_arg));
+                name_arg := ast_b(first_arg);
+                name_expr := ast_a(name_arg);
+                fn_name := istr_get(ast_int_val(name_expr));
+                exists := ti_has_field(ti, fn_name);
+                v := new_ir_var("_hasf", TI_BOOL);
+                emit(IR_CONST, v, exists, 0, 0, TI_BOOL);
+                return v;
+            }
+
+            // @field(T, name): get field offset
+            if str_eq(name, "field") != 0 {
+                ti := ti_from_type_expr(ast_a(first_arg));
+                name_arg := ast_b(first_arg);
+                name_expr := ast_a(name_arg);
+                fn_name := istr_get(ast_int_val(name_expr));
+                off := ti_field_offset(ti, fn_name);
+                v := new_ir_var("_fldoff", TI_INT);
+                emit(IR_CONST, v, off, 0, 0, TI_INT);
+                return v;
+            }
+
+            // @typeInfo(T): emit type handle
+            if str_eq(name, "typeInfo") != 0 {
+                ti := ti_from_type_expr(ast_a(first_arg));
+                v := new_ir_var("_tinfo", TI_INT);
+                emit(IR_CONST, v, ti, 0, 0, TI_INT);
+                return v;
+            }
+
+            // @comptime(expr): generate IR for inner expression
+            if str_eq(name, "comptime") != 0 {
+                inner_var := gen_expr(ast_a(first_arg));
+                return inner_var;
+            }
+
+            // @inline(fn): emit IR_INLINE hint
+            if str_eq(name, "inline") != 0 {
+                fn_var := gen_expr(ast_a(first_arg));
+                emit(IR_INLINE, -1, fn_var, 0, 0, 0);
+                return fn_var;
+            }
+
+            // @no_bounds_check: emit annotation (no args)
+            if str_eq(name, "no_bounds_check") != 0 {
+                emit(IR_NO_BOUNDS_CHECK, -1, 0, 0, 0, 0);
+                return -1;
+            }
+
+            // @fast: emit annotation (no args)
+            if str_eq(name, "fast") != 0 {
+                emit(IR_FAST, -1, 0, 0, 0, 0);
+                return -1;
+            }
+
+            return -1;
+        }
 
         // Module or method call: obj.method(args)
         if ast_kind(func_node) == EXPR_FIELD {
