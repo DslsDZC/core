@@ -766,6 +766,21 @@ fi = 0; loop { if fi >= g_ir_func_count { break; }
         api = api + 1; }
     g_x86_alloc_patch_count = 0;
 
+    // ── arena_new/arena_reset stubs (fallback when arena.cr not imported) ──
+    // These are only used when the functions aren't compiled from user code.
+    // If the user imports arena, the compiled versions in g_ir_func_name_idx take priority.
+    grow_func_offsets(g_x86_func_off_count * 2 + 2);
+    w64(g_x86_func_offsets, g_x86_func_off_count * 16, str_intern("arena_new"));
+    w64(g_x86_func_offsets, g_x86_func_off_count * 16 + 8, cp - 176);
+    g_x86_func_off_count = g_x86_func_off_count + 1;
+    w8(buf, cp, 195); cp = cp + 1;  // ret
+
+    grow_func_offsets(g_x86_func_off_count * 2 + 2);
+    w64(g_x86_func_offsets, g_x86_func_off_count * 16, str_intern("arena_reset"));
+    w64(g_x86_func_offsets, g_x86_func_off_count * 16 + 8, cp - 176);
+    g_x86_func_off_count = g_x86_func_off_count + 1;
+    w8(buf, cp, 195); cp = cp + 1;  // ret
+
     // ── scheduler call trampolines ──
     sched_reg_one("sched_call_0", 0, cp);
     cp = cp + emit_sched_call(buf, cp, 0);
