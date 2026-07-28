@@ -247,6 +247,7 @@ EXPR_TRY : int = 33;      // a=expr being tried (? operator)
 EXPR_UNSAFE : int = 34;   // a=block body
 EXPR_STRUCTPAT : int = 35; // struct pattern: a=name ni, b=first field pat, c=field count
 EXPR_AS : int = 36;        // a=expr, b=type node (cast: expr as Type)
+EXPR_PTRTYPE : int = 46;  // a=inner_type (for *T in type position)
 
 // Field representation in struct literal: two consecutive AST nodes
 // (name_idx, value_idx, line=line, col=col)
@@ -274,6 +275,9 @@ OP_OR : int = 13;
 OP_ASSIGN : int = 14;
 OP_SHL : int = 15;  // strength reduction: x << n
 OP_SHR : int = 16;  // strength reduction: x >> n
+OP_PTR_ADD  : int = 17;  // p + n (p: *T, n: int) → scaled by sizeof(T)
+OP_PTR_SUB  : int = 18;  // p - n
+OP_PTR_DIFF : int = 19;  // p - q → element count
 
 // Unary operator codes
 UOP_NEG : int = 1;
@@ -295,6 +299,7 @@ TYP_BASE : int = 0;   // data = TY_* constant
 TYP_NAMED : int = 1;  // data = name string index
 TYP_ARRAY : int = 2;  // data = element type idx, extra = size
 TYP_REF : int = 3;    // data = inner type idx, extra = mut flag
+TYP_PTR : int = 4;    // data=pointee_type, extra=address_space (0=tracked, 1=external)
 TYP_GENERIC_PARAM : int = 7;  // data = name string index (unresolved generic param)
 TYP_GENERIC_APPLY : int = 8;  // data = base type idx, extra = arg list start in g_gen_apply_data
 TYP_SLICE : int = 9;   // data = element type idx (dynamic-length view into array)
