@@ -35,7 +35,7 @@ fn sg_alloc_pop() {
 }
 
 fn track_alloc_size(size: int) {
-    if g_sg_count > 0 {
+    if g_sg_count > 0 && str_len(g_sg_alloc_total) > 0 {
         prev := r64(g_sg_alloc_total, (g_sg_count - 1) * 8);
         w64(g_sg_alloc_total, (g_sg_count - 1) * 8, prev + size);
     }
@@ -64,12 +64,6 @@ fn emit(opcode: int, dest: int, src1: int, src2: int, src3: int, type_kind: int)
     g_ir_instr_count = idx + 1;
     // Build dataflow graph (.cir) in parallel
     df_create_node(opcode, dest, src1, src2, src3, type_kind);
-    // Track allocation size for subgraph arena size estimation
-    if opcode == IR_ALLOC && src1 > 0 { track_alloc_size(src1); }
-    if opcode == IR_ALLOC_STRUCT {
-        track_alloc_size(64);
-    }
-    if opcode == IR_ALLOC_ARRAY && src1 > 0 { track_alloc_size(src1 * 8); }
 }
 
 fn new_label() -> int {

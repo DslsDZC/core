@@ -112,6 +112,11 @@ fn df_add_edge(from_id: int, to_id: int) {
 
 fn df_use_var(consumer_node: int, var_idx: int) {
     if var_idx < 0 { return; }
+    // Ensure the DF arrays are large enough for this variable index.
+    // df_create_node only grows arrays for 'dest', but src fields (passed as
+    // var_idx here) may have higher indices (e.g. arena_var from IR_ARENA_RESET
+    // where dest=-1 but src1 is a high arena ID variable).
+    if var_idx >= g_df_cap { grow_df_arrays(var_idx + 1); }
     producer := r64(g_df_var_producer, var_idx * 8);
     if producer >= 0 {
         df_add_edge(producer, consumer_node);

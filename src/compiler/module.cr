@@ -353,6 +353,10 @@ fn res_imports() {
         if str_eq(pd, search_dir) != 0 { break; }
         search_dir = pd;
     }
+    // Record original source length before prepending _import.cr preamble.
+    // Used later for segment tracking when we strip the preamble.
+    real_main_len : ., mut = str_len(g_source);
+
     if str_len(import_core_acc) > 0 {
         g_source = import_core_acc + "\n" + g_source;
         tokenize(g_source);
@@ -362,7 +366,7 @@ fn res_imports() {
     main_fileid_str : ., mut = get_fileid(g_source);
     if str_len(main_fileid_str) == 0 { main_fileid_str = "main"; }
     main_fni := reg_fileid(main_fileid_str, "");
-    main_len := str_len(g_source);
+    main_len : ., mut = real_main_len;  // original source length (without preamble)
 
     // First segment: main source
     grow_segs(g_seg_count + 1); w64(g_seg_starts, g_seg_count * 8, 0);
@@ -505,5 +509,15 @@ fn res_imports() {
         g_source = g_source + extra_src;
         tokenize(g_source);
     }
+
+    // Strip _import.cr preamble to prevent re-parsing import tokens as code.
+    // Import resolution already completed above; leaving the preamble in
+    // g_source causes the checker to emit spurious errors and may crash IR gen.
+    if str_len(import_core_acc) > 0 {
+        skip := str_len(import_core_acc) + 1;  // +1 for the "\n" separator
+        g_source = str_sub(g_source, skip, str_len(g_source) - skip);
+        tokenize(g_source);
+    }
+
     build_line_fileid();
 }
