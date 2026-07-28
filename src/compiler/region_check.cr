@@ -77,7 +77,7 @@ fn region_check_func(nstart: int, ncount: int) {
 }
 
 fn region_check_all() {
-    if g_opt_level < 1 { return; }  // only at opt>=1 for now
+    // Safety pass — always runs
     fi : ., mut = 0;
     loop { if fi >= g_ir_func_count { break; }
         nstart := r64(g_df_func_node_start, fi * 8);

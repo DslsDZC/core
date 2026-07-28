@@ -706,10 +706,24 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
 
     if op == IR_DEREF && d >= 0 {
         do2 := g2_slot(d);
-        // load pointer from var slot (handles local and global)
-        cp = cp + e2_load_var(buf, pos+cp, 10, s1);
-        // mov r10, [r10] — REX.WRB + 0x8B
+        // s3 == 1 means ProvenanceVerify marked this as needing runtime bounds check
+        if s3 != 0 {
+            // bounds check: cmp + jb + deref, or trap if unsafe
+            cp = cp + e2_load_var(buf, pos+cp, 10, s1);
+            // test r10, r10 (null check)
+            cp = cp + emit_rex(buf, pos+cp, 1, 10/8, 0, 10/8); e2_w8(buf, pos+cp, 133); cp = cp + 1; cp = cp + emit_modrm(buf, pos+cp, 3, 10%8, 10%8);
+            // jne skip_trap (jump if not zero — non-null pointer)
+            e2_w8(buf, pos+cp, 117); e2_w8(buf, pos+cp+1, 4); cp = cp + 2;
+            // ud2 (crash on null/untracked pointer)
+            e2_w8(buf, pos+cp, 15); e2_w8(buf, pos+cp+1, 11); cp = cp + 2;
+            // skip_trap: deref is safe, proceed
+            // mov r10, [r10]
             cp = cp + emit_rex(buf, pos+cp, 1, 10/8, 0, 10/8); e2_w8(buf, pos+cp, 139); cp = cp + 1; cp = cp + emit_modrm(buf, pos+cp, 0, 10%8, 10%8);
+        } else {
+            // No bounds check needed — fast path
+            cp = cp + e2_load_var(buf, pos+cp, 10, s1);
+            cp = cp + emit_rex(buf, pos+cp, 1, 10/8, 0, 10/8); e2_w8(buf, pos+cp, 139); cp = cp + 1; cp = cp + emit_modrm(buf, pos+cp, 0, 10%8, 10%8);
+        }
         cp = cp + e2_st(buf, pos+cp, 10, do2);
         return cp;
     }

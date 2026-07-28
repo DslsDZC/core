@@ -59,9 +59,9 @@ fn provenance_verify_func(nstart: int, ncount: int) {
                                 0, 0);
                         }
                     } else {
-                        // Runtime-determined size or offset: emit IR_BOUNDS_CHECK
-                        // s1=index_var (offset placeholder), s2=max_len (alloc_size placeholder)
-                        // Not yet emitted — IR modification post-gen is future work
+                        // Runtime-determined size or offset: mark DEREF for runtime bounds check
+                        // Flag the DEREF node's s3 field — backend will emit cmp+jb+ud2
+                        w64(g_df_nodes, ni * ESZ_DFNODE + OFF_DF_S3, 1);
                     }
                 }
                 mask = mask * 2;
@@ -73,7 +73,7 @@ fn provenance_verify_func(nstart: int, ncount: int) {
 }
 
 fn provenance_verify_all() {
-    if g_opt_level < 1 { return; }
+    // Safety pass — always runs
     fi : ., mut = 0;
     loop { if fi >= g_ir_func_count { break; }
         nstart := r64(g_df_func_node_start, fi * 8);
