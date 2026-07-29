@@ -5,6 +5,7 @@
 
 // Set by load_project() — used by read_project_dir in main.cr
 g_project_source_dir : string, mut;
+g_project_name : string, mut;
 
 // Load project config. Returns main_source, sets g_project_source_dir as side effect.
 fn load_project(dir: string) -> string {
@@ -24,12 +25,22 @@ fn load_project(dir: string) -> string {
         pname = extract_toml_name(tc);
     }
 
+    g_project_name = pname;
+    if str_len(g_project_name) == 0 {
+        fallback_name : ., mut = basename(dir);
+        if str_eq(fallback_name, ".") != 0 {
+            cwd := get_cwd();
+            if str_len(cwd) > 0 { fallback_name = basename(cwd); }
+        }
+        if str_len(fallback_name) == 0 || str_eq(fallback_name, ".") != 0 ||
+           str_eq(fallback_name, "..") != 0 || str_eq(fallback_name, "/") != 0 {
+            fallback_name = "a.out";
+        }
+        g_project_name = fallback_name;
+    }
+
     main_path : ., mut = sd + "main.cr";
     source := read_file(main_path);
-    if str_len(source) == 0 {
-        main_path = "main.cr";
-        source = read_file(main_path);
-    }
 
     g_project_source_dir = sd;
     if str_len(pname) > 0 {

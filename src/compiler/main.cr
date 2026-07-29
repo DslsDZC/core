@@ -109,6 +109,18 @@ fn read_source_or_project(src_path: string) -> int {
     return 0;
 }
 
+fn read_static_runtime_source() -> string {
+    source := read_file("src/runtime/rt.cr");
+    if str_len(source) > 0 { return source; }
+
+    exe_path := get_exe_path();
+    exe_dir := dirname(exe_path);
+    if str_len(exe_dir) > 0 {
+        source = read_file(exe_dir + "../src/runtime/rt.cr");
+    }
+    return source;
+}
+
 // Run the shared frontend pipeline: tokenize → resolve → parse → check
 // Returns 0 on success, 1 on error.
 fn run_frontend() -> int {
@@ -145,7 +157,7 @@ if g_opt_level >= 1 && g_func_count > 0 {
 fn default_out_path(src_path: string, ext: string) -> string {
     out : ., mut = "";
     if g_is_project_mode != 0 {
-        out = basename(src_path) + ext;
+        out = g_project_name + ext;
     } else {
         out = src_path;
         sl := str_len(src_path);
@@ -344,8 +356,12 @@ fn corec_main() -> int {
 
     // --static: prepend rt.cr so * functions inline
     if cli_has("static") != 0 {
-        rt_src := read_file("src/runtime/rt.cr");
-        if str_len(rt_src) > 0 { g_source = rt_src + "\n" + g_source; }
+        rt_src := read_static_runtime_source();
+        if str_len(rt_src) == 0 {
+            println("error: cannot locate src/runtime/rt.cr");
+            return 1;
+        }
+        g_source = rt_src + "\n" + g_source;
     }
 
     if run_frontend() != 0 { return 1; }
@@ -503,16 +519,7 @@ fn corec_main() -> int {
     // === build: compile + link to ELF ===
     out_path : ., mut = cli_get("output");
     if str_len(out_path) == 0 {
-        if g_is_project_mode != 0 { out_path = basename(src_path); }
-        else {
-            sp := src_path;
-            slen := str_len(sp);
-            if slen > 3 {
-                ext := str_sub(sp, slen - 3, 3);
-                if str_eq(ext, ".cr") != 0 { out_path = str_sub(sp, 0, slen - 3); }
-                else { out_path = sp; }
-            } else { out_path = sp; }
-        }
+        out_path = default_out_path(src_path, "");
     }
     // Save .ccr alongside output (real IR artifact)
     println("save .ccr...");

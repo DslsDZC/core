@@ -7,6 +7,22 @@
 // d=0 作为 NULL 终止符
 struct Argv4 { a: string, b: string, c: string, d: int }
 
+// get_cwd() - return the process working directory.
+fn get_cwd() -> string {
+    buf := alloc(4096);
+    n := syscall3(79, buf, 4096, 0);
+    if n <= 1 { return ""; }
+    return str_sub(buf, 0, n - 1);
+}
+
+// get_exe_path() - resolve the running executable even when argv[0] came from PATH.
+fn get_exe_path() -> string {
+    buf := alloc(4096);
+    n := syscall3(89, "/proc/self/exe", buf, 4095);
+    if n <= 0 { return ""; }
+    return str_sub(buf, 0, n);
+}
+
 // system(cmd) — 执行 shell 命令
 // 功能：fork() → 子进程 execve("/bin/sh", ["/bin/sh", "-c", cmd], environ)
 //       父进程 wait4() 等待子进程结束，返回退出状态码

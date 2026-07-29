@@ -1,5 +1,13 @@
 # 更新日志
 
+## 2026-07-30
+### [fix] restore directory builds
+- Use the `Core.toml` project name for default ELF, CCR, and CIR outputs, with a safe directory-name fallback for unnamed projects.
+- Reject missing project directories instead of silently compiling `main.cr` from the working directory.
+- Resolve the static runtime relative to the running compiler when building outside the compiler source directory.
+- Include the hotpatch runtime in clean self-hosted `corec` and `corearch` builds so `hp_load_config` resolves.
+- Add native regressions for named, unnamed, and missing directory inputs.
+
 ## 2026-07-27
 ### [fix] complete self-hosted corearch backend
 - Remove out-of-range 2^31/2^32 literals from backend encoding and use signed-safe 32/64-bit byte writers.
