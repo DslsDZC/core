@@ -1078,7 +1078,27 @@ fn add_enum(name: string) -> int {
     return idx;
 }
 
-fn parse_body(fn_name: string, fn_ni: int, fn_line: int, fn_col: int) {
+fn extract_hotpatch_ver(args_node: int) -> int {
+    if args_node < 0 { return -1; }
+    arg := args_node;
+    loop {
+        if arg < 0 { break; }
+        expr := ast_a(arg);
+        k := ast_kind(expr);
+        if k == EXPR_ASSIGN {
+            name_ni := ast_a(expr);
+            name := istr_get(name_ni);
+            val_node := ast_b(expr);
+            if str_eq(name, "ver") != 0 {
+                return ast_int_val(val_node);
+            }
+        }
+        arg = ast_b(arg);
+    }
+    return -1;
+}
+
+fn parse_body(fn_name: string, fn_ni: int, fn_line: int, fn_col: int, hotpatch_ver: int) {
     gnames : string, mut;    gnames_cap : int, mut;
     gconstrs : string, mut;    gconstrs_cap : int, mut;
     gconstrs = alloc(64 * 8); gconstrs_cap = 64;
@@ -1162,7 +1182,7 @@ fn parse_body(fn_name: string, fn_ni: int, fn_line: int, fn_col: int) {
         advance_tok(); // ;
     }
 
-    fn_node := alloc_node(EXPR_FN, fn_ni, pf, pc, rtv, rt, body, fn_line, fn_col);
+    fn_node := alloc_node(EXPR_FN, fn_ni, pf, pc, rtv + hotpatch_ver * 256, rt, body, fn_line, fn_col);
     fi := add_func(fn_name, pc, rtv, fn_node);
     if fi >= 0 && gc > 0 { save_func_generics(fi, gnames, gc); save_func_gen_constrs(fi, gconstrs, gc); }
     // Store param types in FuncInfo
@@ -1175,6 +1195,35 @@ fn parse_body(fn_name: string, fn_ni: int, fn_line: int, fn_col: int) {
 }
 
 fn parse_declaration() {
+    hotpatch_ver : ., mut = 0;
+
+    // Handle @hotpatch(ver=N) annotation before function declarations
+    if check(T_AT) {
+        saved_ast := g_ast_count;
+        annotation := parse_expr();
+        if check(T_FN) || check(T_FLOW) || check(T_PUB) {
+            k := ast_kind(annotation);
+            if k == EXPR_CALL {
+                callee := ast_a(annotation);
+                if ast_kind(callee) == EXPR_AT {
+                    name_ni := ast_a(callee);
+                    name := istr_get(name_ni);
+                    if str_eq(name, "hotpatch") != 0 {
+                        hv := extract_hotpatch_ver(ast_b(annotation));
+                        if hv >= 0 { hotpatch_ver = hv; } else { hotpatch_ver = 1; }
+                    }
+                }
+            } else if k == EXPR_AT {
+                name_ni := ast_a(annotation);
+                name := istr_get(name_ni);
+                if str_eq(name, "hotpatch") != 0 {
+                    hotpatch_ver = 1;
+                }
+            }
+            g_ast_count = saved_ast;
+        }
+    }
+
     ip : ., mut = 0;
     if check(T_PUB) { ip = 1; advance_tok(); }
 
@@ -1186,7 +1235,7 @@ fn parse_declaration() {
         nt := advance_tok();
         name := tok_lx(nt);
         ni := str_intern(name);
-        parse_body(name, ni, tok_ln(t), tok_cl(t));
+        parse_body(name, ni, tok_ln(t), tok_cl(t), hotpatch_ver);
         if is_flow != 0 {
             // Flow function — checker detects yield statements in body
             // to skip return type check (yield != return)
@@ -1418,7 +1467,7 @@ fn parse_declaration() {
                 method_ni := str_intern(method_name);
                 mangled := type_name + "." + method_name;
                 mangled_ni := str_intern(mangled);
-                parse_body(mangled, mangled_ni, tok_ln(ft), tok_cl(ft));
+                parse_body(mangled, mangled_ni, tok_ln(ft), tok_cl(ft), 0);
                 // Register in method lookup table
                 grow_methods(g_method_count + 1);
                 w64(g_methods, g_method_count * 24, type_ni);
