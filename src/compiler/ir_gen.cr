@@ -287,10 +287,13 @@ fn ti_resolve_struct(ti: int) -> int {
     if k != TYP_NAMED { return -1; }
     name_ni := get_type_data(ti);
     if name_ni < 0 { return -1; }
+    name := istr_get(name_ni);
     si : ., mut = 0;
     loop {
         if si >= g_struct_count { break; }
-        if si_name(si) == name_ni { return si; }
+        sn_ni := si_name(si);
+        sn := istr_get(sn_ni);
+        if str_eq(sn, name) != 0 { return si; }
         si = si + 1;
     }
     return -1;
