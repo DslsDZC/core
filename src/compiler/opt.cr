@@ -431,6 +431,7 @@ fn pass_cse() {
             if op == IR_FAST { ii = ii + 1; continue; }
             if op == IR_UNROLL { ii = ii + 1; continue; }
             if op == IR_SECTION { ii = ii + 1; continue; }
+            if op == IR_HOTPATCH_ROUTE { ii = ii + 1; continue; }
 
             // Only CSE for pure computations: BINARY, UNARY
             if (op == IR_BINARY || op == IR_UNARY) && d >= 0 {

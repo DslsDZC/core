@@ -219,6 +219,10 @@ fn df_connect_srcs(node_id: int, opcode: int, s1: int, s2: int, s3: int) {
     if opcode == IR_ARENA_NEW { df_use_var(node_id, s1); return; }
     if opcode == IR_ARENA_RESET { df_use_var(node_id, s1); return; }
     if opcode == IR_INLINE { df_use_var(node_id, s1); return; }
+    if opcode == IR_HOTPATCH_ROUTE {
+        df_use_var(node_id, s2);  // first_arg is a variable
+        return;
+    }
     // Other opcodes (LABEL, JUMP, ALLOC, ALLOC_STRUCT, ALLOC_ARRAY, PHI):
     // no variable inputs to track
 }
@@ -357,5 +361,6 @@ fn df_opcode_name(opcode: int, s3: int) -> string {
     if opcode == IR_FAST { return "fast"; }
     if opcode == IR_UNROLL { return "unroll"; }
     if opcode == IR_SECTION { return "section"; }
+    if opcode == IR_HOTPATCH_ROUTE { return "hotpatch_route"; }
     return "?";
 }
