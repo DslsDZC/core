@@ -166,6 +166,7 @@ fn corec_main() -> int {
     cli_cmd("cir",   "Output dataflow graph (.cir)");
     cli_cmd("ccr",   "Output linear CFG (.ccr)");
     cli_cmd("run",   "Execute code directly (interpreter mode)");
+    cli_cmd("clean-cache", "Delete incremental compilation cache");
     cli_flag("output", "o", "Output path");
     cli_flag_bool("static", "", "Static linking (embed runtime)");
     cli_flag("opt-level", "O", "Optimization level (0,1,2,3; default=1)");
@@ -320,6 +321,14 @@ fn corec_main() -> int {
         if run_frontend() != 0 { return 1; }
         ir_gen_all();
         return ir_interpret();
+    }
+
+    // === clean-cache: delete incremental compilation cache ===
+    if cli_eq(cmd, "clean-cache") {
+        system("rm -rf .core/cache/cir/");
+        print("cleaned ");
+        println(".core/cache/cir/");
+        return 0;
     }
 
     // === File-based subcommands: build | check | cir | ccr ===
