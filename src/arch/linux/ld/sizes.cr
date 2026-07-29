@@ -59,6 +59,7 @@ fn instr_size(op: int) -> int {
     if op == IR_FAST           { return 0; }
     if op == IR_UNROLL         { return 0; }
     if op == IR_SECTION        { return 0; }
+    if op == IR_HOTPATCH_ROUTE { return 9; }  // call(5) + store(4) = 9 bytes
     // Unknown / non-annotation opcodes fall back to caller's heuristic (ic*5)
     return 0;
 }

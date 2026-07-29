@@ -596,6 +596,8 @@ gv_arena_pool_data : int, mut = -1;
 gv_arena_max_size : int, mut = -1;
 gv_heap_ptr : int, mut = -1;
 gv_heap_end : int, mut = -1;
+gv_hp_config : int, mut = -1;
+gv_hp_inflight : int, mut = -1;
 g_heap_expand_call_pos : int, mut = -1;
 
 fn emit_start(buf: string, pos: int) -> int {
@@ -733,6 +735,7 @@ fn elf_gen(buf: string) -> int {
     cur_ni3 := str_intern("g_arena_sizes"); cur_ni4 := str_intern("g_arena_pool_data");
     cur_ni5 := str_intern("g_arena_max_size");
     cur_ni6 := str_intern("g_heap_ptr"); cur_ni7 := str_intern("g_heap_end");
+    cur_ni8 := str_intern("g_hp_config"); cur_ni9 := str_intern("g_hp_inflight");
     gvsi : ., mut = 0;
     loop { if gvsi >= g_ir_global_count { break; }
         ni := r64(g_ir_globals, gvsi * 16);
@@ -745,6 +748,8 @@ fn elf_gen(buf: string) -> int {
         if ni == cur_ni5 { gv_arena_max_size = r64(g_ir_globals, gvsi * 16 + 8); }
         if ni == cur_ni6 { gv_heap_ptr = r64(g_ir_globals, gvsi * 16 + 8); }
         if ni == cur_ni7 { gv_heap_end = r64(g_ir_globals, gvsi * 16 + 8); }
+        if ni == cur_ni8 { gv_hp_config = r64(g_ir_globals, gvsi * 16 + 8); }
+        if ni == cur_ni9 { gv_hp_inflight = r64(g_ir_globals, gvsi * 16 + 8); }
     gvsi = gvsi + 1; }
 
     // Phase 2: compute sizes for all functions

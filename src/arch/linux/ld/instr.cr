@@ -586,6 +586,18 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
         return cp;
     }
 
+    if op == IR_HOTPATCH_ROUTE {
+        do2 := g2_slot(d);
+        name_ni := s1;
+        grow_call_patch(g_x86_call_patch_count + 1);
+        w64(g_x86_call_patch_pos, g_x86_call_patch_count * 8, pos + cp);
+        w64(g_x86_call_patch_name, g_x86_call_patch_count * 8, name_ni);
+        g_x86_call_patch_count = g_x86_call_patch_count + 1;
+        e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;
+        cp = cp + e2_st(buf, pos+cp, 0, do2);
+        return cp;
+    }
+
     if op == IR_RETURN {
         if s1 >= 0 {
             if r64(g_x86_is_global, s1 * 8) != 0 {
