@@ -418,6 +418,12 @@ fn res_imports() {
             }
             path : ., mut = "";
             content : ., mut = "";
+            // Skip import if it references the same file as the main source
+            // (prevents duplicate definitions when _import.cr imports the entry file)
+            if str_len(import_fileid) > 0 && str_eq(import_fileid, main_fileid_str) != 0 {
+                i = pos;
+                continue;
+            }
             if str_len(import_fileid) > 0 {
                 if is_project {
                     proj_toml : ., mut = "src/" + project_name + "/Core.toml";
@@ -479,11 +485,21 @@ fn res_imports() {
                 }
             }
             if str_len(content) > 0 {
-                print("  -> "); println(path);
                 content_len := str_len(content);
                 loaded_fid : ., mut = get_fileid(content);
                 if str_len(loaded_fid) == 0 { loaded_fid = import_fileid; }
                 loaded_fni := reg_fileid(loaded_fid, path);
+                // Check if this file was already loaded (prevent duplicates)
+                already_loaded : ., mut = 0;
+                mi : ., mut = 0;
+                loop { if mi >= g_mod_count { break; }
+                    if r64(g_mods, mi * 24 + 8) == loaded_fni { already_loaded = 1; break; }
+                mi = mi + 1; }
+                if already_loaded != 0 {
+                    i = pos;
+                    continue;
+                }
+                print("  -> "); println(path);
                 seg_byte := main_len + extra_bytes + 1;
                 grow_segs(g_seg_count + 1); w64(g_seg_starts, g_seg_count * 8, seg_byte);
                 w64(g_seg_fileids, g_seg_count * 8, loaded_fni);

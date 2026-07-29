@@ -17,37 +17,86 @@
 - **优化元数据修复**：独立 64 字节槽位、capacity 和扩容复制，O2 寄存器分配 metadata 可序列化并由自举后端读取
 - **后端回归测试**：新增三阶段自举、字节一致、O0/O2 CCR 和原生 ELF 运行验证
 
-### 本阶段（2025-07-22 自举链修复 + 后端项目化）
-- **前端自举贯通**: corec2 → corec10 全线贯通 ✅
-- **import/module 修复**: import opt/rt/main，搜索路径加 runtime/compiler
-- **project.cr 重构**: 全局变量代替 ProjectConfig 结构体返回
-- **checker 强化**: 未定义函数报 EC_N_FUNC；添加 r64 内建
-- **后端项目化**: src/arch/linux/ld/ 独立项目（Core.toml + _import.cr + main.cr）
+## 本阶段已完成（2026-07-28~29）
+
+### Arena 内存模型（完整实现）
+- `src/stdlib/arena.cr` — 完整生命周期：init/new/reset，动态元数据，free list，嵌套
+- `src/compiler/ir_gen.cr` — 子图绑定：每个函数/loop/for/unsafe 自动 arena lifecycle + 大小预计算
+- `src/arch/linux/ld/elf.cr` — ELF 后端双路径 alloc：arena 感知 + 全局 bump 回退
+- `src/arch/linux/ld/instr.cr` — IR_ARENA_NEW(32)/IR_ARENA_RESET(33) 编码
+- `src/runtime/rt.cr` — g_current_arena/g_heap_ptr/g_heap_end 全局注册
+- `src/compiler/dataflow.cr` — df_use_var OOB 修复
+- mmap 堆扩展：BSS 打满后自动 mmap 1GB 新区域
+- emit_alloc_body 零初始化 + 链式扩容标记满
+- 目录构建自举 crash 为预存 bug（_import.cr segment tracking）
+
+### @ 内建原语（12 个全部完整）
+- `@sizeOf(T)` / `@alignOf(T)` — 编译期常量，ELF 验证 8 / 1 ✅
+- `@fields(T)` — 遍历 struct fields，返回逗号分隔名字符串
+- `@hasField(T, name)` / `@field(T, name)` — 结构体字段存在性 + 偏移量
+- `@typeInfo(T)` — 类型名称字符串
+- `@comptime(expr)` — 透传 IR gen
+- `@inline(fn)` — IR_INLINE(34)
+- `@no_bounds_check` — IR_NO_BOUNDS_CHECK(35)
+- `@fast` — IR_FAST(36)
+- `@unroll(n)` — IR_UNROLL(37)
+- `@section(name)` — IR_SECTION(38)
+
+### 增量缓存（函数级 .cir，默认开启）
+- `src/compiler/cir_cache.cr` — save/load 每函数 .cir 快照
+- 管线集成：编译自动检查 .core/cache/cir/
+- `clean-cache` 子命令
+- 无感缓存，不需要 `--incremental` 标志
+
+### @hotpatch 滚动更新
+- `IR_HOTPATCH_ROUTE(39)` — 调用点路由指令
+- Parser `@hotpatch(ver=N)` + checker 多版本签名校验
+- ELF 后端编码 + `g_hp_config`/`g_hp_inflight` 全局变量
+- 运行时 `hotpatch.cr` + rt.s SIGHUP 信号处理 + in_flight drain 追踪
 
 ## 剩余工作
 
-### 1. 解释器局限
+### 1. 目录自举 SIGSEGV（预存 bug）
+- **原因**: `_import.cr` 内容剥离后 segment tracking 偏移不对
+- **影响**: `./build/corec build src/compiler` crash，`--static` 也一样
+- **绕过**: standalone `main.cr` 构建 5 代自举链正常工作
+- **涉及**: `src/compiler/module.cr` 的 `build_line_fileid()` 后的段追踪
+
+### 2. ELF 字符串常量 length header（预存 bug）
+- **原因**: `IR_CONST` 的 `TI_STR` 在 ELF 后端中字符串常量的隐藏长度头不对
+- **影响**: `@fields(Point)` 等字符串值在 ELF 二进制中长度错误，解释器正确
+- **涉及**: `src/arch/linux/ld/` 的 str_const 处理
+
+### 3. 解释器局限
 - **for 循环**: label/branch 与 dataflow 顺序执行不兼容
 - **递归/跨函数调用**: inline 执行不支持 IR_CALL
 - **泛型函数**: 类型检查通过但解释器返回 255
 
-### 2. go/flow/yield 并发
-- 数据流图不包含 IR_SPAWN/CALL 节点
+### 4. 并发（go/flow/yield）
+- IR_SPAWN(27)/IR_YIELD(28) 已定义，IR gen 部分支持，ELF 后端未实现
+- 调度器、通道、fiber 切换均未做
+- Arena 隔离接口已预留（SG_FLOW/SG_GO）
 
-### 3. 标准库补全
-- 字符串操作、JSON 序列化、集合类
+### 5. 标准库补全
+- math.cr / collections.cr 均为 stub
+- 字符串操作、JSON 序列化待补
+
+### 6. 动态类型（设计文档已有，未实现）
+- `dyn` 关键字 + 路径类型追踪 + 汇合点 tagged union
+- 依赖滚动更新（hotpatch）机制作为前置
 
 ## 架构规划
 
 ### 指针安全模型
 见 `docs/pointer-model.md`。裸指针 + 数据流图 provenance 推导，编译器自动验证，退路 `unsafe`。
+三 pass：PointerAnalysis、RegionCheck、ProvenanceVerify — 全部实现。
 
 ### Arena 内存模型
-见 `docs/memory-model.md`。堆按数据流子图划分独立 Arena，指针碰撞分配，游标重置回收。Arena 边界对应数据流子图边界，不是独立的概念——由图的推导给出。
+见 `docs/memory-model.md`。已完整实现。堆按数据流子图划分独立 Arena，指针碰撞分配，
+游标重置回收。Arena 边界对应数据流子图边界。
 
 ### 文档更新
-- `docs/pointer-model.md` — 新写，指针安全完整设计
-- `docs/language-syntax.md` — 指针语法已更新
-- `docs/memory-model.md` — RawRef 已替换为通用 unsafe 引用
-- `docs/dataflow-design.md` — 新增指针安全章节
-- `docs/project-book.md` — 新增指针安全章节
+- `docs/memory-model.md` — 设计文档（待同步实现细节）
+- `docs/pointer-model.md` — 指针安全完整设计
+- `docs/language-syntax.md` — 指针、@ 内建语法已更新
+- `docs/at-intrinsics.md` — @ 内建原语完整规格
