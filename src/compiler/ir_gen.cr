@@ -331,6 +331,25 @@ fn ti_field_offset(ti: int, name: string) -> int {
     return -1;
 }
 
+// Check if a function name refers to a hotpatch function (has @hotpatch versions)
+fn is_hotpatch_func(name_idx: int) -> int {
+    count : ., mut = 0;
+    i : ., mut = 0;
+    loop {
+        if i >= g_func_count { break; }
+        if fi_name(i) == name_idx {
+            fn_node := fi_ast_node(i);
+            if fn_node >= 0 {
+                hotpatch_ver := ast_int_val(fn_node) / 256;
+                if hotpatch_ver > 0 { count = count + 1; }
+            }
+        }
+        i = i + 1;
+    }
+    if count > 0 { return 1; }
+    return 0;
+}
+
 // --- IR generation for expressions ---
 // Returns the IR variable index holding the result
 
@@ -918,6 +937,11 @@ fn gen_expr(node: int) -> int {
                 emit(IR_STORE, -1, packed, av, 0, 0);
                 ai = ai + 1;
             }
+        }
+        // Hotpatch function call: emit IR_HOTPATCH_ROUTE instead of IR_CALL
+        if func_ni >= 0 && is_hotpatch_func(func_ni) != 0 {
+            emit(IR_HOTPATCH_ROUTE, dest, func_ni, first_arg_var, ac);
+            return dest;
         }
         emit(IR_CALL, dest, first_arg_var, ac, func_ni, 0);
         return dest;
