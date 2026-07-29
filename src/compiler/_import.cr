@@ -20,6 +20,7 @@ import fmt
 import io
 import interp
 import dump
+import cir_cache
 import ext_mgr
 import ext_safety
 import pass

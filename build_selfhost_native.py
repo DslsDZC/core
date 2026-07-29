@@ -142,6 +142,7 @@ def main():
             'src/stdlib/os.cr',
             'src/compiler/interp.cr',
             'src/compiler/dump.cr',
+            'src/compiler/cir_cache.cr',
             'src/compiler/main.cr',
         ], wrapper_fn='compiler_main'),
         label='corec',
