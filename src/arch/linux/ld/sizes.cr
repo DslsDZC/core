@@ -57,6 +57,8 @@ fn instr_size(op: int) -> int {
     if op == IR_INLINE         { return 0; }
     if op == IR_NO_BOUNDS_CHECK { return 0; }
     if op == IR_FAST           { return 0; }
+    if op == IR_UNROLL         { return 0; }
+    if op == IR_SECTION        { return 0; }
     // Unknown / non-annotation opcodes fall back to caller's heuristic (ic*5)
     return 0;
 }

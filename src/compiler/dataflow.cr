@@ -355,5 +355,7 @@ fn df_opcode_name(opcode: int, s3: int) -> string {
     if opcode == IR_INLINE { return "inline"; }
     if opcode == IR_NO_BOUNDS_CHECK { return "no_bounds_check"; }
     if opcode == IR_FAST { return "fast"; }
+    if opcode == IR_UNROLL { return "unroll"; }
+    if opcode == IR_SECTION { return "section"; }
     return "?";
 }

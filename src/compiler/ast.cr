@@ -555,6 +555,8 @@ IR_ARENA_RESET : int = 33;   // src1=arena_id (dest=-1)
 IR_INLINE            : int = 34;   // src1=fn_var — inline hint
 IR_NO_BOUNDS_CHECK   : int = 35;   // — skip bounds check for subsequent DEREFs
 IR_FAST              : int = 36;   // — allow precision-for-speed optimizations
+IR_UNROLL            : int = 37;   // src1=unroll_count — loop unroll hint
+IR_SECTION           : int = 38;   // src1=section_name_ni — code section hint
 
 // Resolution flag for BRANCH/JUMP (stored in type_kind field after label resolution)
 IR_RESOLVED : int = 1;

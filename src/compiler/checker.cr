@@ -1980,6 +1980,18 @@ fn infer_expr(node: int) -> int {
             return TI_UNIT;
         }
 
+        // @unroll(n) — requires integer argument
+        if str_eq(name, "unroll") != 0 {
+            if args < 0 { check_error(EC_N_UNDEFINED, "@unroll requires an integer argument", ast_line(node), ast_col(node)); return TI_UNIT; }
+            return TI_UNIT;
+        }
+
+        // @section(name) — requires string argument
+        if str_eq(name, "section") != 0 {
+            if args < 0 { check_error(EC_N_UNDEFINED, "@section requires a string argument", ast_line(node), ast_col(node)); return TI_UNIT; }
+            return TI_UNIT;
+        }
+
         check_error(EC_N_UNDEFINED, "unknown @ builtin: " + name, ast_line(node), ast_col(node));
         return TI_UNIT;
     }

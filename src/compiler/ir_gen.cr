@@ -795,6 +795,22 @@ fn gen_expr(node: int) -> int {
                 return -1;
             }
 
+            // @unroll(n): emit loop unroll hint
+            if str_eq(name, "unroll") != 0 {
+                unroll_count := ast_int_val(ast_a(first_arg));
+                emit(IR_UNROLL, -1, unroll_count, 0, 0, 0);
+                return -1;
+            }
+
+            // @section(name): emit code section hint
+            if str_eq(name, "section") != 0 {
+                name_expr := ast_a(ast_a(first_arg));
+                name_ni := ast_int_val(name_expr);
+                track_str(name_ni);
+                emit(IR_SECTION, -1, name_ni, 0, 0, 0);
+                return -1;
+            }
+
             return -1;
         }
 
