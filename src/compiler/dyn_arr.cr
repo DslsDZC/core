@@ -374,6 +374,21 @@ fn str_hash(s: string) -> int {
         i = i + 1; }
     return h; }
 
+// Hash arbitrary bytes (for function body content fingerprinting).
+// Uses a multiplicative hash similar to str_hash but with FNV-inspired
+// constants for better distribution over byte ranges.
+fn hash_bytes(data: string, len: int) -> int {
+    h : ., mut = 2166136261;  // FNV offset basis
+    i : ., mut = 0;
+    loop {
+        if i >= len { break; }
+        h = h * 16777619;  // FNV prime
+        h = h + (load8(data, i) % 256);
+        i = i + 1;
+    }
+    return h;
+}
+
 fn _grow_str_hash(ncap: int) {
     // Allocate new table filled with -1, rehash all existing strings
     nb := alloc(ncap * 8);
