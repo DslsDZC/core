@@ -241,13 +241,14 @@ EXPR_GO : int = 42;             // go expr: a=-1, b=body;  go var start..end exp
 EXPR_FLOW : int = 43;           // flow fn — a=fn_name_ni, b=param_count, c=first_param, data=body
 EXPR_YIELD : int = 44;          // yield expr — a=value expr
 EXPR_AWAIT : int = 45;          // await expr — a=value expr (future/flow to wait on)
+EXPR_AT : int = 46;             // @builtin: a=name_ni, b=args_node, c=0, iv=0, tv=0, data=0
 
 // Desugared constructs
 EXPR_TRY : int = 33;      // a=expr being tried (? operator)
 EXPR_UNSAFE : int = 34;   // a=block body
 EXPR_STRUCTPAT : int = 35; // struct pattern: a=name ni, b=first field pat, c=field count
 EXPR_AS : int = 36;        // a=expr, b=type node (cast: expr as Type)
-EXPR_PTRTYPE : int = 46;  // a=inner_type (for *T in type position)
+EXPR_PTRTYPE : int = 47;  // a=inner_type (for *T in type position)
 
 // Field representation in struct literal: two consecutive AST nodes
 // (name_idx, value_idx, line=line, col=col)
@@ -549,6 +550,14 @@ IR_SPAWN : int = 27;     // dest=result_var, s1=fn_name_ni, s2=first_arg, src3=a
 IR_YIELD : int = 28;     // s1=value_var — emit value from flow to consumer channel
 IR_AWAIT : int = 29;     // dest=value_var, s1=future_var — block until future ready, get value
 IR_BOUNDS_CHECK : int = 30; // s1=index_var, s2=max_len — if index<0 or index>=max_len, abort (s2<0 = skip)
+IR_ARENA_NEW   : int = 32;   // dest=arena_var, src1=size_estimate
+IR_ARENA_RESET : int = 33;   // src1=arena_id (dest=-1)
+IR_INLINE            : int = 34;   // src1=fn_var — inline hint
+IR_NO_BOUNDS_CHECK   : int = 35;   // — skip bounds check for subsequent DEREFs
+IR_FAST              : int = 36;   // — allow precision-for-speed optimizations
+IR_UNROLL            : int = 37;   // src1=unroll_count — loop unroll hint
+IR_SECTION           : int = 38;   // src1=section_name_ni — code section hint
+IR_HOTPATCH_ROUTE    : int = 39;   // dest=result_var, s1=fn_name_ni, s2=first_arg, s3=arg_count
 
 // Resolution flag for BRANCH/JUMP (stored in type_kind field after label resolution)
 IR_RESOLVED : int = 1;

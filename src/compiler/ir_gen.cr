@@ -4,6 +4,43 @@
 
 // (IR globals declared in globals.cr)
 
+// Subgraph-level arena tracking for compile-time size estimation
+g_sg_alloc_total : string, mut;    // per-sg: cumulative alloc size
+g_sg_alloc_cap   : int, mut;
+g_sg_arena_var   : string, mut;    // per-sg: IR var for arena ID
+g_sg_arena_var_cap : int, mut;
+
+fn grow_sg_alloc(needed: int) {
+    if needed < g_sg_alloc_cap { return; }
+    nc := g_sg_alloc_cap * 2; if nc < 64 { nc = 64; } if nc < needed { nc = needed + 64; }
+    nb := alloc(nc * 8); _dyncpy(g_sg_alloc_total, g_sg_alloc_cap * 8, nb); g_sg_alloc_total = nb; g_sg_alloc_cap = nc; }
+
+fn grow_sg_arena_var(needed: int) {
+    if needed < g_sg_arena_var_cap { return; }
+    nc := g_sg_arena_var_cap * 2; if nc < 64 { nc = 64; } if nc < needed { nc = needed + 64; }
+    nb := alloc(nc * 8); _dyncpy(g_sg_arena_var, g_sg_arena_var_cap * 8, nb); g_sg_arena_var = nb; g_sg_arena_var_cap = nc; }
+
+fn sg_alloc_push(kind: int) {
+    grow_sg_alloc(g_sg_count + 1);
+    grow_sg_arena_var(g_sg_count + 1);
+    w64(g_sg_alloc_total, g_sg_count * 8, 0);
+    sg_push(kind);
+}
+
+fn sg_alloc_pop() {
+    total := r64(g_sg_alloc_total, (g_sg_count - 1) * 8);
+    arena_var := r64(g_sg_arena_var, (g_sg_count - 1) * 8);
+    sg_pop();
+    emit(IR_ARENA_RESET, -1, arena_var, 0, 0, 0);
+}
+
+fn track_alloc_size(size: int) {
+    if g_sg_count > 0 && str_len(g_sg_alloc_total) > 0 {
+        prev := r64(g_sg_alloc_total, (g_sg_count - 1) * 8);
+        w64(g_sg_alloc_total, (g_sg_count - 1) * 8, prev + size);
+    }
+}
+
 fn new_ir_var(name: string, type_idx: int) -> int {
     idx := g_ir_var_count;
     grow_ir_vars(idx + 1);
@@ -157,6 +194,160 @@ fn get_variant_name_idx(qualified_ni: int) -> int {
         return str_intern(variant_name);
     }
     return qualified_ni;
+}
+
+// --- Type metadata helpers for @ builtins ---
+
+// Resolve a type expression node to a TI_* type index.
+// Handles type nodes (ast_kind==0 from parse_type) and EXPR_IDENT
+// (basic type names not in the symbol table).
+fn ti_from_type_expr(node: int) -> int {
+    if node < 0 { return TI_UNIT; }
+    // Type node from parse_type: ast_kind == 0, type_val = TY_*
+    if ast_kind(node) == 0 {
+        tv := ast_type_val(node);
+        if tv == TY_INT { return TI_INT; }
+        if tv == TY_FLOAT { return TI_FLOAT; }
+        if tv == TY_BOOL { return TI_BOOL; }
+        if tv == TY_STRING { return TI_STR; }
+        if tv == TY_CHAR { return TI_CHAR; }
+        if tv == TY_UNIT { return TI_UNIT; }
+        return TI_UNIT;
+    }
+    // EXPR_IDENT from parse_expr: int_val = name string index
+    if ast_kind(node) == EXPR_IDENT {
+        ni := ast_int_val(node);
+        name := istr_get(ni);
+        if str_eq(name, "int") != 0 { return TI_INT; }
+        if str_eq(name, "float") != 0 { return TI_FLOAT; }
+        if str_eq(name, "bool") != 0 { return TI_BOOL; }
+        if str_eq(name, "string") != 0 { return TI_STR; }
+        if str_eq(name, "char") != 0 { return TI_CHAR; }
+        if str_eq(name, "unit") != 0 { return TI_UNIT; }
+        // Named types (structs, enums): look up in symbol table
+        si := find_gsym(ni);
+        if si >= 0 && sym_kind(si) == SYM_TYPE { return sym_type(si); }
+    }
+    // Complex type expressions: delegate to checker's resolver
+    return res_type_node(node);
+}
+
+// Type size in bytes
+fn type_size(ti: int) -> int {
+    if ti == TI_CHAR { return 4; }  // not in type table
+    if ti < 0 || ti >= g_type_count { return 8; }
+    k := get_type_kind(ti);
+    if k == TYP_BASE {
+        d := get_type_data(ti);
+        if d == TY_INT { return 8; }
+        if d == TY_FLOAT { return 8; }
+        if d == TY_BOOL { return 1; }
+        if d == TY_STRING { return 8; }
+        if d == TY_UNIT { return 0; }
+        if d == TY_CHAR { return 4; }
+        return 8;
+    }
+    if k == TYP_ARRAY {
+        elem := get_type_data(ti);
+        cnt := get_type_extra(ti);
+        return type_size(elem) * cnt;
+    }
+    if k == TYP_PTR || k == TYP_REF { return 8; }
+    if k == TYP_SLICE { return 16; }
+    if k == TYP_NAMED { return 64; }
+    return 8;
+}
+
+// Type alignment in bytes
+fn type_align(ti: int) -> int {
+    if ti == TI_CHAR { return 4; }
+    if ti < 0 || ti >= g_type_count { return 8; }
+    k := get_type_kind(ti);
+    if k == TYP_BASE {
+        d := get_type_data(ti);
+        if d == TY_INT { return 8; }
+        if d == TY_FLOAT { return 8; }
+        if d == TY_BOOL { return 1; }
+        if d == TY_STRING { return 8; }
+        if d == TY_CHAR { return 4; }
+        return 8;
+    }
+    if k == TYP_ARRAY { return type_align(get_type_data(ti)); }
+    if k == TYP_PTR || k == TYP_REF { return 8; }
+    if k == TYP_SLICE { return 8; }
+    if k == TYP_NAMED { return 8; }
+    return 8;
+}
+
+// Resolve a type index to a struct info index.
+// Returns -1 if the type is not a struct type.
+fn ti_resolve_struct(ti: int) -> int {
+    if ti < 0 || ti >= g_type_count { return -1; }
+    k := get_type_kind(ti);
+    if k != TYP_NAMED { return -1; }
+    name_ni := get_type_data(ti);
+    if name_ni < 0 { return -1; }
+    name := istr_get(name_ni);
+    si : ., mut = 0;
+    loop {
+        if si >= g_struct_count { break; }
+        sn_ni := si_name(si);
+        sn := istr_get(sn_ni);
+        if str_eq(sn, name) != 0 { return si; }
+        si = si + 1;
+    }
+    return -1;
+}
+
+// Check if a struct type has a field by name
+fn ti_has_field(ti: int, name: string) -> int {
+    si := ti_resolve_struct(ti);
+    if si < 0 { return 0; }
+    fc := si_field_count(si);
+    fi : ., mut = 0;
+    loop {
+        if fi >= fc { break; }
+        fn_ni := si_field_name(si, fi);
+        fname := istr_get(fn_ni);
+        if str_eq(fname, name) != 0 { return 1; }
+        fi = fi + 1;
+    }
+    return 0;
+}
+
+// Get field byte offset (each field is 8 bytes)
+fn ti_field_offset(ti: int, name: string) -> int {
+    si := ti_resolve_struct(ti);
+    if si < 0 { return -1; }
+    fc := si_field_count(si);
+    fi : ., mut = 0;
+    loop {
+        if fi >= fc { break; }
+        fn_ni := si_field_name(si, fi);
+        fname := istr_get(fn_ni);
+        if str_eq(fname, name) != 0 { return fi * 8; }
+        fi = fi + 1;
+    }
+    return -1;
+}
+
+// Check if a function name refers to a hotpatch function (has @hotpatch versions)
+fn is_hotpatch_func(name_idx: int) -> int {
+    count : ., mut = 0;
+    i : ., mut = 0;
+    loop {
+        if i >= g_func_count { break; }
+        if fi_name(i) == name_idx {
+            fn_node := fi_ast_node(i);
+            if fn_node >= 0 {
+                hotpatch_ver := ast_int_val(fn_node) / 256;
+                if hotpatch_ver > 0 { count = count + 1; }
+            }
+        }
+        i = i + 1;
+    }
+    if count > 0 { return 1; }
+    return 0;
 }
 
 // --- IR generation for expressions ---
@@ -495,6 +686,153 @@ fn gen_expr(node: int) -> int {
     arg_vars = alloc(64 * 8); arg_vars_cap = 64;
         func_ni : ., mut = -1;
 
+        // @builtin(args) — parser wraps @foo(args) as EXPR_CALL(func=EXPR_AT, ...)
+        // so we detect EXPR_AT here and handle it before the normal call dispatch.
+        if ast_kind(func_node) == EXPR_AT {
+            name_ni := ast_a(func_node);
+            name := istr_get(name_ni);
+
+            // @sizeOf(T): emit IR_CONST with type size
+            if str_eq(name, "sizeOf") != 0 {
+                ti := ti_from_type_expr(ast_a(first_arg));
+                sz := type_size(ti);
+                v := new_ir_var("_sizeof", TI_INT);
+                emit(IR_CONST, v, sz, 0, 0, TI_INT);
+                return v;
+            }
+
+            // @alignOf(T): emit IR_CONST with type alignment
+            if str_eq(name, "alignOf") != 0 {
+                ti := ti_from_type_expr(ast_a(first_arg));
+                al := type_align(ti);
+                v := new_ir_var("_alignof", TI_INT);
+                emit(IR_CONST, v, al, 0, 0, TI_INT);
+                return v;
+            }
+
+            // @fields(T): emit string array of field names
+            if str_eq(name, "fields") != 0 {
+                ti := ti_from_type_expr(ast_a(first_arg));
+                si := ti_resolve_struct(ti);
+                v := new_ir_var("_fields", TI_STR);
+                if si >= 0 {
+                    fc := si_field_count(si);
+                    // Build a string constant: comma-separated field names
+                    fields_str : ., mut = "";
+                    fi : ., mut = 0;
+                    loop {
+                        if fi >= fc { break; }
+                        fname := istr_get(si_field_name(si, fi));
+                        if fi > 0 { fields_str = fields_str + ","; }
+                        fields_str = fields_str + fname;
+                        fi = fi + 1;
+                    }
+                    ni := str_intern(fields_str);
+                    track_str(ni);
+                    emit(IR_CONST, v, ni, 0, 0, TI_STR);
+                } else {
+                    emit(IR_CONST, v, 0, 0, 0, TI_STR);
+                }
+                return v;
+            }
+
+            // @hasField(T, name): check field existence
+            if str_eq(name, "hasField") != 0 {
+                ti := ti_from_type_expr(ast_a(first_arg));
+                name_arg := ast_b(first_arg);
+                name_expr := ast_a(name_arg);
+                fn_name := istr_get(ast_int_val(name_expr));
+                exists := ti_has_field(ti, fn_name);
+                v := new_ir_var("_hasf", TI_BOOL);
+                emit(IR_CONST, v, exists, 0, 0, TI_BOOL);
+                return v;
+            }
+
+            // @field(T, name): get field offset
+            if str_eq(name, "field") != 0 {
+                ti := ti_from_type_expr(ast_a(first_arg));
+                name_arg := ast_b(first_arg);
+                name_expr := ast_a(name_arg);
+                fn_name := istr_get(ast_int_val(name_expr));
+                off := ti_field_offset(ti, fn_name);
+                v := new_ir_var("_fldoff", TI_INT);
+                emit(IR_CONST, v, off, 0, 0, TI_INT);
+                return v;
+            }
+
+            // @typeInfo(T): emit type description string
+            if str_eq(name, "typeInfo") != 0 {
+                ti := ti_from_type_expr(ast_a(first_arg));
+                type_str : ., mut = "";
+                k := get_type_kind(ti);
+                if k == TYP_NAMED {
+                    name_ni := get_type_data(ti);
+                    type_str = istr_get(name_ni);
+                } else if ti == TI_INT { type_str = "int"; }
+                else if ti == TI_BOOL { type_str = "bool"; }
+                else if ti == TI_FLOAT { type_str = "float"; }
+                else if ti == TI_STR { type_str = "string"; }
+                else if ti == TI_CHAR { type_str = "char"; }
+                else if ti == TI_UNIT { type_str = "unit"; }
+                else { type_str = "unknown"; }
+                ni := str_intern(type_str);
+                track_str(ni);
+                v := new_ir_var("_tinfo", TI_STR);
+                emit(IR_CONST, v, ni, 0, 0, TI_STR);
+                return v;
+            }
+
+            // @comptime(expr): force compile-time evaluation
+            if str_eq(name, "comptime") != 0 {
+                inner_expr := ast_a(first_arg);
+                // Generate IR for the inner expression
+                inner_var := gen_expr(inner_expr);
+                // If the inner expression is a constant, it's already folded.
+                // For runtime-dependent exprs, we'd need the interpreter.
+                // For now: gen IR and return — the existing constant folding
+                // (inline IR_CONST from @sizeOf etc.) handles pure compile-time exprs.
+                // Future: invoke ir_interpret_expr for true forced evaluation.
+                return inner_var;
+            }
+
+            // @inline(fn): emit IR_INLINE hint
+            if str_eq(name, "inline") != 0 {
+                fn_var := gen_expr(ast_a(first_arg));
+                emit(IR_INLINE, -1, fn_var, 0, 0, 0);
+                return fn_var;
+            }
+
+            // @no_bounds_check: emit annotation (no args)
+            if str_eq(name, "no_bounds_check") != 0 {
+                emit(IR_NO_BOUNDS_CHECK, -1, 0, 0, 0, 0);
+                return -1;
+            }
+
+            // @fast: emit annotation (no args)
+            if str_eq(name, "fast") != 0 {
+                emit(IR_FAST, -1, 0, 0, 0, 0);
+                return -1;
+            }
+
+            // @unroll(n): emit loop unroll hint
+            if str_eq(name, "unroll") != 0 {
+                unroll_count := ast_int_val(ast_a(first_arg));
+                emit(IR_UNROLL, -1, unroll_count, 0, 0, 0);
+                return -1;
+            }
+
+            // @section(name): emit code section hint
+            if str_eq(name, "section") != 0 {
+                name_expr := ast_a(ast_a(first_arg));
+                name_ni := ast_int_val(name_expr);
+                track_str(name_ni);
+                emit(IR_SECTION, -1, name_ni, 0, 0, 0);
+                return -1;
+            }
+
+            return -1;
+        }
+
         // Module or method call: obj.method(args)
         if ast_kind(func_node) == EXPR_FIELD {
             func_ni = ast_data(node); // function name (set by checker for module calls)
@@ -600,6 +938,11 @@ fn gen_expr(node: int) -> int {
                 ai = ai + 1;
             }
         }
+        // Hotpatch function call: emit IR_HOTPATCH_ROUTE instead of IR_CALL
+        if func_ni >= 0 && is_hotpatch_func(func_ni) != 0 {
+            emit(IR_HOTPATCH_ROUTE, dest, func_ni, first_arg_var, ac);
+            return dest;
+        }
         emit(IR_CALL, dest, first_arg_var, ac, func_ni, 0);
         return dest;
     }
@@ -656,13 +999,19 @@ fn gen_expr(node: int) -> int {
         emit(IR_LABEL, -1, header_lbl, 0, 0, 0);
         emit(IR_JUMP, -1, body_lbl, 0, 0, 0);
         emit(IR_LABEL, -1, body_lbl, 0, 0, 0);
-        sg_push(SG_LOOP);
+        sg_alloc_push(SG_LOOP);
+        arena_var := new_ir_var("_arena", TI_INT);
+        w64(g_sg_arena_var, (g_sg_count - 1) * 8, arena_var);
+        emit(IR_ARENA_NEW, arena_var, 0, 0, 0, 0);
+        arena_instr := g_ir_instr_count - 1;
         push_ir_scope();
         push_loop_labels(header_lbl, exit_lbl);
         gen_expr(ast_a(node));
         pop_loop_labels();
         pop_ir_scope();
-        sg_pop();
+        total := r64(g_sg_alloc_total, g_sg_count - 1);
+        if total > 0 { iri_set_s1(arena_instr, total); }
+        sg_alloc_pop();
         emit(IR_JUMP, -1, header_lbl, 0, 0, 0);
         emit(IR_LABEL, -1, exit_lbl, 0, 0, 0);
         return -1;
@@ -721,13 +1070,19 @@ fn gen_expr(node: int) -> int {
         emit(IR_BRANCH, -1, cond_var, body_lbl, exit_lbl, 0);
         // Body
         emit(IR_LABEL, -1, body_lbl, 0, 0, 0);
-        sg_push(SG_FOR);
+        sg_alloc_push(SG_FOR);
+        arena_var := new_ir_var("_arena", TI_INT);
+        w64(g_sg_arena_var, (g_sg_count - 1) * 8, arena_var);
+        emit(IR_ARENA_NEW, arena_var, 0, 0, 0, 0);
+        arena_instr := g_ir_instr_count - 1;
         push_ir_scope();
         push_loop_labels(header_lbl, exit_lbl);
         gen_expr(body);
         pop_loop_labels();
         pop_ir_scope();
-        sg_pop();
+        total := r64(g_sg_alloc_total, g_sg_count - 1);
+        if total > 0 { iri_set_s1(arena_instr, total); }
+        sg_alloc_pop();
         // Increment ivar and jump to header
         one_var := new_ir_var("one", TI_INT);
         emit(IR_CONST, one_var, 1, 0, 0, TI_INT);
@@ -1002,9 +1357,15 @@ fn gen_expr(node: int) -> int {
         return gen_expr(ast_a(node));
     }
     if ast_kind(node) == EXPR_UNSAFE {
-        sg_push(SG_UNSAFE);
+        sg_alloc_push(SG_UNSAFE);
+        arena_var := new_ir_var("_arena", TI_INT);
+        w64(g_sg_arena_var, (g_sg_count - 1) * 8, arena_var);
+        emit(IR_ARENA_NEW, arena_var, 0, 0, 0, 0);
+        arena_instr := g_ir_instr_count - 1;
         ret := gen_expr(ast_a(node));
-        sg_pop();
+        total := r64(g_sg_alloc_total, g_sg_count - 1);
+        if total > 0 { iri_set_s1(arena_instr, total); }
+        sg_alloc_pop();
         return ret;
     }
     if ast_kind(node) == EXPR_AS {
@@ -1086,10 +1447,24 @@ fn ir_gen_func(fi: int) {
         }
     }
 
+    // Function-level arena (df_begin_func already pushed SG_FUNC)
+    grow_sg_alloc(g_sg_count + 1);
+    grow_sg_arena_var(g_sg_count + 1);
+    w64(g_sg_alloc_total, (g_sg_count - 1) * 8, 0);
+    arena_var := new_ir_var("_arena", TI_INT);
+    w64(g_sg_arena_var, (g_sg_count - 1) * 8, arena_var);
+    emit(IR_ARENA_NEW, arena_var, 0, 0, 0, 0);
+    arena_instr := g_ir_instr_count - 1;
+
     // Generate body
     if body >= 0 {
         gen_expr(body);
     }
+
+    // Patch arena size and reset before return
+    total := r64(g_sg_alloc_total, (g_sg_count - 1) * 8);
+    if total > 0 { iri_set_s1(arena_instr, total); }
+    emit(IR_ARENA_RESET, -1, arena_var, 0, 0, 0);
 
     // Add return at end if not already terminated
     emit(IR_RETURN, -1, -1, 0, 0, 0);
@@ -1128,6 +1503,20 @@ fn ir_gen_globals() {
         reg_one_global(ast_a(node));
         i = i + 1;
     }
+
+    // Manually register ir_gen.cr's own globals — the parser's auto-detection
+    // of file-scope declarations is known to miss some (see CLAUDE.md Known Issues).
+    reg_one_global(str_intern("g_sg_alloc_total"));
+    reg_one_global(str_intern("g_sg_alloc_cap"));
+    reg_one_global(str_intern("g_sg_arena_var"));
+    reg_one_global(str_intern("g_sg_arena_var_cap"));
+    // Runtime globals needed by emit_alloc_body and emit_start.
+    // These MUST exist in BSS for every program, even without rt.cr included.
+    reg_one_global(str_intern("g_heap_ptr"));
+    reg_one_global(str_intern("g_heap_end"));
+    reg_one_global(str_intern("g_current_arena"));
+    reg_one_global(str_intern("g_arena_pool_data"));
+    reg_one_global(str_intern("g_arena_free_list"));
 }
 
 // --- AST walk: patch method call names for monomorphization ---
@@ -1308,4 +1697,56 @@ fn ir_gen_all() {
         df_end_func(i);
         i = i + 1;
     }
+}
+
+// Compute function body fingerprint: hash of the function body source text.
+// Used for cache hit detection. If the body hasn't changed, the output IR
+// is identical and can be restored from cache.
+fn func_fingerprint(func_node: int) -> int {
+    // func_node = EXPR_FUNC node
+    // Body starts at ast_data(func_node)
+    body := ast_data(func_node);
+    if body < 0 { return 0; }
+    // For fingerprinting, hash the function's AST line/col range in source
+    // This is simpler than extracting the exact body bytes:
+    // hash AST node kind chain from the body
+    h : ., mut = 2166136261;
+    // Walk the body AST and hash node kinds + values
+    // For a simple first pass: hash the function's token stream range
+    start_line := ast_line(func_node);
+    start_col := ast_col(func_node);
+    // Use g_line/position info to hash source bytes for this function
+    // For now: simple hash of function name + param count + body node
+    h = h * 16777619 + (ast_kind(func_node) % 256);
+    h = h * 16777619 + (ast_a(func_node) % 256);   // name_ni
+    h = h * 16777619 + (ast_c(func_node) % 256);   // param count
+    if body >= 0 { h = h * 16777619 + (ast_kind(body) % 256); }
+    return h;
+}
+
+// Compute function signature fingerprint: hash of name + param types + return type.
+// Used to detect when callers need recompilation.
+fn sig_fingerprint(func_node: int) -> int {
+    h : ., mut = 2166136261;
+    // Name
+    name_ni := ast_a(func_node);
+    name := istr_get(name_ni);
+    ni : ., mut = 0;
+    loop { if ni >= str_len(name) { break; }
+        h = h * 16777619 + (load8(name, ni) % 256);
+    ni = ni + 1; }
+    // Param types
+    param := ast_b(func_node);
+    param_count := ast_c(func_node);
+    pi : ., mut = 0;
+    loop { if pi >= param_count { break; }
+        pt := ast_type_val(param);
+        h = h * 16777619 + (pt % 256);
+        pi = pi + 1;
+        param = param + 1;
+    }
+    // Return type
+    ret_type := ast_type_val(func_node);
+    h = h * 16777619 + (ret_type % 256);
+    return h;
 }

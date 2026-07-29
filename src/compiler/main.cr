@@ -166,6 +166,7 @@ fn corec_main() -> int {
     cli_cmd("cir",   "Output dataflow graph (.cir)");
     cli_cmd("ccr",   "Output linear CFG (.ccr)");
     cli_cmd("run",   "Execute code directly (interpreter mode)");
+    cli_cmd("clean-cache", "Delete incremental compilation cache");
     cli_flag("output", "o", "Output path");
     cli_flag_bool("static", "", "Static linking (embed runtime)");
     cli_flag("opt-level", "O", "Optimization level (0,1,2,3; default=1)");
@@ -322,6 +323,14 @@ fn corec_main() -> int {
         return ir_interpret();
     }
 
+    // === clean-cache: delete incremental compilation cache ===
+    if cli_eq(cmd, "clean-cache") {
+        system("rm -rf .core/cache/cir/");
+        print("cleaned ");
+        println(".core/cache/cir/");
+        return 0;
+    }
+
     // === File-based subcommands: build | check | cir | ccr ===
     if cli_arg_count() < 1 {
         print("error: ");
@@ -348,8 +357,87 @@ fn corec_main() -> int {
     }
 
     // === build | cir | ccr all need IR gen ===
-    println("ir gen...");
-    ir_gen_all();
+    // Initialize IR state
+    g_ir_var_count = 0;
+    g_ir_instr_count = 0;
+    g_ir_func_count = 0;
+    g_ir_local_count = 0;
+    g_ir_local_depth = 0;
+    g_ir_global_count = 0;
+    g_next_label = 1;
+    g_ir_loop_depth = 0;
+    g_ir_str_const_count = 0;
+    init_df();
+    ir_gen_globals();
+
+    // Incremental cache: ensure cache directory exists
+    make_cir_cache_dir();
+
+    // Generate IR for each function, checking cache first
+    fi : ., mut = 0;
+    loop {
+        if fi >= g_func_count { break; }
+
+        // Skip generic functions — they are monomorphized at call sites
+        if fi_generic_count(fi) > 0 {
+            df_begin_func(fi);
+            df_end_func(fi);
+            fi = fi + 1;
+            continue;
+        }
+
+        // Begin function boundary in DFG
+        df_begin_func(fi);
+
+        // Build cache key from source path + function name
+        fn_node := fi_ast_node(fi);
+        name_ni := ast_a(fn_node);
+        name := istr_get(name_ni);
+        func_id := src_path + "::" + name;
+
+        // Sanitize func_id for filesystem: replace / with _
+        cache_path : ., mut = ".core/cache/cir/";
+        ci : ., mut = 0;
+        loop {
+            if ci >= str_len(func_id) { break; }
+            c := load8(func_id, ci);
+            if c == 47 { cache_path = cache_path + "_"; }
+            else { cache_path = cache_path + chr(c); }
+            ci = ci + 1;
+        }
+        cache_path = cache_path + ".cir";
+
+        // Capture current state before cache load
+        instr_start := g_ir_instr_count;
+        var_start := g_ir_var_count;
+
+        // Try loading from cache
+        cached := load_cir_cache(cache_path);
+        if cached == 0 {
+            // Cache hit: setup function metadata for restored data
+            func_idx := g_ir_func_count;
+            grow_ir_func_meta(func_idx + 1);
+            w64(g_ir_func_name_idx, func_idx * 8, name_ni);
+            w64(g_ir_func_ret_type, func_idx * 8, ast_type_val(fn_node));
+            w64(g_ir_func_instr_start, func_idx * 8, instr_start);
+            w64(g_ir_func_var_start, func_idx * 8, var_start);
+            w64(g_ir_func_param_count, func_idx * 8, ast_c(fn_node));
+            w64(g_ir_func_instr_count, func_idx * 8, g_ir_instr_count - instr_start);
+            w64(g_ir_func_var_count, func_idx * 8, g_ir_var_count - var_start);
+            g_ir_func_count = func_idx + 1;
+
+            df_end_func(fi);
+        } else {
+            // Cache miss: do full frontend IR gen
+            ir_gen_func(fi);
+            df_end_func(fi);
+
+            // Save cache for future compilations
+            save_cir_cache(cache_path, fi);
+        }
+
+        fi = fi + 1;
+    }
 
     // === cir: output dataflow graph ===
     if cli_eq(cmd, "cir") {

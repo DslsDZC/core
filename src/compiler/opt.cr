@@ -423,6 +423,16 @@ fn pass_cse() {
             s1 := iri_s1(inst);
             s2 := iri_s2(inst);
 
+            // Skip arena opcodes — side-effecting, not optimizable
+            if op == IR_ARENA_NEW { ii = ii + 1; continue; }
+            if op == IR_ARENA_RESET { ii = ii + 1; continue; }
+            if op == IR_INLINE { ii = ii + 1; continue; }
+            if op == IR_NO_BOUNDS_CHECK { ii = ii + 1; continue; }
+            if op == IR_FAST { ii = ii + 1; continue; }
+            if op == IR_UNROLL { ii = ii + 1; continue; }
+            if op == IR_SECTION { ii = ii + 1; continue; }
+            if op == IR_HOTPATCH_ROUTE { ii = ii + 1; continue; }
+
             // Only CSE for pure computations: BINARY, UNARY
             if (op == IR_BINARY || op == IR_UNARY) && d >= 0 {
                 // Check if we've seen this expression

@@ -22,6 +22,12 @@ empty_str_hdr: .quad 1
 empty_str: .byte 0
 .balign 8
 
+# Hotpatch SIGHUP sigaction struct — registered in _start
+hotpatch_sa:
+    .quad _hotpatch_sighup    # sa_handler
+    .quad 0                   # sa_flags
+    .quad 0                   # sa_mask  (empty sigset_t, 8 bytes on x86-64)
+
 .text
 
 # _start — entry point: saves argc/argv, calls main, exits via syscall.
@@ -41,6 +47,15 @@ _start:
     lea r10, [rip + heap_ptr]
     mov [r10], rax
     call _init_globals
+
+    # Register SIGHUP handler — reloads .hotpatch.toml on SIGHUP
+    lea rsi, [rip + hotpatch_sa]
+    mov rdi, 1          # SIGHUP = 1
+    xor rdx, rdx        # oldact = NULL
+    mov r10d, 8         # sigsetsize = sizeof(sigset_t) on x86-64
+    mov eax, 13         # rt_sigaction syscall
+    syscall
+
     call main
 
     mov edi, eax
@@ -163,4 +178,13 @@ store_str_ptr:
 .type load64, @function
 load64:
     mov rax, [rdi + rsi]
+    ret
+
+# _hotpatch_sighup — SIGHUP signal handler
+# Reloads .hotpatch.toml via hp_load_config().
+# Kernel saves/restores all registers across signal delivery.
+.globl _hotpatch_sighup
+.type _hotpatch_sighup, @function
+_hotpatch_sighup:
+    call hp_load_config
     ret

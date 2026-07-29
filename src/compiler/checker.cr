@@ -594,6 +594,7 @@ fn collect_decls() {
         if i >= g_func_count { break; }
         name_idx := fi_name(i);
         fn_node := fi_ast_node(i);
+        hotpatch_ver := ast_int_val(fn_node) / 256;
         rt := fi_return_type(i);
         rt_ti := TI_UNIT;
         // For generic functions, skip return type resolution (depends on call site)
@@ -609,7 +610,61 @@ fn collect_decls() {
             else if rt == TY_STRING { rt_ti = TI_STR; }
             else if rt == TY_UNIT { rt_ti = TI_UNIT; }
         }
-        def_sym(name_idx, SYM_FN, rt_ti, fn_node);
+        if hotpatch_ver > 0 {
+            // @hotpatch function: register with mangled name fn_name.vN
+            fn_name_str := istr_get(name_idx);
+            mangled_name := fn_name_str + ".v" + int_str(hotpatch_ver);
+            mangled_ni := str_intern(mangled_name);
+            def_sym(mangled_ni, SYM_FN, rt_ti, fn_node);
+
+            // Verify signature matches the first version
+            fj : ., mut = 0;
+            loop {
+                if fj >= i { break; }
+                if fi_name(fj) == name_idx {
+                    first_fn := fi_ast_node(fj);
+                    first_rt := fi_return_type(fj);
+                    first_rt_ti := TI_UNIT;
+                    type_node2 := ast_type_val(first_fn);
+                    if type_node2 > 0 && ast_kind(type_node2) != 0 {
+                        first_rt_ti = res_type_node(type_node2);
+                    } else if first_rt == TY_INT { first_rt_ti = TI_INT; }
+                    else if first_rt == TY_FLOAT { first_rt_ti = TI_FLOAT; }
+                    else if first_rt == TY_BOOL { first_rt_ti = TI_BOOL; }
+                    else if first_rt == TY_STRING { first_rt_ti = TI_STR; }
+                    else if first_rt == TY_UNIT { first_rt_ti = TI_UNIT; }
+
+                    if !type_equal(rt_ti, first_rt_ti) {
+                        check_error(EC_TF_RETURN, "Hotpatch return type mismatch for '" + fn_name_str + "'", ast_line(fn_node), ast_col(fn_node));
+                    }
+                    first_pc := fi_param_count(fj);
+                    cur_pc := fi_param_count(i);
+                    if first_pc != cur_pc {
+                        check_error(EC_N_DUPLICATE, "Hotpatch parameter count mismatch for '" + fn_name_str + "'", ast_line(fn_node), ast_col(fn_node));
+                    }
+                    break;
+                }
+                fj = fj + 1;
+            }
+
+            // Also register original name for call resolution (latest version wins)
+            def_sym(name_idx, SYM_FN, rt_ti, fn_node);
+        } else {
+            // Normal function: check for duplicates (allow if existing is @hotpatch)
+            existing_si := find_gsym(name_idx);
+            if existing_si >= 0 && sym_kind(existing_si) == SYM_FN {
+                existing_node := sym_node(existing_si);
+                existing_is_hotpatch : ., mut = 0;
+                if existing_node >= 0 && ast_kind(existing_node) == EXPR_FN {
+                    existing_is_hotpatch = ast_int_val(existing_node) / 256;
+                }
+                if existing_is_hotpatch == 0 {
+                    fn_name_str := istr_get(name_idx);
+                    check_error(EC_N_DUPLICATE, "Duplicate function definition '" + fn_name_str + "'", ast_line(fn_node), ast_col(fn_node));
+                }
+            }
+            def_sym(name_idx, SYM_FN, rt_ti, fn_node);
+        }
         i = i + 1;
     }
     // Register all global variables
@@ -946,7 +1001,7 @@ fn check_func(fi: int) {
     name_idx := ast_a(fn_node);  // EXPR_FN: a = name idx
     first_param := ast_b(fn_node);  // EXPR_FN: b = first param node
     param_count := ast_c(fn_node);  // EXPR_FN: c = param count
-    return_type := ast_int_val(fn_node);  // EXPR_FN: int_val = return TY_*
+    return_type := fi_return_type(fi);  // EXPR_FN: raw return TY_*, safe from hotpatch encoding
     body := ast_data(fn_node);  // EXPR_FN: data = body node
 
     push_scope();
@@ -1370,6 +1425,11 @@ fn infer_expr(node: int) -> int {
         // Determine function name and return type
         if ast_kind(func_node) == EXPR_IDENT {
             func_ni = ast_int_val(func_node);
+        }
+        // @builtin(args) — transfer args from EXPR_CALL to EXPR_AT, then delegate
+        if ast_kind(func_node) == EXPR_AT {
+            ast_set_b(func_node, first_arg);
+            return infer_expr(func_node);
         }
         // Check builtins (only syscall3 — OS communication, no .cr body)
         if func_ni >= 0 {
@@ -1898,6 +1958,102 @@ fn infer_expr(node: int) -> int {
             e = e + 1;
         }
         return alloc_type(TYP_TUPLE, ec, data_start);
+    }
+
+    if ast_kind(node) == EXPR_AT {
+        name_ni := ast_a(node);
+        name := istr_get(name_ni);
+        args := ast_b(node);
+
+        // @sizeOf(T) — 1 type argument
+        if str_eq(name, "sizeOf") != 0 {
+            if args < 0 { check_error(EC_N_UNDEFINED, "@sizeOf requires a type argument", ast_line(node), ast_col(node)); return TI_NEVER; }
+            ti := res_type_node(args);
+            if ti < 0 { check_error(EC_N_UNDEFINED, "@sizeOf: unknown type", ast_line(node), ast_col(node)); return TI_NEVER; }
+            return TI_INT;
+        }
+
+        // @alignOf(T) — 1 type argument
+        if str_eq(name, "alignOf") != 0 {
+            if args < 0 { check_error(EC_N_UNDEFINED, "@alignOf requires a type argument", ast_line(node), ast_col(node)); return TI_NEVER; }
+            ti := res_type_node(args);
+            if ti < 0 { check_error(EC_N_UNDEFINED, "@alignOf: unknown type", ast_line(node), ast_col(node)); return TI_NEVER; }
+            return TI_INT;
+        }
+
+        // @fields(T) — 1 type argument, returns []string
+        if str_eq(name, "fields") != 0 {
+            if args < 0 { check_error(EC_N_UNDEFINED, "@fields requires a type argument", ast_line(node), ast_col(node)); return TI_NEVER; }
+            ti := res_type_node(args);
+            return TI_STR;
+        }
+
+        // @hasField(T, name) — type + string
+        if str_eq(name, "hasField") != 0 {
+            if args < 0 || ast_b(args) < 0 { check_error(EC_N_UNDEFINED, "@hasField requires 2 args", ast_line(node), ast_col(node)); return TI_NEVER; }
+            ti := res_type_node(ast_a(args));
+            return TI_BOOL;
+        }
+
+        // @field(T, name) — type + string, returns FieldInfo
+        if str_eq(name, "field") != 0 {
+            if args < 0 || ast_b(args) < 0 { check_error(EC_N_UNDEFINED, "@field requires 2 args", ast_line(node), ast_col(node)); return TI_NEVER; }
+            ti := res_type_node(ast_a(args));
+            return TI_INT;
+        }
+
+        // @typeInfo(T) — returns TypeInfo
+        if str_eq(name, "typeInfo") != 0 {
+            if args < 0 { check_error(EC_N_UNDEFINED, "@typeInfo requires a type argument", ast_line(node), ast_col(node)); return TI_NEVER; }
+            ti := res_type_node(args);
+            return TI_INT;  // placeholder — returns handle
+        }
+
+        // @comptime(expr) — force compile-time eval
+        if str_eq(name, "comptime") != 0 {
+            if args < 0 { check_error(EC_N_UNDEFINED, "@comptime requires an expression", ast_line(node), ast_col(node)); return TI_NEVER; }
+            v := infer_expr(ast_a(args));
+            ast_set_type_val(node, v);
+            return v;
+        }
+
+        // @inline(fn) — inline hint
+        if str_eq(name, "inline") != 0 {
+            if args < 0 { check_error(EC_N_UNDEFINED, "@inline requires a function argument", ast_line(node), ast_col(node)); return TI_NEVER; }
+            v := infer_expr(ast_a(args));
+            ast_set_type_val(node, v);
+            return v;
+        }
+
+        // @no_bounds_check — no args, unit
+        if str_eq(name, "no_bounds_check") != 0 {
+            return TI_UNIT;
+        }
+
+        // @fast — no args, unit
+        if str_eq(name, "fast") != 0 {
+            return TI_UNIT;
+        }
+
+        // @unroll(n) — requires integer argument
+        if str_eq(name, "unroll") != 0 {
+            if args < 0 { check_error(EC_N_UNDEFINED, "@unroll requires an integer argument", ast_line(node), ast_col(node)); return TI_UNIT; }
+            return TI_UNIT;
+        }
+
+        // @section(name) — requires string argument
+        if str_eq(name, "section") != 0 {
+            if args < 0 { check_error(EC_N_UNDEFINED, "@section requires a string argument", ast_line(node), ast_col(node)); return TI_UNIT; }
+            return TI_UNIT;
+        }
+
+        // @hotpatch — function annotation, not an expression
+        if str_eq(name, "hotpatch") != 0 {
+            return TI_UNIT;
+        }
+
+        check_error(EC_N_UNDEFINED, "unknown @ builtin: " + name, ast_line(node), ast_col(node));
+        return TI_UNIT;
     }
 
     return TI_UNIT;

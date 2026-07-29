@@ -86,11 +86,6 @@ fn df_create_node(opcode: int, dest: int, src1: int, src2: int, src3: int, type_
 
     // Add edges for src fields that are IR variables (based on opcode)
     df_connect_srcs(nid, opcode, src1, src2, src3);
-    if opcode == 4 || opcode == 27 {
-        print("df_create: op="); print(int_str(opcode));
-        print(" nid="); print(int_str(nid));
-        print(" count="); println(int_str(g_df_node_count));
-    }
     return nid;
 }
 
@@ -112,6 +107,11 @@ fn df_add_edge(from_id: int, to_id: int) {
 
 fn df_use_var(consumer_node: int, var_idx: int) {
     if var_idx < 0 { return; }
+    // Ensure the DF arrays are large enough for this variable index.
+    // df_create_node only grows arrays for 'dest', but src fields (passed as
+    // var_idx here) may have higher indices (e.g. arena_var from IR_ARENA_RESET
+    // where dest=-1 but src1 is a high arena ID variable).
+    if var_idx >= g_df_cap { grow_df_arrays(var_idx + 1); }
     producer := r64(g_df_var_producer, var_idx * 8);
     if producer >= 0 {
         df_add_edge(producer, consumer_node);
@@ -214,6 +214,13 @@ fn df_connect_srcs(node_id: int, opcode: int, s1: int, s2: int, s3: int) {
     }
     if opcode == IR_LOAD_ENUM_TAG {
         df_use_var(node_id, s1);  // enum var
+        return;
+    }
+    if opcode == IR_ARENA_NEW { df_use_var(node_id, s1); return; }
+    if opcode == IR_ARENA_RESET { df_use_var(node_id, s1); return; }
+    if opcode == IR_INLINE { df_use_var(node_id, s1); return; }
+    if opcode == IR_HOTPATCH_ROUTE {
+        df_use_var(node_id, s2);  // first_arg is a variable
         return;
     }
     // Other opcodes (LABEL, JUMP, ALLOC, ALLOC_STRUCT, ALLOC_ARRAY, PHI):
@@ -347,5 +354,13 @@ fn df_opcode_name(opcode: int, s3: int) -> string {
     if opcode == IR_STORE_PTR { return "store_ptr"; }
     if opcode == IR_SPAWN { return "spawn"; }
     if opcode == IR_YIELD { return "yield"; }
+    if opcode == IR_ARENA_NEW { return "arena_new"; }
+    if opcode == IR_ARENA_RESET { return "arena_reset"; }
+    if opcode == IR_INLINE { return "inline"; }
+    if opcode == IR_NO_BOUNDS_CHECK { return "no_bounds_check"; }
+    if opcode == IR_FAST { return "fast"; }
+    if opcode == IR_UNROLL { return "unroll"; }
+    if opcode == IR_SECTION { return "section"; }
+    if opcode == IR_HOTPATCH_ROUTE { return "hotpatch_route"; }
     return "?";
 }

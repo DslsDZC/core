@@ -18,68 +18,444 @@ fn w8_signed(buf: string, pos: int, val: int) {
     w32(buf, pos, val);
 }
 
-// Emit alloc bump allocator function body
-// Returns bytes written (always 65)
+// Emit arena-aware dual-path allocator function body
+// Checks g_current_arena: if >=0 uses arena bump, otherwise global bump.
+// Returns bytes written (now ~271 with zero-init + chain-expand fix).
 fn emit_alloc_body(buf: string, pos: int, bss_va: int, globals_size: int) -> int {
+    // When arena globals aren't registered (e.g. non-static builds), emit the
+    // original simple bump allocator to avoid relying on unpatched rip-relatives.
+    if gv_current_arena < 0 { return emit_alloc_body_simple(buf, pos, bss_va, globals_size); }
+
     cp := 0;
     fva := TEXT_BASE + pos;
 
-    // Sanity check: if size > 64MB, return 0 to prevent runaway alloc
-    // (catches count*element_size cascade before it corrupts BSS)
+    // ── Part 0: 64MB sanity check (12 bytes) ──
+    // cmp rdi, 67108864
     w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 129); w8(buf, pos+cp+2, 255);
-    e2_w32(buf, pos+cp+3, 67108864); cp = cp + 7;  // cmp rdi, 64MB
-    w8(buf, pos+cp, 118); w8(buf, pos+cp+1, 3); cp = cp + 2;  // jbe +3 (skip xor+ret if <= 64MB)
-    w8(buf, pos+cp, 49); w8(buf, pos+cp+1, 192); cp = cp + 2;  // xor eax, eax (return 0)
-    w8(buf, pos+cp, 195); cp = cp + 1;  // ret (abort alloc)
-    // Save requested size for the hidden Core object length header.
-    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 249); cp = cp + 3;  // mov r9, rdi
-    // add rdi, 15    — requested size + 8-byte header, then align to 8
-    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 131); w8(buf, pos+cp+2, 199); w8(buf, pos+cp+3, 15); cp = cp + 4;
-    // and rdi, -8
-    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 131); w8(buf, pos+cp+2, 231); w8(buf, pos+cp+3, 248); cp = cp + 4;
-
-    // mov r11, [rip + heap_ptr]
-    rel := bss_va - (fva + cp + 7);
-    w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 29); w8_signed(buf, pos+cp+3, rel); cp = cp + 7;
-    // test r11, r11
-    w8(buf, pos+cp, 77); w8(buf, pos+cp+1, 133); w8(buf, pos+cp+2, 219); cp = cp + 3;
-    // jne +14 (skip init if heap_ptr already set)
-    w8(buf, pos+cp, 117); w8(buf, pos+cp+1, 14); cp = cp + 2;
-
-    // lea r11, [rip + heap_start] — start AFTER globals so rep stosb doesn't zero them
-    heap_start_va : ., mut = bss_va + 16 + globals_size;
-    rel2 := heap_start_va - (fva + cp + 7);
-    w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 29); w8_signed(buf, pos+cp+3, rel2); cp = cp + 7;
-    // mov [rip + heap_ptr], r11
-    rel3 := bss_va - (fva + cp + 7);
-    w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 29); w8_signed(buf, pos+cp+3, rel3); cp = cp + 7;
-
-    // mov r8, r11
-    w8(buf, pos+cp, 77); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 216); cp = cp + 3;
-    // add r11, rdi
-    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 1); w8(buf, pos+cp+2, 251); cp = cp + 3;
-    // mov [rip + heap_ptr], r11
-    rel4 := bss_va - (fva + cp + 7);
-    w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 29); w8_signed(buf, pos+cp+3, rel4); cp = cp + 7;
-
-    // mov rdi, r8
-    w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 199); cp = cp + 3;
-    // mov rcx, r11
-    w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 217); cp = cp + 3;
-    // sub rcx, rdi
-    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 41); w8(buf, pos+cp+2, 249); cp = cp + 3;
-    // xor eax, eax
+    e2_w32(buf, pos+cp+3, 67108864); cp = cp + 7;
+    // jbe +3
+    w8(buf, pos+cp, 118); w8(buf, pos+cp+1, 3); cp = cp + 2;
+    // xor eax, eax; ret
     w8(buf, pos+cp, 49); w8(buf, pos+cp+1, 192); cp = cp + 2;
-    // cld
+    w8(buf, pos+cp, 195); cp = cp + 1;
+
+    // ── Part 1: Save original size + check arena (18 bytes) ──
+    // mov r9, rdi — 49 89 F9
+    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 249); cp = cp + 3;
+    // lea r10, [rip + g_current_arena] — placeholder, rip_patch #1
+    // lea r11, [rip + g_arena_cursors] — e2_lrb, rip_patch #2
+    rip_pos1 := pos + cp + 3;
+    cp = cp + e2_lrb(buf, pos + cp, 0);
+    grow_rip_patch(g_x86_rip_patch_count + 1);
+    w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, rip_pos1);
+    w64(g_x86_rip_patch_globals, g_x86_rip_patch_count * 8, gv_arena_cursors);
+    g_x86_rip_patch_count = g_x86_rip_patch_count + 1;
+    // mov r11, [r11] — 4D 8B 1B
+    w8(buf, pos+cp, 77); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 27); cp = cp + 3;
+    // mov rcx, [r11 + r10*8] — 4B 8B 0C D3
+    w8(buf, pos+cp, 75); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 12); w8(buf, pos+cp+3, 211); cp = cp + 4;
+    // mov rdx, r11 (save cursor pointer) — 49 8B D3
+    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 211); cp = cp + 3;
+    // lea r11, [rip + g_arena_sizes] — e2_lrb, rip_patch #3
+    rip_pos2 := pos + cp + 3;
+    cp = cp + e2_lrb(buf, pos + cp, 0);
+    grow_rip_patch(g_x86_rip_patch_count + 1);
+    w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, rip_pos2);
+    w64(g_x86_rip_patch_globals, g_x86_rip_patch_count * 8, gv_arena_sizes);
+    g_x86_rip_patch_count = g_x86_rip_patch_count + 1;
+    // mov r11, [r11] — 4D 8B 1B
+    w8(buf, pos+cp, 77); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 27); cp = cp + 3;
+    // mov r8, [r11 + r10*8] — 4F 8B 04 D3
+    w8(buf, pos+cp, 79); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 4); w8(buf, pos+cp+3, 211); cp = cp + 4;
+
+    // ── Part 3: Compute chunk_start (26 bytes) ──
+    // lea r11, [rip + g_arena_pool_data] — e2_lrb, rip_patch #4
+    rip_pos3 := pos + cp + 3;
+    cp = cp + e2_lrb(buf, pos + cp, 0);
+    grow_rip_patch(g_x86_rip_patch_count + 1);
+    w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, rip_pos3);
+    w64(g_x86_rip_patch_globals, g_x86_rip_patch_count * 8, gv_arena_pool_data);
+    g_x86_rip_patch_count = g_x86_rip_patch_count + 1;
+    // mov r11, [r11] — 4D 8B 1B
+    w8(buf, pos+cp, 77); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 27); cp = cp + 3;
+    // lea rax, [rip + g_arena_max_size] — 48 8D 05 xx xx xx xx, rip_patch #5
+    rip_pos4 := pos + cp + 3;
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 5);
+    e2_w32(buf, pos+cp+3, 0); cp = cp + 7;
+    grow_rip_patch(g_x86_rip_patch_count + 1);
+    w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, rip_pos4);
+    w64(g_x86_rip_patch_globals, g_x86_rip_patch_count * 8, gv_arena_max_size);
+    g_x86_rip_patch_count = g_x86_rip_patch_count + 1;
+    // mov rax, [rax] — 48 8B 00 (load g_arena_max_size value)
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 0); cp = cp + 3;
+    // mul r10 — 49 F7 E2 (rax = g_arena_max_size * ai)
+    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 247); w8(buf, pos+cp+2, 226); cp = cp + 3;
+    // add r11, rax — 49 01 C3 (r11 = pool_base + offset = chunk_start)
+    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 1); w8(buf, pos+cp+2, 195); cp = cp + 3;
+
+    // ── Part 4: Align size + bump check (22 bytes) ──
+    // mov rdi, r9 — 49 8B F9 (restore original size for alignment)
+    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 249); cp = cp + 3;
+    // add rdi, 15 — 48 83 C7 0F
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 131); w8(buf, pos+cp+2, 199); w8(buf, pos+cp+3, 15); cp = cp + 4;
+    // and rdi, -8 — 48 83 E7 F8
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 131); w8(buf, pos+cp+2, 231); w8(buf, pos+cp+3, 248); cp = cp + 4;
+    // mov rax, rcx — 48 89 C8 (rax = old_cursor)
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 200); cp = cp + 3;
+    // add rcx, rdi — 48 01 F9 (rcx = new_cursor)
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 1); w8(buf, pos+cp+2, 249); cp = cp + 3;
+    // cmp rcx, r8 — 4C 39 C1
+    w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 57); w8(buf, pos+cp+2, 193); cp = cp + 3;
+    // ja .Lchain — 77 21 (rel8=33, shifted by Bug 1 zero-init block)
+    w8(buf, pos+cp, 119); w8(buf, pos+cp+1, 33); cp = cp + 2;
+
+    // ── Part 5: Commit cursor update (4 bytes) ──
+    // mov [rdx + r10*8], rcx — 4A 89 0C D2
+    w8(buf, pos+cp, 74); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 12); w8(buf, pos+cp+3, 210); cp = cp + 4;
+
+    // ── Part 5b: Zero-init newly allocated arena block (18 bytes) ──
+    // Zero old_cursor bytes starting at chunk_start+8 (after header).
+    // rax=old_cursor, r11=chunk_start, rdx=cursors_ptr (no longer needed)
+    // mov rdx, rax (save old_cursor) — 48 89 C2
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 194); cp = cp + 3;
+    // lea rdi, [r11 + 8] — 49 8D 7B 08
+    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 123); w8(buf, pos+cp+3, 8); cp = cp + 4;
+    // mov rcx, rax (old_cursor as count) — 48 89 C1
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 193); cp = cp + 3;
+    // xor eax, eax — 31 C0
+    w8(buf, pos+cp, 49); w8(buf, pos+cp+1, 192); cp = cp + 2;
+    // cld — FC
     w8(buf, pos+cp, 252); cp = cp + 1;
-    // rep stosb
+    // rep stosb — F3 AA
     w8(buf, pos+cp, 243); w8(buf, pos+cp+1, 170); cp = cp + 2;
-    // Store hidden length header and return the data pointer after it.
-    w8(buf, pos+cp, 77); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 8); cp = cp + 3;  // mov [r8], r9
-    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 64); w8(buf, pos+cp+3, 8); cp = cp + 4;  // lea rax, [r8+8]
+    // mov rax, rdx (restore old_cursor) — 48 89 D0
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 208); cp = cp + 3;
+
+    // ── Part 6: Return arena pointer (11 bytes) ──
+    // add rax, r11 — 4C 01 D8 (rax = chunk_start + old_cursor = data ptr before header)
+    w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 1); w8(buf, pos+cp+2, 216); cp = cp + 3;
+    // mov [rax], r9 — 4C 89 08 (store hidden length header)
+    w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 8); cp = cp + 3;
+    // lea rax, [rax + 8] — 48 8D 40 08
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 64); w8(buf, pos+cp+3, 8); cp = cp + 4;
     // ret
     w8(buf, pos+cp, 195); cp = cp + 1;
 
+    // ── Part 7: .Lchain — arena OOM → chain expand + mark full (41 bytes) ──
+    // lea r8, [rip + g_current_arena] — 4C 8D 05 xx xx xx xx, rip_patch #6
+    rip_pos5 := pos + cp + 3;
+    w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 5);
+    e2_w32(buf, pos+cp+3, 0); cp = cp + 7;
+    grow_rip_patch(g_x86_rip_patch_count + 1);
+    w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, rip_pos5);
+    w64(g_x86_rip_patch_globals, g_x86_rip_patch_count * 8, gv_current_arena);
+    g_x86_rip_patch_count = g_x86_rip_patch_count + 1;
+    // mov [r8], -1 — 41 C7 00 FF FF FF FF (set g_current_arena = -1)
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 199); w8(buf, pos+cp+2, 0);
+    e2_w32(buf, pos+cp+3, -1); cp = cp + 7;
+
+    // ── Bug 2 fix: Advance arena cursor to limit (mark full) ──
+    // rdx = cursors array pointer (from Part 2), r10 = arena index (from Part 1)
+    // Load sizes[ai] again (r8 was overwritten by g_current_arena LEA above)
+    // lea rsi, [rip + g_arena_sizes] — 48 8D 35 xx xx xx xx, rip_patch #8
+    rip_pos_sizes := pos + cp + 3;
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 53);
+    e2_w32(buf, pos+cp+3, 0); cp = cp + 7;
+    grow_rip_patch(g_x86_rip_patch_count + 1);
+    w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, rip_pos_sizes);
+    w64(g_x86_rip_patch_globals, g_x86_rip_patch_count * 8, gv_arena_sizes);
+    g_x86_rip_patch_count = g_x86_rip_patch_count + 1;
+    // mov rsi, [rsi] — 48 8B 36 (deref to get sizes array pointer)
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 54); cp = cp + 3;
+    // mov r8, [rsi + r10*8] — 4E 8B 04 D6 (r8 = sizes[ai] = limit)
+    w8(buf, pos+cp, 78); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 4); w8(buf, pos+cp+3, 214); cp = cp + 4;
+    // mov [rdx + r10*8], r8 — 4E 89 04 D2 (cursors[ai] = limit, mark full)
+    w8(buf, pos+cp, 78); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 4); w8(buf, pos+cp+3, 210); cp = cp + 4;
+    // Set r10d = -1 to skip arena restore at .Lglobal's end — 41 BA FF FF FF FF
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 186); e2_w32(buf, pos+cp+2, -1); cp = cp + 6;
+
+    // mov rdi, r9 — 49 8B F9 (restore original size for global path alignment)
+    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 249); cp = cp + 3;
+
+    // ── Part 8: .Lglobal — global bump alloc path + arena restore (84 bytes) ──
+    // add rdi, 15 — 48 83 C7 0F (align)
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 131); w8(buf, pos+cp+2, 199); w8(buf, pos+cp+3, 15); cp = cp + 4;
+    // and rdi, -8 — 48 83 E7 F8
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 131); w8(buf, pos+cp+2, 231); w8(buf, pos+cp+3, 248); cp = cp + 4;
+    // mov r11, [rip + g_heap_ptr] — load via rip_patch
+    if gv_heap_ptr >= 0 {
+        rip_hp0 := pos + cp + 3;
+        w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 29); e2_w32(buf, pos+cp+3, 0); cp = cp + 7;
+        grow_rip_patch(g_x86_rip_patch_count + 1);
+        w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, rip_hp0);
+        w64(g_x86_rip_patch_globals, g_x86_rip_patch_count * 8, gv_heap_ptr);
+        g_x86_rip_patch_count = g_x86_rip_patch_count + 1;
+    } else {
+        rel0 := bss_va - (fva + cp + 7);
+        w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 29); w8_signed(buf, pos+cp+3, rel0); cp = cp + 7;
+    }
+    // test r11, r11 — 4D 85 DB
+    w8(buf, pos+cp, 77); w8(buf, pos+cp+1, 133); w8(buf, pos+cp+2, 219); cp = cp + 3;
+    // jne +14 (skip init if already set) — 75 0E
+    w8(buf, pos+cp, 117); w8(buf, pos+cp+1, 14); cp = cp + 2;
+    // lea r11, [rip + heap_start] (after globals)
+    // BSS globals area: starts at rip_patch bss_va+16; globals_size covers all slots
+    heap_start_va : ., mut = bss_va + 16 + globals_size;
+    rel1 := heap_start_va - (fva + cp + 7);
+    w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 29); w8_signed(buf, pos+cp+3, rel1); cp = cp + 7;
+    // mov [rip + g_heap_ptr], r11 — store via rip_patch
+    if gv_heap_ptr >= 0 {
+        rip_hp_s1 := pos + cp + 3;
+        w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 29); e2_w32(buf, pos+cp+3, 0); cp = cp + 7;
+        grow_rip_patch(g_x86_rip_patch_count + 1);
+        w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, rip_hp_s1);
+        w64(g_x86_rip_patch_globals, g_x86_rip_patch_count * 8, gv_heap_ptr);
+        g_x86_rip_patch_count = g_x86_rip_patch_count + 1;
+    } else {
+        rel2 := bss_va - (fva + cp + 7);
+        w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 29); w8_signed(buf, pos+cp+3, rel2); cp = cp + 7;
+    }
+    // ── OOM bounds check: .Lretry block ──
+    // Save original heap_ptr, check against heap_end, call heap_expand if OOM.
+    // mov r8, r11 -- 4D 89 D8 (save original heap_ptr)
+    w8(buf, pos+cp, 77); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 216); cp = cp + 3;
+    retry_cp := cp;
+    // lea rdx, [r11 + rdi] -- 4C 8D 14 3F (compute new end = r11 + rdi)
+    w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 20); w8(buf, pos+cp+3, 63); cp = cp + 4;
+    // lea rcx, [rip + g_heap_end] — rip_patch for gv_heap_end
+    if gv_heap_end >= 0 {
+        rip_he := pos + cp + 3;
+        w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 13); e2_w32(buf, pos+cp+3, 0); cp = cp + 7;
+        grow_rip_patch(g_x86_rip_patch_count + 1);
+        w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, rip_he);
+        w64(g_x86_rip_patch_globals, g_x86_rip_patch_count * 8, gv_heap_end);
+        g_x86_rip_patch_count = g_x86_rip_patch_count + 1;
+    } else {
+        heap_end_va : ., mut = bss_va + 8;
+        rel_he := heap_end_va - (fva + cp + 7);
+        w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 13); w8_signed(buf, pos+cp+3, rel_he); cp = cp + 7;
+    }
+    // cmp rdx, [rcx] -- 48 3B 11
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 59); w8(buf, pos+cp+2, 17); cp = cp + 3;
+    // jbe +14 (skip call+reload+jmp if within bounds) -- 76 0E
+    w8(buf, pos+cp, 118); w8(buf, pos+cp+1, 14); cp = cp + 2;
+    // call heap_expand -- E8 xx xx xx xx (patched in elf_gen after heap_expand emitted)
+    g_heap_expand_call_pos = pos + cp;
+    e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;
+    // mov r11, [rip + g_heap_ptr] — reload via rip_patch after heap_expand
+    if gv_heap_ptr >= 0 {
+        rip_hp_rl := pos + cp + 3;
+        w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 29); e2_w32(buf, pos+cp+3, 0); cp = cp + 7;
+        grow_rip_patch(g_x86_rip_patch_count + 1);
+        w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, rip_hp_rl);
+        w64(g_x86_rip_patch_globals, g_x86_rip_patch_count * 8, gv_heap_ptr);
+        g_x86_rip_patch_count = g_x86_rip_patch_count + 1;
+    } else {
+        rel_hr := bss_va - (fva + cp + 7);
+        w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 29); w8_signed(buf, pos+cp+3, rel_hr); cp = cp + 7;
+    }
+    // jmp .Lretry -- EB xx (short backwards jump to mov r8, r11)
+    jmp_off_val := retry_cp - (cp + 2);
+    w8(buf, pos+cp, 235); w8(buf, pos+cp+1, jmp_off_val % 256); cp = cp + 2;
+    // add r11, rdi -- 49 01 FB (bump r11, only reached when within bounds)
+    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 1); w8(buf, pos+cp+2, 251); cp = cp + 3;
+    // mov [rip + g_heap_ptr], r11 — store via rip_patch
+    if gv_heap_ptr >= 0 {
+        rip_hp_s2 := pos + cp + 3;
+        w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 29); e2_w32(buf, pos+cp+3, 0); cp = cp + 7;
+        grow_rip_patch(g_x86_rip_patch_count + 1);
+        w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, rip_hp_s2);
+        w64(g_x86_rip_patch_globals, g_x86_rip_patch_count * 8, gv_heap_ptr);
+        g_x86_rip_patch_count = g_x86_rip_patch_count + 1;
+    } else {
+        rel3 := bss_va - (fva + cp + 7);
+        w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 29); w8_signed(buf, pos+cp+3, rel3); cp = cp + 7;
+    }
+    // mov rdi, r8 — 4C 89 C7
+    w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 199); cp = cp + 3;
+    // mov rcx, r11 — 4C 89 D9
+    w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 217); cp = cp + 3;
+    // sub rcx, rdi — 48 29 F9
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 41); w8(buf, pos+cp+2, 249); cp = cp + 3;
+    // xor eax, eax — 31 C0
+    w8(buf, pos+cp, 49); w8(buf, pos+cp+1, 192); cp = cp + 2;
+    // cld — FC
+    w8(buf, pos+cp, 252); cp = cp + 1;
+    // rep stosb — F3 AA
+    w8(buf, pos+cp, 243); w8(buf, pos+cp+1, 170); cp = cp + 2;
+    // mov [r8], r9 — 4D 89 08 (store header)
+    w8(buf, pos+cp, 77); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 8); cp = cp + 3;
+    // lea rax, [r8+8] — 49 8D 40 08
+    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 64); w8(buf, pos+cp+3, 8); cp = cp + 4;
+    // ── Arena restore (before ret) ──
+    // test r10d, r10d — 45 85 D2 (was arena active? r10d ≥ 0 at entry)
+    w8(buf, pos+cp, 69); w8(buf, pos+cp+1, 133); w8(buf, pos+cp+2, 210); cp = cp + 3;
+    // js .Lret (skip restore if r10d < 0, i.e. normal global alloc) — 78 0A
+    w8(buf, pos+cp, 120); w8(buf, pos+cp+1, 10); cp = cp + 2;
+    // lea r8, [rip + g_current_arena] — 4C 8D 05 xx xx xx xx, rip_patch #7
+    rip_pos6 := pos + cp + 3;
+    w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 5);
+    e2_w32(buf, pos+cp+3, 0); cp = cp + 7;
+    grow_rip_patch(g_x86_rip_patch_count + 1);
+    w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, rip_pos6);
+    w64(g_x86_rip_patch_globals, g_x86_rip_patch_count * 8, gv_current_arena);
+    g_x86_rip_patch_count = g_x86_rip_patch_count + 1;
+    // mov [r8], r10d — 45 89 10 (restore arena index)
+    w8(buf, pos+cp, 69); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 16); cp = cp + 3;
+    // ret
+    w8(buf, pos+cp, 195); cp = cp + 1;
+
+    return cp;
+}
+
+// ── Simple bump allocator (no arena) — used when gv_current_arena < 0 ──
+// Original 84-byte alloc body: no arena check, no rip_patches for arena globals.
+// This avoids relying on unpatched RIP-relative addresses for g_current_arena
+// when the variable isn't registered in the output binary (non-static builds).
+fn emit_alloc_body_simple(buf: string, pos: int, bss_va: int, globals_size: int) -> int {
+    cp := 0;
+    fva := TEXT_BASE + pos;
+
+    // 64MB sanity check
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 129); w8(buf, pos+cp+2, 255);
+    e2_w32(buf, pos+cp+3, 67108864); cp = cp + 7;
+    w8(buf, pos+cp, 118); w8(buf, pos+cp+1, 3); cp = cp + 2;
+    w8(buf, pos+cp, 49); w8(buf, pos+cp+1, 192); cp = cp + 2;
+    w8(buf, pos+cp, 195); cp = cp + 1;
+
+    // mov r9, rdi (save size for header)
+    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 249); cp = cp + 3;
+
+    // add rdi, 15; and rdi, -8
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 131); w8(buf, pos+cp+2, 199); w8(buf, pos+cp+3, 15); cp = cp + 4;
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 131); w8(buf, pos+cp+2, 231); w8(buf, pos+cp+3, 248); cp = cp + 4;
+
+    // mov r11, [rip + g_heap_ptr] — load via rip_patch
+    if gv_heap_ptr >= 0 {
+        rip_hp_l := pos + cp + 3;
+        w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 29); e2_w32(buf, pos+cp+3, 0); cp = cp + 7;
+        grow_rip_patch(g_x86_rip_patch_count + 1);
+        w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, rip_hp_l);
+        w64(g_x86_rip_patch_globals, g_x86_rip_patch_count * 8, gv_heap_ptr);
+        g_x86_rip_patch_count = g_x86_rip_patch_count + 1;
+    } else {
+        rel0 := bss_va - (fva + cp + 7);
+        w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 29); w8_signed(buf, pos+cp+3, rel0); cp = cp + 7;
+    }
+    // test r11, r11; jne +14 (skip lazy init)
+    w8(buf, pos+cp, 77); w8(buf, pos+cp+1, 133); w8(buf, pos+cp+2, 219); cp = cp + 3;
+    w8(buf, pos+cp, 117); w8(buf, pos+cp+1, 14); cp = cp + 2;
+
+    // lea r11, [rip + heap_start]
+    heap_start_va : ., mut = bss_va + 16 + globals_size;
+    rel1 := heap_start_va - (fva + cp + 7);
+    w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 29); w8_signed(buf, pos+cp+3, rel1); cp = cp + 7;
+    // mov [rip + g_heap_ptr], r11 — store via rip_patch
+    if gv_heap_ptr >= 0 {
+        rip_hp_s1 := pos + cp + 3;
+        w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 29); e2_w32(buf, pos+cp+3, 0); cp = cp + 7;
+        grow_rip_patch(g_x86_rip_patch_count + 1);
+        w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, rip_hp_s1);
+        w64(g_x86_rip_patch_globals, g_x86_rip_patch_count * 8, gv_heap_ptr);
+        g_x86_rip_patch_count = g_x86_rip_patch_count + 1;
+    } else {
+        rel2 := bss_va - (fva + cp + 7);
+        w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 29); w8_signed(buf, pos+cp+3, rel2); cp = cp + 7;
+    }
+
+    // mov r8, r11 (old ptr); add r11, rdi (bump); mov [rip + g_heap_ptr], r11
+    w8(buf, pos+cp, 77); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 216); cp = cp + 3;
+    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 1); w8(buf, pos+cp+2, 251); cp = cp + 3;
+    if gv_heap_ptr >= 0 {
+        rip_hp_s2 := pos + cp + 3;
+        w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 29); e2_w32(buf, pos+cp+3, 0); cp = cp + 7;
+        grow_rip_patch(g_x86_rip_patch_count + 1);
+        w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, rip_hp_s2);
+        w64(g_x86_rip_patch_globals, g_x86_rip_patch_count * 8, gv_heap_ptr);
+        g_x86_rip_patch_count = g_x86_rip_patch_count + 1;
+    } else {
+        rel3 := bss_va - (fva + cp + 7);
+        w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 29); w8_signed(buf, pos+cp+3, rel3); cp = cp + 7;
+    }
+
+    // Zero-init: mov rdi, r8; mov rcx, r11; sub rcx, rdi; xor eax, eax; cld; rep stosb
+    w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 199); cp = cp + 3;
+    w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 217); cp = cp + 3;
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 41); w8(buf, pos+cp+2, 249); cp = cp + 3;
+    w8(buf, pos+cp, 49); w8(buf, pos+cp+1, 192); cp = cp + 2;
+    w8(buf, pos+cp, 252); cp = cp + 1;
+    w8(buf, pos+cp, 243); w8(buf, pos+cp+1, 170); cp = cp + 2;
+
+    // Store header: mov [r8], r9; lea rax, [r8+8]; ret
+    w8(buf, pos+cp, 77); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 8); cp = cp + 3;
+    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 64); w8(buf, pos+cp+3, 8); cp = cp + 4;
+    w8(buf, pos+cp, 195); cp = cp + 1;
+
+    return cp;
+}
+
+// ── heap_expand: mmap(0, 1GB, 3, 0x22, -1, 0) for OOM recovery ──
+// Called when global bump heap reaches heap_end. Uses mmap syscall to
+// allocate a new 1GiB region, then updates heap_ptr and heap_end.
+fn emit_heap_expand(buf: string, pos: int, bss_va: int) -> int {
+    cp := 0;
+    fva := TEXT_BASE + pos;
+    // xor edi, edi -- 31 FF (addr = NULL, let kernel choose)
+    w8(buf, pos+cp, 49); w8(buf, pos+cp+1, 255); cp = cp + 2;
+    // mov esi, 1073741824 -- BE xx xx xx xx (length = 1 GiB)
+    e2_w8(buf, pos+cp, 190); e2_w32(buf, pos+cp+1, 1073741824); cp = cp + 5;
+    // mov edx, 3 -- BA 03 00 00 00 (prot = PROT_READ|PROT_WRITE)
+    w8(buf, pos+cp, 186); e2_w32(buf, pos+cp+1, 3); cp = cp + 5;
+    // mov r10d, 0x22 -- 41 BA 22 00 00 00 (flags = MAP_PRIVATE|MAP_ANONYMOUS)
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 186); e2_w32(buf, pos+cp+2, 34); cp = cp + 6;
+    // mov r8d, -1 -- 41 B8 FF FF FF FF (fd = -1)
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 184); e2_w32(buf, pos+cp+2, -1); cp = cp + 6;
+    // xor r9d, r9d -- 45 31 C9 (offset = 0)
+    w8(buf, pos+cp, 69); w8(buf, pos+cp+1, 49); w8(buf, pos+cp+2, 201); cp = cp + 3;
+    // mov eax, 9 -- B8 09 00 00 00 (sys_mmap)
+    w8(buf, pos+cp, 184); e2_w32(buf, pos+cp+1, 9); cp = cp + 5;
+    // syscall -- 0F 05
+    w8(buf, pos+cp, 15); w8(buf, pos+cp+1, 5); cp = cp + 2;
+    // test rax, rax -- 48 85 C0 (check if mmap returned negative error)
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 133); w8(buf, pos+cp+2, 192); cp = cp + 3;
+    // js .Lhf -- 78 XX (skip success path if mmap failed, rax has -errno)
+    // Success path: 7+7+7+2+1 = 24 bytes
+    w8(buf, pos+cp, 120); w8(buf, pos+cp+1, 24); cp = cp + 2;
+    // mov [rip + g_heap_ptr], rax — store via rip_patch
+    if gv_heap_ptr >= 0 {
+        rip_hp_ex := pos + cp + 3;
+        w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 5); e2_w32(buf, pos+cp+3, 0); cp = cp + 7;
+        grow_rip_patch(g_x86_rip_patch_count + 1);
+        w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, rip_hp_ex);
+        w64(g_x86_rip_patch_globals, g_x86_rip_patch_count * 8, gv_heap_ptr);
+        g_x86_rip_patch_count = g_x86_rip_patch_count + 1;
+    } else {
+        rel_hp_s := bss_va - (fva + cp + 7);
+        w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 5); w8_signed(buf, pos+cp+3, rel_hp_s); cp = cp + 7;
+    }
+    // lea r11, [rax + 1073741824] -- 4C 8D 98 xx xx xx xx (heap_end = new base + 1GB)
+    w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 152); e2_w32(buf, pos+cp+3, 1073741824); cp = cp + 7;
+    // mov [rip + g_heap_end], r11 — store via rip_patch
+    if gv_heap_end >= 0 {
+        rip_he_ex := pos + cp + 3;
+        w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 29); e2_w32(buf, pos+cp+3, 0); cp = cp + 7;
+        grow_rip_patch(g_x86_rip_patch_count + 1);
+        w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, rip_he_ex);
+        w64(g_x86_rip_patch_globals, g_x86_rip_patch_count * 8, gv_heap_end);
+        g_x86_rip_patch_count = g_x86_rip_patch_count + 1;
+    } else {
+        rel_hp_e := (bss_va + 8) - (fva + cp + 7);
+        w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 29); w8_signed(buf, pos+cp+3, rel_hp_e); cp = cp + 7;
+    }
+    // xor eax, eax -- 31 C0 (return 0 for success)
+    w8(buf, pos+cp, 49); w8(buf, pos+cp+1, 192); cp = cp + 2;
+    // ret -- C3
+    w8(buf, pos+cp, 195); cp = cp + 1;
+    // .Lhf: mmap failed, return -1
+    // mov rax, -1 -- 48 C7 C0 FF FF FF FF
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 199); w8(buf, pos+cp+2, 192); e2_w32(buf, pos+cp+3, -1); cp = cp + 7;
+    // ret -- C3
+    w8(buf, pos+cp, 195); cp = cp + 1;
     return cp;
 }
 
@@ -212,6 +588,18 @@ g_call_main_pos : int, mut;  // set by emit_start, used for patching call main
 gv_argc : int, mut;   // IR var index for g_rt_argc (or -1)
 gv_argv : int, mut;   // IR var index for g_rt_argv_ptr (or -1)
 
+// Arena global variable indices (set by elf_gen before emit_alloc_body calls)
+gv_current_arena : int, mut = -1;
+gv_arena_cursors : int, mut = -1;
+gv_arena_sizes : int, mut = -1;
+gv_arena_pool_data : int, mut = -1;
+gv_arena_max_size : int, mut = -1;
+gv_heap_ptr : int, mut = -1;
+gv_heap_end : int, mut = -1;
+gv_hp_config : int, mut = -1;
+gv_hp_inflight : int, mut = -1;
+g_heap_expand_call_pos : int, mut = -1;
+
 fn emit_start(buf: string, pos: int) -> int {
     cp : ., mut = pos;
     // mov rdi, [rsp]  — load argc (rdi=7)
@@ -254,6 +642,21 @@ fn emit_start(buf: string, pos: int) -> int {
         cp = cp + emit_modrm(buf, cp, 0, 6, 10%8);
     }
 
+    // Initialize g_current_arena = -1 (no arena active)
+    if gv_current_arena >= 0 {
+        rip_ca := cp + 3;
+        cp = cp + e2_lr(buf, cp, 0);  // lea r10, [rip+0]
+        grow_rip_patch(g_x86_rip_patch_count + 1);
+        w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, rip_ca);
+        w64(g_x86_rip_patch_globals, g_x86_rip_patch_count * 8, gv_current_arena);
+        g_x86_rip_patch_count = g_x86_rip_patch_count + 1;
+        // mov qword [r10], -1  — REX.WB + 0xC7 /0
+        cp = cp + emit_rex(buf, cp, 1, 0, 0, 10/8);
+        e2_w8(buf, cp, 199); cp = cp + 1;      // 0xC7 MOV r/m64, imm32
+        cp = cp + emit_modrm(buf, cp, 0, 0, 10%8);
+        e2_w32(buf, cp, -1); cp = cp + 4;      // immediate = -1 (0xFFFFFFFF)
+    }
+
     g_call_main_pos = cp;
     cp = cp + e2_call(buf, cp, 0);  // call main
 
@@ -276,6 +679,8 @@ fn emit_start_size() -> int {
     sz : ., mut = sz_start_body();
     if gv_argc >= 0 { sz = sz + sz_start_argv_save(); }
     if gv_argv >= 0 { sz = sz + sz_start_argv_save(); }
+    // g_current_arena init: lea(7) + rex+mov+modrm+imm32(7) = 14 bytes
+    if gv_current_arena >= 0 { sz = sz + 14; }
     return sz;
 }
 
@@ -323,11 +728,28 @@ fn elf_gen(buf: string) -> int {
     // Find g_rt_argc/g_rt_argv_ptr via name_idx (no str_eq loop)
     gv_argc = -1; gv_argv = -1;
     argc_ni := str_intern("g_rt_argc"); argv_ni := str_intern("g_rt_argv_ptr");
+    // Arena global variable indices
+    gv_current_arena = -1; gv_arena_cursors = -1; gv_arena_sizes = -1;
+    gv_arena_pool_data = -1; gv_arena_max_size = -1;
+    cur_ni := str_intern("g_current_arena"); cur_ni2 := str_intern("g_arena_cursors");
+    cur_ni3 := str_intern("g_arena_sizes"); cur_ni4 := str_intern("g_arena_pool_data");
+    cur_ni5 := str_intern("g_arena_max_size");
+    cur_ni6 := str_intern("g_heap_ptr"); cur_ni7 := str_intern("g_heap_end");
+    cur_ni8 := str_intern("g_hp_config"); cur_ni9 := str_intern("g_hp_inflight");
     gvsi : ., mut = 0;
     loop { if gvsi >= g_ir_global_count { break; }
         ni := r64(g_ir_globals, gvsi * 16);
         if ni == argc_ni { gv_argc = r64(g_ir_globals, gvsi * 16 + 8); }
         if ni == argv_ni { gv_argv = r64(g_ir_globals, gvsi * 16 + 8); }
+        if ni == cur_ni { gv_current_arena = r64(g_ir_globals, gvsi * 16 + 8); }
+        if ni == cur_ni2 { gv_arena_cursors = r64(g_ir_globals, gvsi * 16 + 8); }
+        if ni == cur_ni3 { gv_arena_sizes = r64(g_ir_globals, gvsi * 16 + 8); }
+        if ni == cur_ni4 { gv_arena_pool_data = r64(g_ir_globals, gvsi * 16 + 8); }
+        if ni == cur_ni5 { gv_arena_max_size = r64(g_ir_globals, gvsi * 16 + 8); }
+        if ni == cur_ni6 { gv_heap_ptr = r64(g_ir_globals, gvsi * 16 + 8); }
+        if ni == cur_ni7 { gv_heap_end = r64(g_ir_globals, gvsi * 16 + 8); }
+        if ni == cur_ni8 { gv_hp_config = r64(g_ir_globals, gvsi * 16 + 8); }
+        if ni == cur_ni9 { gv_hp_inflight = r64(g_ir_globals, gvsi * 16 + 8); }
     gvsi = gvsi + 1; }
 
     // Phase 2: compute sizes for all functions
@@ -398,7 +820,13 @@ fn elf_gen(buf: string) -> int {
     w64(g_x86_func_offsets, g_x86_func_off_count * 16, alloc_ni);
     w64(g_x86_func_offsets, g_x86_func_off_count * 16 + 8, total_code);
     g_x86_func_off_count = g_x86_func_off_count + 1;
-    total_code = total_code + 84;  // alloc body with bounds check and hidden length header
+    total_code = total_code + 310;  // arena-aware dual-path alloc body (~304 bytes with OOM check + zero-init + chain-expand)
+    // heap_expand
+    grow_func_offsets(g_x86_func_off_count * 2 + 2);
+    w64(g_x86_func_offsets, g_x86_func_off_count * 16, str_intern("heap_expand"));
+    w64(g_x86_func_offsets, g_x86_func_off_count * 16 + 8, total_code);
+    g_x86_func_off_count = g_x86_func_off_count + 1;
+    total_code = total_code + 80;  // heap_expand size estimate (~71 bytes)
     // sched_call trampolines (0..4)
     grow_func_offsets(g_x86_func_off_count * 2 + 2);
     w64(g_x86_func_offsets, g_x86_func_off_count * 16, str_intern("sched_call_0"));
@@ -600,6 +1028,17 @@ fi = 0; loop { if fi >= g_ir_func_count { break; }
     alloc_start := cp;
     cp = cp + alloc_sz;
 
+    // ── heap_expand ──
+    heap_expand_start : ., mut = cp;
+    cp = cp + emit_heap_expand(buf, cp, bss_va);
+    // Update heap_expand's offset in func_offsets to real position (Phase 3 value)
+    hefi := 0;
+    loop { if hefi >= g_x86_func_off_count { break; }
+        if str_eq(istr_get(r64(g_x86_func_offsets, hefi*16)), "heap_expand") != 0 {
+            w64(g_x86_func_offsets, hefi*16+8, heap_expand_start - 176);
+            break; }
+    hefi = hefi + 1; }
+
     // Update alloc's offset in func_offsets to real position (Phase 3 value)
     afi2 := 0;
     loop { if afi2 >= g_x86_func_off_count { break; }
@@ -619,6 +1058,21 @@ fi = 0; loop { if fi >= g_ir_func_count { break; }
         w32(buf, call_pos + 1, rel);
         api = api + 1; }
     g_x86_alloc_patch_count = 0;
+
+    // ── arena_new/arena_reset stubs (fallback when arena.cr not imported) ──
+    // These are only used when the functions aren't compiled from user code.
+    // If the user imports arena, the compiled versions in g_ir_func_name_idx take priority.
+    grow_func_offsets(g_x86_func_off_count * 2 + 2);
+    w64(g_x86_func_offsets, g_x86_func_off_count * 16, str_intern("arena_new"));
+    w64(g_x86_func_offsets, g_x86_func_off_count * 16 + 8, cp - 176);
+    g_x86_func_off_count = g_x86_func_off_count + 1;
+    w8(buf, cp, 195); cp = cp + 1;  // ret
+
+    grow_func_offsets(g_x86_func_off_count * 2 + 2);
+    w64(g_x86_func_offsets, g_x86_func_off_count * 16, str_intern("arena_reset"));
+    w64(g_x86_func_offsets, g_x86_func_off_count * 16 + 8, cp - 176);
+    g_x86_func_off_count = g_x86_func_off_count + 1;
+    w8(buf, cp, 195); cp = cp + 1;  // ret
 
     // ── scheduler call trampolines ──
     sched_reg_one("sched_call_0", 0, cp);
@@ -704,6 +1158,16 @@ fi = 0; loop { if fi >= g_ir_func_count { break; }
     // The allocator was emitted earlier with a provisional BSS address.
     // Re-emit it in place now that the final data-segment VA is known.
     emit_alloc_body(buf, alloc_start, bss_va, globals_size);
+
+    // Re-emit heap_expand with correct BSS VA
+    emit_heap_expand(buf, heap_expand_start, bss_va);
+
+    // Patch call to heap_expand inside alloc body (re-emit wrote placeholder offset 0)
+    if g_heap_expand_call_pos >= 0 {
+        rel_he_call := heap_expand_start - (g_heap_expand_call_pos + 5);
+        w32(buf, g_heap_expand_call_pos + 1, rel_he_call);
+        g_heap_expand_call_pos = -1;
+    }
 
     // ── Allocate BSS for globals ──
     gi2 := 0; goff : ., mut = 0;

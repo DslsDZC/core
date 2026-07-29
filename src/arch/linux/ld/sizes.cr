@@ -51,3 +51,15 @@ fn sz_save_stack_param() -> int { return 8; }
 // ── _start size (simple case, no argc/argv globals) ──
 fn sz_start_body() -> int { return 4 + 5 + sz_call() + 2 + 5 + sz_syscall(); }
 fn sz_start_argv_save() -> int { return sz_lr() + 3; }
+
+// ── per-opcode instruction size estimates (used by Phase 2 layout) ──
+fn instr_size(op: int) -> int {
+    if op == IR_INLINE         { return 0; }
+    if op == IR_NO_BOUNDS_CHECK { return 0; }
+    if op == IR_FAST           { return 0; }
+    if op == IR_UNROLL         { return 0; }
+    if op == IR_SECTION        { return 0; }
+    if op == IR_HOTPATCH_ROUTE { return 9; }  // call(5) + store(4) = 9 bytes
+    // Unknown / non-annotation opcodes fall back to caller's heuristic (ic*5)
+    return 0;
+}

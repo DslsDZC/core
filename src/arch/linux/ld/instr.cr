@@ -586,6 +586,18 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
         return cp;
     }
 
+    if op == IR_HOTPATCH_ROUTE {
+        do2 := g2_slot(d);
+        name_ni := s1;
+        grow_call_patch(g_x86_call_patch_count + 1);
+        w64(g_x86_call_patch_pos, g_x86_call_patch_count * 8, pos + cp);
+        w64(g_x86_call_patch_name, g_x86_call_patch_count * 8, name_ni);
+        g_x86_call_patch_count = g_x86_call_patch_count + 1;
+        e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;
+        cp = cp + e2_st(buf, pos+cp, 0, do2);
+        return cp;
+    }
+
     if op == IR_RETURN {
         if s1 >= 0 {
             if r64(g_x86_is_global, s1 * 8) != 0 {
@@ -639,6 +651,30 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
             e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;  // call placeholder
             cp = cp + e2_st(buf, pos+cp, 0, do2);
         }
+        return cp;
+    }
+
+    if op == IR_ARENA_NEW {
+        do2 := g2_slot(d);
+        ni_arena_new := str_intern("arena_new");
+        grow_call_patch(g_x86_call_patch_count + 1);
+        w64(g_x86_call_patch_pos, g_x86_call_patch_count * 8, pos + cp);
+        w64(g_x86_call_patch_name, g_x86_call_patch_count * 8, ni_arena_new);
+        g_x86_call_patch_count = g_x86_call_patch_count + 1;
+        e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;  // call placeholder
+        cp = cp + e2_st(buf, pos+cp, 0, do2);  // store returned arena_id from rax
+        return cp;
+    }
+
+    if op == IR_ARENA_RESET {
+        // Load arena_id into edi (register 7 = rdi for first arg)
+        cp = cp + e2_load_var(buf, pos+cp, 7, s1);
+        ni_arena_reset := str_intern("arena_reset");
+        grow_call_patch(g_x86_call_patch_count + 1);
+        w64(g_x86_call_patch_pos, g_x86_call_patch_count * 8, pos + cp);
+        w64(g_x86_call_patch_name, g_x86_call_patch_count * 8, ni_arena_reset);
+        g_x86_call_patch_count = g_x86_call_patch_count + 1;
+        e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;  // call placeholder
         return cp;
     }
 
@@ -947,6 +983,27 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
         cp = cp + 2;
         w8(buf, cp, 15); w8(buf, cp+1, 11); cp = cp + 2;  // ud2 (SIGILL)
         return cp;
+    }
+
+    if op == IR_INLINE {
+        // No-op at runtime — just a compile hint
+        return 0;
+    }
+    if op == IR_NO_BOUNDS_CHECK {
+        // No-op — consumed by ProvenanceVerify pass
+        return 0;
+    }
+    if op == IR_FAST {
+        // No-op — consumed by optimization passes
+        return 0;
+    }
+    if op == IR_UNROLL {
+        // No-op — consumed by loop unrolling pass
+        return 0;
+    }
+    if op == IR_SECTION {
+        // No-op — consumed by section assignment pass
+        return 0;
     }
 
     return 0;
