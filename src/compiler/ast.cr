@@ -557,6 +557,7 @@ IR_NO_BOUNDS_CHECK   : int = 35;   // — skip bounds check for subsequent DEREF
 IR_FAST              : int = 36;   // — allow precision-for-speed optimizations
 IR_UNROLL            : int = 37;   // src1=unroll_count — loop unroll hint
 IR_SECTION           : int = 38;   // src1=section_name_ni — code section hint
+IR_HOTPATCH_ROUTE    : int = 39;   // dest=result_var, s1=fn_name_ni, s2=first_arg, s3=arg_count
 
 // Resolution flag for BRANCH/JUMP (stored in type_kind field after label resolution)
 IR_RESOLVED : int = 1;

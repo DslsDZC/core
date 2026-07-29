@@ -11,3 +11,7 @@ g_arena_free_list : int, mut = -1;
 // rip_patch mechanism resolves their BSS addresses correctly.
 g_heap_ptr : string, mut;
 g_heap_end : string, mut;
+
+// Hotpatch runtime state
+g_hp_config  : string, mut;
+g_hp_inflight : string, mut;
