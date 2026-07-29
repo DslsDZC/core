@@ -174,8 +174,39 @@ fn load_cir_cache(path: string) -> int {
 | 3 | `src/compiler/ast.cr` | 新增 `func_fingerprint` 辅助函数 |
 | 4 | `src/compiler/dyn_arr.cr` | 可能新增 hash 辅助 |
 
-## 不包含
+## 预留接口
 
-- 跨 session 缓存 GC（清理过期缓存文件）
-- 并发编译（多线程写缓存）
-- 网络缓存（分布式编译）
+以下功能不在当前实现中，但缓存架构需为它们预留接口。
+
+### 缓存 GC
+
+```core
+// 清理过期缓存文件。由外部命令触发：
+//   ./build/corec clean-cache [--days N]
+// 删除 N 天前的缓存文件（默认 7 天）。
+// 预留接口：cir_cache_gc(days: int) -> int
+```
+
+接口预留：`fn cir_cache_gc(max_age_days: int) -> int` 签名在 `cir_cache.cr` 中声明。后续实现时需要扫描 `.core/cache/cir/` 下文件的 mtime，删除超过 N 天的缓存。
+
+### 并发编译
+
+缓存文件按函数 ID 独立存储，天然支持并发读。写时互斥通过文件级锁：
+
+```core
+// 每个函数独立 .cir 文件，写时通过 O_CREAT|O_EXCL 原子创建避免冲突。
+// 预留接口：cir_cache_lock(func_id) / cir_cache_unlock(func_id)
+```
+
+并发编译时，多个线程同时写不同函数的缓存不会冲突（写入不同文件）。只有写同一个函数时才需要锁——当前阶段不实现锁，因为单线程编译不会遇到冲突。
+
+### 网络缓存（分布式编译）
+
+```core
+// 预留接口：cir_cache_fetch(func_id) -> string
+//           cir_cache_store(func_id, data: string)
+// 默认实现使用本地文件系统。
+// 后续可通过注册表覆盖为远端存储（HTTP/S3 等）。
+```
+
+当前 `save_cir_cache`/`load_cir_cache` 使用 `read_file`/`syscall3(2,...)` 操作本地文件。后续实现远程缓存时，只需将文件 I/O 替换为网络调用，不改变调用方签名。
