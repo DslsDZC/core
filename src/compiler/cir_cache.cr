@@ -248,6 +248,10 @@ fn load_cir_cache(path: string) -> int {
 
 // Ensure cache directory exists.
 fn make_cir_cache_dir() {
-    // Try to create .core/cache/cir/; ignore errors (directory may exist)
-    syscall3(2, ".core/cache/cir/.", 448, 448);  // O_RDONLY|O_CREAT
+    // Create .core/ directory hierarchy for cache.
+    // mkdir syscall = 83 on x86-64 Linux: mkdir(path, mode)
+    // Ignore EEXIST errors (directory may already exist).
+    syscall3(83, ".core", 448, 0);
+    syscall3(83, ".core/cache", 448, 0);
+    syscall3(83, ".core/cache/cir", 448, 0);
 }

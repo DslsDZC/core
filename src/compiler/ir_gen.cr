@@ -279,14 +279,53 @@ fn type_align(ti: int) -> int {
     return 8;
 }
 
-// Check if a struct type has a field by name (placeholder — struct field lookup TBD)
+// Resolve a type index to a struct info index.
+// Returns -1 if the type is not a struct type.
+fn ti_resolve_struct(ti: int) -> int {
+    if ti < 0 || ti >= g_type_count { return -1; }
+    k := get_type_kind(ti);
+    if k != TYP_NAMED { return -1; }
+    name_ni := get_type_data(ti);
+    if name_ni < 0 { return -1; }
+    si : ., mut = 0;
+    loop {
+        if si >= g_struct_count { break; }
+        if si_name(si) == name_ni { return si; }
+        si = si + 1;
+    }
+    return -1;
+}
+
+// Check if a struct type has a field by name
 fn ti_has_field(ti: int, name: string) -> int {
+    si := ti_resolve_struct(ti);
+    if si < 0 { return 0; }
+    fc := si_field_count(si);
+    fi : ., mut = 0;
+    loop {
+        if fi >= fc { break; }
+        fn_ni := si_field_name(si, fi);
+        fname := istr_get(fn_ni);
+        if str_eq(fname, name) != 0 { return 1; }
+        fi = fi + 1;
+    }
     return 0;
 }
 
-// Get field byte offset (placeholder — struct field layout TBD)
+// Get field byte offset (each field is 8 bytes)
 fn ti_field_offset(ti: int, name: string) -> int {
-    return 0;
+    si := ti_resolve_struct(ti);
+    if si < 0 { return -1; }
+    fc := si_field_count(si);
+    fi : ., mut = 0;
+    loop {
+        if fi >= fc { break; }
+        fn_ni := si_field_name(si, fi);
+        fname := istr_get(fn_ni);
+        if str_eq(fname, name) != 0 { return fi * 8; }
+        fi = fi + 1;
+    }
+    return -1;
 }
 
 // --- IR generation for expressions ---
@@ -649,10 +688,29 @@ fn gen_expr(node: int) -> int {
                 return v;
             }
 
-            // @fields(T): placeholder — returns 0
+            // @fields(T): emit string array of field names
             if str_eq(name, "fields") != 0 {
+                ti := ti_from_type_expr(ast_a(first_arg));
+                si := ti_resolve_struct(ti);
                 v := new_ir_var("_fields", TI_STR);
-                emit(IR_CONST, v, 0, 0, 0, TI_STR);
+                if si >= 0 {
+                    fc := si_field_count(si);
+                    // Build a string constant: comma-separated field names
+                    fields_str : ., mut = "";
+                    fi : ., mut = 0;
+                    loop {
+                        if fi >= fc { break; }
+                        fname := istr_get(si_field_name(si, fi));
+                        if fi > 0 { fields_str = fields_str + ","; }
+                        fields_str = fields_str + fname;
+                        fi = fi + 1;
+                    }
+                    ni := str_intern(fields_str);
+                    track_str(ni);
+                    emit(IR_CONST, v, ni, 0, 0, TI_STR);
+                } else {
+                    emit(IR_CONST, v, 0, 0, 0, TI_STR);
+                }
                 return v;
             }
 
@@ -680,17 +738,38 @@ fn gen_expr(node: int) -> int {
                 return v;
             }
 
-            // @typeInfo(T): emit type handle
+            // @typeInfo(T): emit type description string
             if str_eq(name, "typeInfo") != 0 {
                 ti := ti_from_type_expr(ast_a(first_arg));
-                v := new_ir_var("_tinfo", TI_INT);
-                emit(IR_CONST, v, ti, 0, 0, TI_INT);
+                type_str : ., mut = "";
+                k := get_type_kind(ti);
+                if k == TYP_NAMED {
+                    name_ni := get_type_data(ti);
+                    type_str = istr_get(name_ni);
+                } else if ti == TI_INT { type_str = "int"; }
+                else if ti == TI_BOOL { type_str = "bool"; }
+                else if ti == TI_FLOAT { type_str = "float"; }
+                else if ti == TI_STR { type_str = "string"; }
+                else if ti == TI_CHAR { type_str = "char"; }
+                else if ti == TI_UNIT { type_str = "unit"; }
+                else { type_str = "unknown"; }
+                ni := str_intern(type_str);
+                track_str(ni);
+                v := new_ir_var("_tinfo", TI_STR);
+                emit(IR_CONST, v, ni, 0, 0, TI_STR);
                 return v;
             }
 
-            // @comptime(expr): generate IR for inner expression
+            // @comptime(expr): force compile-time evaluation
             if str_eq(name, "comptime") != 0 {
-                inner_var := gen_expr(ast_a(first_arg));
+                inner_expr := ast_a(first_arg);
+                // Generate IR for the inner expression
+                inner_var := gen_expr(inner_expr);
+                // If the inner expression is a constant, it's already folded.
+                // For runtime-dependent exprs, we'd need the interpreter.
+                // For now: gen IR and return — the existing constant folding
+                // (inline IR_CONST from @sizeOf etc.) handles pure compile-time exprs.
+                // Future: invoke ir_interpret_expr for true forced evaluation.
                 return inner_var;
             }
 
