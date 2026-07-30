@@ -495,7 +495,8 @@ class TypeChecker:
     # --------------------------------------------------------------
     def _infer_call(self, call: Call) -> Type:
         # Handle runtime functions (defined in rt.s, no decl node)
-        rt_funcs = {'alloc', 'get_arg', 'syscall3', 'load8', 'store8',
+        rt_funcs = {'alloc', 'get_arg', 'syscall3', 'fiber_init', 'fiber_switch',
+                    'load8', 'store8',
                     'load_str_ptr', 'store_str_ptr'}
         if isinstance(call.func, Ident) and call.func.name in rt_funcs:
             sym = self.symtab.lookup(call.func.name)

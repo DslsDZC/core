@@ -23,9 +23,18 @@ C_DASH : int = 45; C_PERCENT : int = 37; C_AMP : int = 38;
 C_PIPE : int = 124; C_UNDER : int = 95; C_AT : int = 64;
 C_QUES : int = 63;
 
-fn is_digit(c: int) -> int { return (c >= 48 && c <= 57); }
-fn is_alpha(c: int) -> int { return (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95; }
-fn is_ident_char(c: int) -> int { return is_alpha(c) != 0 || is_digit(c) != 0; }
+fn is_digit(c: int) -> int {
+    if c >= 48 && c <= 57 { return 1; }
+    return 0;
+}
+fn is_alpha(c: int) -> int {
+    if (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95 { return 1; }
+    return 0;
+}
+fn is_ident_char(c: int) -> int {
+    if is_alpha(c) != 0 || is_digit(c) != 0 { return 1; }
+    return 0;
+}
 
 fn add_error(msg: string) {
     mi := str_intern(msg);
@@ -133,11 +142,26 @@ fn add_tok_str(kind: int, s: string, start_line: int, start_col: int) {
 }
 
 fn skip_ws(src: string, pos: int, max_len: int) -> int {
+    // Account for the token/comment consumed since the previous call, then
+    // consume whitespace. g_pos is the last byte reflected in line/column.
+    tracked : ., mut = g_pos;
+    loop {
+        if tracked >= pos { break; }
+        c0 := cur_char_at(src, tracked, max_len);
+        if c0 == 10 { g_line = g_line + 1; g_col = 1; }
+        else { g_col = g_col + 1; }
+        tracked = tracked + 1;
+    }
     loop {
         c := cur_char_at(src, pos, max_len);
-        if c == 32 || c == 9 || c == 13 || c == 10 { pos = pos + 1; }
+        if c == 32 || c == 9 || c == 13 || c == 10 {
+            if c == 10 { g_line = g_line + 1; g_col = 1; }
+            else { g_col = g_col + 1; }
+            pos = pos + 1;
+        }
         else { break; }
     }
+    g_pos = pos;
     return pos;
 }
 
@@ -145,16 +169,17 @@ fn tokenize(_src: string) {
     g_token_count = 0;
     g_error_count = 0;
     _pos : ., mut = 0;
-    _line : ., mut = 1;
-    _col : ., mut = 1;
+    g_pos = 0;
+    g_line = 1;
+    g_col = 1;
     _slen : ., mut = str_len(_src);
     _pos = skip_ws(_src, _pos, _slen);
 
     loop {
         if _pos >= _slen { break; }
         c := cur_char_at(_src, _pos, _slen);
-        start_line : ., mut = _line;
-        start_col : ., mut = _col;
+        start_line : ., mut = g_line;
+        start_col : ., mut = g_col;
 
         // Comments
         if c == 47 && peek_at(_src, _pos, _slen) == 47 {
@@ -359,10 +384,8 @@ fn tokenize(_src: string) {
         _pos = skip_ws(_src, _pos, _slen);
     }
 
-    add_tok(T_EOF, -1, _line, _col);
+    add_tok(T_EOF, -1, g_line, g_col);
     // Sync back globals
     g_pos = _pos;
-    g_line = _line;
-    g_col = _col;
     g_source_len = _slen;
 }

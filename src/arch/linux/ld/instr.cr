@@ -1034,12 +1034,16 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
         return 0;
     }
     if op == IR_LAZY_THUNK {
-        // No-op encoding — placeholder for lazy thunk allocation
-        return 0;
+        // Calls are currently emitted eagerly before the thunk wrapper, so
+        // lowering the wrapper is a typed value transfer.
+        cp = cp + e2_load_var(buf, pos+cp, 10, s1);
+        cp = cp + e2_st(buf, pos+cp, 10, g2_slot(d));
+        return cp;
     }
     if op == IR_LAZY_FORCE {
-        // No-op encoding — placeholder for lazy force evaluation
-        return 0;
+        cp = cp + e2_load_var(buf, pos+cp, 10, s1);
+        cp = cp + e2_st(buf, pos+cp, 10, g2_slot(d));
+        return cp;
     }
 
     if op == IR_YIELD {

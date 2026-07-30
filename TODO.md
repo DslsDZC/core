@@ -28,7 +28,6 @@
 - `src/compiler/dataflow.cr` — df_use_var OOB 修复
 - mmap 堆扩展：BSS 打满后自动 mmap 1GB 新区域
 - emit_alloc_body 零初始化 + 链式扩容标记满
-- 目录构建自举 crash 为预存 bug（_import.cr segment tracking）
 
 ### @ 内建原语（12 个全部完整）
 - `@sizeOf(T)` / `@alignOf(T)` — 编译期常量，ELF 验证 8 / 1 ✅
@@ -54,36 +53,33 @@
 - ELF 后端编码 + `g_hp_config`/`g_hp_inflight` 全局变量
 - 运行时 `hotpatch.cr` + rt.s SIGHUP 信号处理 + in_flight drain 追踪
 
+### 自举构建与值语义修复（2026-07-30）
+- **目录构建修复**：`_import.cr` 依赖可由自举编译器正确加载，具名/无名目录和缺失目录行为均有回归覆盖
+- **增量缓存修复**：缓存指纹纳入完整解析源，导入文件变化不再复用过期 `.cir`；快照改为内存组包后单次写入，完整自举不再产生数百万次微小系统调用
+- **调用返回值修复**：普通调用不再因局部 `dest` 遮蔽写入变量 0，并将实际返回类型传播到 IR
+- **lazy 值传递修复**：ELF 后端和解释器中的 thunk/force 保留已计算值及其类型
+- **原生字符串长度修复**：整数局部变量不再误判为指针，`str_len("hello") == 5` 和 `str_len(@fields(Point)) == 3`
+- **Python bootstrap 词法修复**：`old` 不再被错误保留，可作为普通标识符
+- **自举依赖补全**：bootstrap 构建纳入并发运行时依赖、共享 arena 全局和 fiber 声明
+
 ## 预存 Bug（不阻塞开发，待修复）
 
-### 1. 目录自举 SIGSEGV
-- **根因**: `_import.cr` 内容剥离后 segment tracking 偏移不对
-- **影响**: `./build/corec build src/compiler` crash（所有版本，包括 RhineIris 修复后）
-- **绕过**: standalone `main.cr` 构建 5 代自举链正常工作
-- **涉及**: `src/compiler/module.cr` `build_line_fileid()` 后的段追踪
-- **状态**: RhineIris PR #20 部分修复，剩余 checker type errors
+### 1. 完整编译器自举内存峰值
+- 目录导入、冷缓存写入和 `corec check src/compiler` 已通过；目录构建逻辑本身不再崩溃
+- `corec build src/compiler` 在约 477 个函数完成 IR/缓存后耗尽 `rt.s` 的固定 1 GiB bump heap
+- 仅增加 mmap 扩容会让热缓存路径增长到约 7.6 GiB RSS 并触发 WSL OOM；需要按函数回收临时 IR/缓存数据，而不是继续扩大堆
 
-### 2. ELF 字符串常量 length header
-- **根因**: `IR_CONST` 的 `TI_STR` 在 ELF 后端中字符串常量的隐藏长度头不对
-- **影响**: `@fields(Point)` 等字符串值在 ELF 二进制中长度错误，解释器正确
-- **涉及**: `src/arch/linux/ld/` 的 str_const 处理
-
-### 3. Python bootstrap `old` 关键字冲突
-- **根因**: Python bootstrap 的 tokenizer 把 `old` 当作保留字
-- **影响**: 自举编译时变量名为 `old` 的行报 SyntaxError
-- **修复方向**: 变量名改为 `prev`
-
-### 4. 并发集成未端到端验证
+### 2. 并发集成未端到端验证
 - goroutine_entry_wrapper 在静态链接时符号解析待确认
 - M 线程 worker loop 未连到调度器完整测试
 - channel wait queue 链表操作未在并发下验证
 
-### 5. 解释器局限
+### 3. 解释器局限
 - **for 循环**: label/branch 与 dataflow 顺序执行不兼容
 - **递归/跨函数调用**: inline 执行不支持 IR_CALL
 - **泛型函数**: 类型检查通过但解释器返回 255
 
-### 6. 标准库补全
+### 4. 标准库补全
 - math.cr / collections.cr 均为 stub
 - 字符串操作、JSON 序列化待补
 

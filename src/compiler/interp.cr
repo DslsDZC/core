@@ -164,6 +164,12 @@ fn ir_interpret() -> int {
         }
         if op == 17 || op == 18 || op == 25 || op == 23 { if d >= 0 { w64(g_ir_vals, d * 8, r64(g_ir_vals, s1 * 8)); } }
 
+        // IR_LAZY_THUNK / IR_LAZY_FORCE. Calls are currently eager, so both
+        // wrappers preserve the computed value.
+        if op == 46 || op == 47 {
+            if d >= 0 && s1 >= 0 { w64(g_ir_vals, d * 8, r64(g_ir_vals, s1 * 8)); }
+        }
+
         // IR_YIELD
         if op == 28 {
             if s1 >= 0 { w64(g_ir_vals, d * 8, r64(g_ir_vals, s1 * 8)); }

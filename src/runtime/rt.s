@@ -339,7 +339,7 @@ worker_entry:
 .type goroutine_entry_wrapper, @function
 goroutine_entry_wrapper:
     # Get current G from M[0].cur_g (offset 8)
-    lea rax, [rip + g_machines]
+    mov rax, [rip + _g_g_machines]
     mov rax, [rax + 8]       # rax = M[0].cur_g (G pointer)
 
     # Load saved_fn and saved_arg from G struct
@@ -355,7 +355,7 @@ goroutine_entry_wrapper:
     # rax = return value from saved_fn
     # Store rax temporarily, load result_ch (offset 40)
     push rax
-    lea rax, [rip + g_machines]
+    mov rax, [rip + _g_g_machines]
     mov rax, [rax + 8]       # reload G pointer
     mov rdi, [rax + 40]      # rdi = result_ch
     pop rsi                  # rsi = return value

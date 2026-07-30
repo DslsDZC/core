@@ -91,6 +91,13 @@ fn add(a: int, b: int) -> int { return a + b; }
 fn main() -> int { return add(3, 4); }
 ''', 7)
 
+test('old is an identifier', '''
+fn main() -> int {
+    old := 40;
+    return old + 2;
+}
+''', 42)
+
 # ── Loop & Break ──
 test('Loop & Break', '''
 fn sum(n: int) -> int {

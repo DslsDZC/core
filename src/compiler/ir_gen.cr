@@ -9,6 +9,8 @@ g_sg_alloc_total : string, mut;    // per-sg: cumulative alloc size
 g_sg_alloc_cap   : int, mut;
 g_sg_arena_var   : string, mut;    // per-sg: IR var for arena ID
 g_sg_arena_var_cap : int, mut;
+g_ir_source_hash : int, mut;
+g_ir_source_hash_ready : int, mut;
 
 fn grow_sg_alloc(needed: int) {
     if needed < g_sg_alloc_cap { return; }
@@ -138,11 +140,56 @@ fn is_ptr_var(var_idx: int) -> int {
     prod := r64(g_df_var_producer, var_idx * 8);
     if prod < 0 { return 0; }
     prod_op := r64(g_df_nodes, prod * ESZ_DFNODE + OFF_DF_OPCODE);
+    if prod_op == IR_ALLOC {
+        ti := irv_type(var_idx);
+        if ti == TI_INT || ti == TI_FLOAT || ti == TI_BOOL || ti == TI_CHAR {
+            return 0;
+        }
+        return 1;
+    }
     if prod_op == IR_ADDR_INDEX || prod_op == IR_REF ||
-       prod_op == IR_ALLOC || prod_op == IR_ALLOC_STRUCT || prod_op == IR_ALLOC_ARRAY {
+       prod_op == IR_ALLOC_STRUCT || prod_op == IR_ALLOC_ARRAY {
         return 1;
     }
     return 0;
+}
+
+fn ir_call_return_type(func_ni: int) -> int {
+    if func_ni < 0 { return TI_UNIT; }
+    // alloc() produces a raw byte buffer. Keep the existing internal pointer
+    // sentinel until Core has a distinct raw-buffer type.
+    if istr_get(func_ni) == "alloc" { return TI_UNIT; }
+    bi : ., mut = 0;
+    loop {
+        if bi >= g_rt_builtin_count { break; }
+        if r64(g_rt_builtin_names, bi * 8) == func_ni {
+            return r64(g_rt_builtin_ret_types, bi * 8);
+        }
+        bi = bi + 1;
+    }
+    fi := find_func(func_ni);
+    if fi >= 0 {
+        rt := fi_return_type(fi);
+        if rt == TY_INT { return TI_INT; }
+        if rt == TY_FLOAT { return TI_FLOAT; }
+        if rt == TY_BOOL { return TI_BOOL; }
+        if rt == TY_STRING { return TI_STR; }
+        if rt == TY_UNIT { return TI_UNIT; }
+        if rt == TY_CHAR { return TI_CHAR; }
+    }
+    si := find_gsym(func_ni);
+    if si < 0 { return TI_UNIT; }
+    if sym_kind(si) == SYM_FN { return sym_type(si); }
+    if sym_kind(si) == SYM_SO_FN {
+        type_enc := sym_node(si);
+        ret_code := type_enc - (type_enc / 100) * 100;
+        if ret_code == 0 { return TI_INT; }
+        if ret_code == 1 { return TI_STR; }
+        if ret_code == 2 { return TI_UNIT; }
+        if ret_code == 3 { return TI_FLOAT; }
+        if ret_code == 4 { return TI_BOOL; }
+    }
+    return TI_UNIT;
 }
 
 fn get_ir_var_name(var_idx: int) -> string {
@@ -358,7 +405,7 @@ fn force_if_thunk(var_idx: int) -> int {
     if prod >= 0 {
         prod_op := r64(g_df_nodes, prod * ESZ_DFNODE + OFF_DF_OPCODE);
         if prod_op == IR_LAZY_THUNK {
-            forced := new_ir_var("_forced", TI_UNIT);
+            forced := new_ir_var("_forced", irv_type(var_idx));
             emit(IR_LAZY_FORCE, forced, var_idx, 0, 0, 0);
             return forced;
         }
@@ -964,7 +1011,8 @@ fn gen_expr(node: int) -> int {
 
         // For method calls (EXPR_FIELD), func_ni was set by checker
         // Use it directly
-        dest := new_ir_var("call", TI_UNIT);
+        call_ti := ir_call_return_type(func_ni);
+        dest := new_ir_var("call", call_ti);
         first_arg_var := -1;
         need_pack : ., mut = 0;
         if ac > 0 {
@@ -996,9 +1044,9 @@ fn gen_expr(node: int) -> int {
         if ast_kind(func_node) == EXPR_FIELD && ac > 0 && func_ni >= 0 {
             dyn_receiver := first_arg_var;
             if dyn_receiver >= 0 && irv_type(dyn_receiver) == TI_DYN {
-                dest := new_ir_var("_dyncall", TI_UNIT);
-                emit(IR_DYN_DISPATCH, dest, dyn_receiver, func_ni, 0, 0);
-                return dest;
+                dyn_dest := new_ir_var("_dyncall", TI_UNIT);
+                emit(IR_DYN_DISPATCH, dyn_dest, dyn_receiver, func_ni, 0, 0);
+                return dyn_dest;
             }
         }
 
@@ -1018,7 +1066,7 @@ fn gen_expr(node: int) -> int {
                 }
             }
         }
-        emit(IR_CALL, dest, first_arg_var, ac, func_ni, 0);
+        emit(IR_CALL, dest, first_arg_var, ac, func_ni, call_ti);
         // Lazy thunk: if calling a pure function with single use, wrap as thunk
         if func_ni >= 0 {
             call_fi := find_func(func_ni);
@@ -1026,7 +1074,7 @@ fn gen_expr(node: int) -> int {
                 grow_var_use_count(dest + 1);
                 use_count := r64(g_var_use_count, dest * 8);
                 if use_count <= 1 {
-                    thunk_var := new_ir_var("_lazy", TI_UNIT);
+                    thunk_var := new_ir_var("_lazy", irv_type(dest));
                     emit(IR_LAZY_THUNK, thunk_var, dest, 0, 0, 0);
                     return thunk_var;
                 }
@@ -1636,11 +1684,22 @@ fn ir_gen_globals() {
     reg_one_global(str_intern("g_sg_alloc_cap"));
     reg_one_global(str_intern("g_sg_arena_var"));
     reg_one_global(str_intern("g_sg_arena_var_cap"));
+    reg_one_global(str_intern("g_ir_source_hash"));
+    reg_one_global(str_intern("g_ir_source_hash_ready"));
+    reg_one_global(str_intern("g_cir_write_buf"));
+    reg_one_global(str_intern("g_cir_write_pos"));
+    reg_one_global(str_intern("g_cir_write_cap"));
     // Runtime globals needed by emit_alloc_body and emit_start.
     // These MUST exist in BSS for every program, even without rt.cr included.
     reg_one_global(str_intern("g_heap_ptr"));
     reg_one_global(str_intern("g_heap_end"));
     reg_one_global(str_intern("g_current_arena"));
+    reg_one_global(str_intern("g_arena_cursors"));
+    reg_one_global(str_intern("g_arena_sizes"));
+    reg_one_global(str_intern("g_arena_parents"));
+    reg_one_global(str_intern("g_arena_max_size"));
+    reg_one_global(str_intern("g_arena_count"));
+    reg_one_global(str_intern("g_arena_cap"));
     reg_one_global(str_intern("g_arena_pool_data"));
     reg_one_global(str_intern("g_arena_free_list"));
 }
@@ -1836,7 +1895,19 @@ fn func_fingerprint(func_node: int) -> int {
     // For fingerprinting, hash the function's AST line/col range in source
     // This is simpler than extracting the exact body bytes:
     // hash AST node kind chain from the body
-    h : ., mut = 2166136261;
+    if g_ir_source_hash_ready == 0 {
+        source_hash : ., mut = 2166136261;
+        source_pos : ., mut = 0;
+        source_len := str_len(g_source);
+        loop {
+            if source_pos >= source_len { break; }
+            source_hash = source_hash * 16777619 + load8(g_source, source_pos);
+            source_pos = source_pos + 1;
+        }
+        g_ir_source_hash = source_hash;
+        g_ir_source_hash_ready = 1;
+    }
+    h : ., mut = g_ir_source_hash;
     // Walk the body AST and hash node kinds + values
     // For a simple first pass: hash the function's token stream range
     start_line := ast_line(func_node);

@@ -383,6 +383,8 @@ fn corec_main() -> int {
     g_next_label = 1;
     g_ir_loop_depth = 0;
     g_ir_str_const_count = 0;
+    g_ir_source_hash = 0;
+    g_ir_source_hash_ready = 0;
     init_df();
     ir_gen_globals();
 

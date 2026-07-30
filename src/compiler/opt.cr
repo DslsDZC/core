@@ -18,6 +18,11 @@ fn ast_const_val(node: int) -> int {
     return ast_int_val(node);
 }
 
+fn ast_bool_as_int(value: bool) -> int {
+    if value { return 1; }
+    return 0;
+}
+
 fn ast_fold_binary(node: int) -> int {
     left := ast_a(node);
     right := ast_b(node);
@@ -26,20 +31,22 @@ fn ast_fold_binary(node: int) -> int {
     v1 := ast_const_val(left);
     v2 := ast_const_val(right);
     rv : ., mut = 0;
+    known : ., mut = 1;
     if opc == OP_ADD { rv = v1 + v2; }
     else if opc == OP_SUB { rv = v1 - v2; }
     else if opc == OP_MUL { rv = v1 * v2; }
     else if opc == OP_DIV { if v2 == 0 { return 0; } rv = v1 / v2; }
     else if opc == OP_MOD { if v2 == 0 { return 0; } rv = v1 % v2; }
-    else if opc == OP_EQ { rv = 1; if v1 != v2 { rv = 0; } }
-    else if opc == OP_NE { rv = 1; if v1 == v2 { rv = 0; } }
-    else if opc == OP_LT { rv = 1; if !(v1 < v2) { rv = 0; } }
-    else if opc == OP_GT { rv = 1; if !(v1 > v2) { rv = 0; } }
-    else if opc == OP_LE { rv = 1; if !(v1 <= v2) { rv = 0; } }
-    else if opc == OP_GE { rv = 1; if !(v1 >= v2) { rv = 0; } }
-    else if opc == OP_AND { rv = 1; if v1 == 0 || v2 == 0 { rv = 0; } }
-    else if opc == OP_OR { rv = 1; if v1 == 0 && v2 == 0 { rv = 0; } }
-    else { return 0; }
+    else if opc == OP_EQ { rv = ast_bool_as_int(v1 == v2); }
+    else if opc == OP_NE { rv = ast_bool_as_int(v1 != v2); }
+    else if opc == OP_LT { rv = ast_bool_as_int(v1 < v2); }
+    else if opc == OP_GT { rv = ast_bool_as_int(v1 > v2); }
+    else if opc == OP_LE { rv = ast_bool_as_int(v1 <= v2); }
+    else if opc == OP_GE { rv = ast_bool_as_int(v1 >= v2); }
+    else if opc == OP_AND { rv = ast_bool_as_int(v1 != 0 && v2 != 0); }
+    else if opc == OP_OR { rv = ast_bool_as_int(v1 != 0 || v2 != 0); }
+    else { known = 0; }
+    if known == 0 { return 0; }
     // Fold: replace EXPR_BINARY with EXPR_INT
     // Use ast_set_* to modify in-place
     ast_set_kind(node, EXPR_INT);
