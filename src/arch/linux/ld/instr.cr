@@ -613,6 +613,19 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
         return cp;
     }
 
+    if op == IR_SPAWN {
+        do2 := g2_slot(d);
+        name_ni := s1;
+        // Emit call to function + store result (single-threaded mode for now)
+        grow_call_patch(g_x86_call_patch_count + 1);
+        w64(g_x86_call_patch_pos, g_x86_call_patch_count * 8, pos + cp);
+        w64(g_x86_call_patch_name, g_x86_call_patch_count * 8, name_ni);
+        g_x86_call_patch_count = g_x86_call_patch_count + 1;
+        e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;
+        cp = cp + e2_st(buf, pos+cp, 0, do2);
+        return cp;
+    }
+
     if op == IR_RETURN {
         if s1 >= 0 {
             if r64(g_x86_is_global, s1 * 8) != 0 {
@@ -1026,6 +1039,13 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
     }
     if op == IR_LAZY_FORCE {
         // No-op encoding — placeholder for lazy force evaluation
+        return 0;
+    }
+
+    if op == IR_YIELD {
+        // yield: call sched.sched_yield()
+        // For now: no-op (0 bytes)
+        // Full implementation: emit call to sched_yield
         return 0;
     }
 
