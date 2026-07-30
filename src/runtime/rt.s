@@ -246,3 +246,124 @@ fiber_init:
     mov [rax], rcx      # entry_fn returns to 0 = crash (intentional)
 
     ret
+
+# m_start_workers(n: int) — launch N worker threads via clone
+# Each worker runs the scheduler loop (sched_worker_run).
+# clone flags: CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD
+# = 0x10F00
+# syscall 56: clone(flags, child_stack, parent_tid, child_tls, child_tid)
+#
+# Register usage:
+#   rbx = n (total workers to start)
+#   r12 = current worker index (0 = main thread, 1..n-1 = workers)
+#   r15 = child stack top (scratch)
+.globl m_start_workers
+.type m_start_workers, @function
+m_start_workers:
+    push rbx
+    push r12
+    push r13
+    push r15
+    mov rbx, rdi         # rbx = n (number of workers)
+    xor r12d, r12d       # r12 = 0 (start from index 0; skip 0 = main thread)
+.Lworker_loop:
+    inc r12              # increment to next worker index (start at 1)
+    cmp r12, rbx
+    jg .Ldone            # if r12 > n, done
+
+    # Allocate 64KB stack for worker
+    push r12
+    mov rdi, 65536
+    call alloc
+    pop r12
+    test rax, rax
+    jz .Lnext_worker     # skip if alloc fails
+
+    # rax = stack_base, stack_top = base + 65536
+    mov r15, rax
+    add r15, 65536
+
+    # Set up child stack:
+    #   child_stack_top - 8  = worker index (popped by worker_entry)
+    #   child_stack_top - 16 = return address (worker_entry)
+    lea r13, [rip + worker_entry]
+    mov [r15 - 16], r13
+    mov [r15 - 8], r12
+
+    # clone(flags=0x10F00, child_stack=r15-16, parent_tid=0, child_tls=0, child_tid=0)
+    mov edi, 0x10F00
+    lea rsi, [r15 - 16]
+    xor edx, edx
+    xor r10d, r10d
+    xor r8d, r8d
+    mov eax, 56          # sys_clone
+    syscall
+
+    test rax, rax
+    jz .Lchild
+
+.Lnext_worker:
+    inc r12
+    jmp .Lworker_loop
+
+.Lchild:
+    # Child thread: RSP = child_stack = r15 - 16
+    # Pop return address (worker_entry) and jump there via ret
+    xor ebp, ebp
+    ret
+
+.Ldone:
+    pop r15
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+# worker_entry: entry point for worker threads spawned by m_start_workers.
+# The worker index is at [RSP] (pushed before clone on child stack).
+# We pop it and call sched_worker_run(m_idx) — never returns.
+worker_entry:
+    pop rdi              # rdi = worker index (first arg to sched_worker_run)
+    call sched_worker_run
+    # Should never return, but just in case:
+    mov eax, 60          # exit syscall
+    xor edi, edi
+    syscall
+
+# goroutine_entry_wrapper: entry point for goroutines spawned via go.
+# Called via fiber_init as the fiber entry.
+# Reads the current G from M[0].cur_g,
+# loads saved_fn and saved_arg from G, calls saved_fn(saved_arg),
+# sends rax to result_ch, then yields forever.
+.globl goroutine_entry_wrapper
+.type goroutine_entry_wrapper, @function
+goroutine_entry_wrapper:
+    # Get current G from M[0].cur_g (offset 8)
+    lea rax, [rip + g_machines]
+    mov rax, [rax + 8]       # rax = M[0].cur_g (G pointer)
+
+    # Load saved_fn and saved_arg from G struct
+    # G layout: id(0), status(8), sp(16), stack_lo(24), arena_id(32),
+    #           result_ch(40), next(48), saved_fn(56), saved_arg(64)
+    mov rdi, [rax + 56]      # rdi = saved_fn
+    mov rsi, [rax + 64]      # rsi = saved_arg
+
+    # Call saved_fn(saved_arg)
+    # saved_fn must be a function pointer address (resolved by the backend)
+    call rdi
+
+    # rax = return value from saved_fn
+    # Store rax temporarily, load result_ch (offset 40)
+    push rax
+    lea rax, [rip + g_machines]
+    mov rax, [rax + 8]       # reload G pointer
+    mov rdi, [rax + 40]      # rdi = result_ch
+    pop rsi                  # rsi = return value
+
+    # Send return value to result_ch: chan_send(ch, val)
+    call chan_send
+
+    # Yield forever
+.Lyield_loop:
+    call sched_yield
+    jmp .Lyield_loop

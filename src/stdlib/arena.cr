@@ -10,6 +10,9 @@ g_arena_parents : string, mut;     // int[] — parent arena ID (for nesting res
 g_arena_max_size : int, mut;       // default chunk size per arena
 g_arena_count : int, mut = 0;      // total slots allocated
 g_arena_cap : int, mut = 0;        // metadata array capacity
+g_arena_pool_data : string, mut;   // arena pool base pointer
+g_arena_free_list : int, mut;      // head of free arena ID linked list
+g_current_arena : int, mut = -1;   // current arena ID (-1 = none)
 
 // ── Internal: grow metadata arrays ──
 fn _grow_arena_meta(needed: int) {
