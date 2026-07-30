@@ -350,6 +350,22 @@ fn is_hotpatch_func(name_idx: int) -> int {
     return 0;
 }
 
+// Helper: if a variable's producer is IR_LAZY_THUNK, emit IR_LAZY_FORCE
+// to extract the real value and return the forced variable.
+fn force_if_thunk(var_idx: int) -> int {
+    if var_idx < 0 { return var_idx; }
+    prod := r64(g_df_var_producer, var_idx * 8);
+    if prod >= 0 {
+        prod_op := r64(g_df_nodes, prod * ESZ_DFNODE + OFF_DF_OPCODE);
+        if prod_op == IR_LAZY_THUNK {
+            forced := new_ir_var("_forced", TI_UNIT);
+            emit(IR_LAZY_FORCE, forced, var_idx, 0, 0, 0);
+            return forced;
+        }
+    }
+    return var_idx;
+}
+
 // --- IR generation for expressions ---
 // Returns the IR variable index holding the result
 
@@ -422,6 +438,7 @@ fn gen_expr(node: int) -> int {
         // Assignment
         if op == OP_ASSIGN {
             val_var := gen_expr(right);
+            val_var = force_if_thunk(val_var);
             // Determine lhs kind
             if ast_kind(left) == EXPR_IDENT {
                 name_idx := ast_int_val(left);
@@ -445,6 +462,7 @@ fn gen_expr(node: int) -> int {
             }
             if ast_kind(left) == EXPR_FIELD {
                 obj_var := gen_expr(ast_a(left));
+                obj_var = force_if_thunk(obj_var);
                 field_ni := ast_int_val(left);
                 fi := ast_data(left);  // field index stored by checker
                 emit(IR_STORE_FIELD, -1, obj_var, val_var, fi, 0);
@@ -452,12 +470,14 @@ fn gen_expr(node: int) -> int {
             }
             if ast_kind(left) == EXPR_INDEX {
                 arr_var := gen_expr(ast_a(left));
+                arr_var = force_if_thunk(arr_var);
                 idx_node := ast_b(left);
                 idx_kind := ast_kind(idx_node);
                 if idx_kind == EXPR_INT {
                     emit(IR_STORE_INDEX, -1, arr_var, val_var, ast_int_val(idx_node), 0);
                 } else {
                     idx_var := gen_expr(idx_node);
+                    idx_var = force_if_thunk(idx_var);
                     emit(IR_STORE_INDEX_VAR, val_var, arr_var, idx_var, 0, 0);
                 }
                 return val_var;
@@ -467,6 +487,7 @@ fn gen_expr(node: int) -> int {
 
         // Regular binary
         left_var := gen_expr(left);
+        left_var = force_if_thunk(left_var);
         // Logical operators must short-circuit.  Eagerly generating the
         // right side breaks guard expressions such as
         // `fi >= 0 && fi_generic_count(fi) > 0`.
@@ -490,6 +511,7 @@ fn gen_expr(node: int) -> int {
 
             emit(IR_LABEL, -1, right_lbl, 0, 0, 0);
             right_value := gen_expr(right);
+            right_value = force_if_thunk(right_value);
             emit(IR_STORE, -1, logic_result, right_value, 0, 0);
             emit(IR_JUMP, -1, merge_lbl, 0, 0, 0);
 
@@ -497,6 +519,7 @@ fn gen_expr(node: int) -> int {
             return logic_result;
         }
         right_var := gen_expr(right);
+        right_var = force_if_thunk(right_var);
         lt := irv_type(left_var);
         rt := irv_type(right_var);
 
@@ -572,6 +595,7 @@ fn gen_expr(node: int) -> int {
         }
         val_node := ast_b(node);
         val_var := gen_expr(val_node);
+        val_var = force_if_thunk(val_var);
         if ast_kind(target) == EXPR_IDENT {
             name_idx := ast_int_val(target);
             lv := find_local(name_idx);
@@ -592,23 +616,27 @@ fn gen_expr(node: int) -> int {
         }
         if ast_kind(target) == EXPR_FIELD {
             obj_var := gen_expr(ast_a(target));
+            obj_var = force_if_thunk(obj_var);
             fi := ast_data(target);
             emit(IR_STORE_FIELD, -1, obj_var, val_var, fi, 0);
             return val_var;
         }
         if ast_kind(target) == EXPR_INDEX {
             arr_var := gen_expr(ast_a(target));
+            arr_var = force_if_thunk(arr_var);
             idx_node := ast_b(target);
             if ast_kind(idx_node) == EXPR_INT {
                 emit(IR_STORE_INDEX, -1, arr_var, val_var, ast_int_val(idx_node), 0);
             } else {
                 idx_var := gen_expr(idx_node);
+                idx_var = force_if_thunk(idx_var);
                 emit(IR_STORE_INDEX_VAR, val_var, arr_var, idx_var, 0, 0);
             }
             return val_var;
         }
         if ast_kind(target) == EXPR_UNARY && ast_c(target) == UOP_DEREF {
             ptr_var := gen_expr(ast_a(target));
+            ptr_var = force_if_thunk(ptr_var);
             emit(IR_STORE_PTR, -1, ptr_var, val_var, 0, 0);
             return val_var;
         }
@@ -623,23 +651,28 @@ fn gen_expr(node: int) -> int {
             // &arr[i]: compute address directly, don't load then take addr
             if ast_kind(inner) == EXPR_INDEX {
                 arr_var := gen_expr(ast_a(inner));
+                arr_var = force_if_thunk(arr_var);
                 idx_var := gen_expr(ast_b(inner));
+                idx_var = force_if_thunk(idx_var);
                 v := new_ir_var("addr", TI_UNIT);
                 emit(IR_ADDR_INDEX, v, arr_var, idx_var, 3, 0);
                 return v;
             }
             op_var := gen_expr(ast_a(node));
+            op_var = force_if_thunk(op_var);
             v := new_ir_var("ref", TI_UNIT);
             emit(IR_REF, v, op_var, ast_int_val(node), 0, 0);
             return v;
         }
         if op == UOP_DEREF {
             inner_var := gen_expr(ast_a(node));
+            inner_var = force_if_thunk(inner_var);
             dv := new_ir_var("deref", TI_UNIT);
             emit(IR_DEREF, dv, inner_var, 0, 0, 0);
             return dv;
         }
         op_var := gen_expr(ast_a(node));
+        op_var = force_if_thunk(op_var);
         v := new_ir_var("un", TI_INT);
         emit(IR_UNARY, v, op_var, 0, op, 0);
         return v;
@@ -667,7 +700,9 @@ fn gen_expr(node: int) -> int {
                 an : ., mut = first_arg;
                 loop {
                     if an < 0 { break; }
-                    if s_ac >= s_args_cap { nc := s_args_cap * 2; nb := alloc(nc * 8); _dyncpy(s_args, s_args_cap * 8, nb); s_args = nb; s_args_cap = nc; } w64(s_args, s_ac * 8, gen_expr(ast_a(an)));
+                    go_arg := gen_expr(ast_a(an));
+                    go_arg = force_if_thunk(go_arg);
+                    if s_ac >= s_args_cap { nc := s_args_cap * 2; nb := alloc(nc * 8); _dyncpy(s_args, s_args_cap * 8, nb); s_args = nb; s_args_cap = nc; } w64(s_args, s_ac * 8, go_arg);
                     s_ac = s_ac + 1;
                     an = ast_b(an);
                 }
@@ -815,6 +850,7 @@ fn gen_expr(node: int) -> int {
                 inner_expr := ast_a(first_arg);
                 // Generate IR for the inner expression
                 inner_var := gen_expr(inner_expr);
+                inner_var = force_if_thunk(inner_var);
                 // If the inner expression is a constant, it's already folded.
                 // For runtime-dependent exprs, we'd need the interpreter.
                 // For now: gen IR and return — the existing constant folding
@@ -826,6 +862,7 @@ fn gen_expr(node: int) -> int {
             // @inline(fn): emit IR_INLINE hint
             if str_eq(name, "inline") != 0 {
                 fn_var := gen_expr(ast_a(first_arg));
+                fn_var = force_if_thunk(fn_var);
                 emit(IR_INLINE, -1, fn_var, 0, 0, 0);
                 return fn_var;
             }
@@ -867,7 +904,9 @@ fn gen_expr(node: int) -> int {
             if ast_type_val(node) != 1 {
                 // Method call: self is first arg
                 obj_node := ast_a(func_node);
-                if ac >= arg_vars_cap { nc := arg_vars_cap * 2; nb := alloc(nc * 8); _dyncpy(arg_vars, arg_vars_cap * 8, nb); arg_vars = nb; arg_vars_cap = nc; } w64(arg_vars, ac * 8, gen_expr(obj_node));
+                self_var := gen_expr(obj_node);
+                self_var = force_if_thunk(self_var);
+                if ac >= arg_vars_cap { nc := arg_vars_cap * 2; nb := alloc(nc * 8); _dyncpy(arg_vars, arg_vars_cap * 8, nb); arg_vars = nb; arg_vars_cap = nc; } w64(arg_vars, ac * 8, self_var);
                 ac = ac + 1;
             }
         } else if ast_kind(func_node) == EXPR_IDENT {
@@ -878,7 +917,9 @@ fn gen_expr(node: int) -> int {
         an : ., mut = first_arg;
         loop {
             if an < 0 { break; }
-            if ac >= arg_vars_cap { nc := arg_vars_cap * 2; nb := alloc(nc * 8); _dyncpy(arg_vars, arg_vars_cap * 8, nb); arg_vars = nb; arg_vars_cap = nc; } w64(arg_vars, ac * 8, gen_expr(ast_a(an)));
+            arg_var := gen_expr(ast_a(an));
+            arg_var = force_if_thunk(arg_var);
+            if ac >= arg_vars_cap { nc := arg_vars_cap * 2; nb := alloc(nc * 8); _dyncpy(arg_vars, arg_vars_cap * 8, nb); arg_vars = nb; arg_vars_cap = nc; } w64(arg_vars, ac * 8, arg_var);
             ac = ac + 1;
             an = ast_b(an);
         }
@@ -973,6 +1014,19 @@ fn gen_expr(node: int) -> int {
             }
         }
         emit(IR_CALL, dest, first_arg_var, ac, func_ni, 0);
+        // Lazy thunk: if calling a pure function with single use, wrap as thunk
+        if func_ni >= 0 {
+            call_fi := find_func(func_ni);
+            if call_fi >= 0 && fi_ispure(call_fi) != 0 {
+                grow_var_use_count(dest + 1);
+                use_count := r64(g_var_use_count, dest * 8);
+                if use_count <= 1 {
+                    thunk_var := new_ir_var("_lazy", TI_UNIT);
+                    emit(IR_LAZY_THUNK, thunk_var, dest, 0, 0, 0);
+                    return thunk_var;
+                }
+            }
+        }
         return dest;
     }
 
@@ -999,6 +1053,7 @@ fn gen_expr(node: int) -> int {
         then_node := ast_b(node);
         else_node := ast_c(node);
         cond_var := gen_expr(cond);
+        cond_var = force_if_thunk(cond_var);
         then_lbl := new_label();
         else_lbl := new_label();
         merge_lbl := new_label();
@@ -1055,6 +1110,7 @@ fn gen_expr(node: int) -> int {
         exit_lbl := new_label();
         emit(IR_LABEL, -1, header_lbl, 0, 0, 0);
         cond_var := gen_expr(cond);
+        cond_var = force_if_thunk(cond_var);
         emit(IR_BRANCH, -1, cond_var, body_lbl, exit_lbl, 0);
         emit(IR_LABEL, -1, body_lbl, 0, 0, 0);
         push_ir_scope();
@@ -1076,13 +1132,16 @@ fn gen_expr(node: int) -> int {
         end_var := -1;
         if ast_kind(iter) == EXPR_RANGE {
             start_var = gen_expr(ast_a(iter));
+            start_var = force_if_thunk(start_var);
             end_var = gen_expr(ast_b(iter));
+            end_var = force_if_thunk(end_var);
         } else {
             // Non-range iterable: evaluate and use 0..iter
             s := new_ir_var("start", TI_INT);
             emit(IR_CONST, s, 0, 0, 0, TI_INT);
             start_var = s;
             end_var = gen_expr(iter);
+            end_var = force_if_thunk(end_var);
         }
         // Create loop variable, init to start
         ivar := new_ir_var("for_i", TI_INT);
@@ -1129,6 +1188,7 @@ fn gen_expr(node: int) -> int {
         match_expr := ast_a(node);
         first_arm := ast_b(node);
         match_val := gen_expr(match_expr);
+        match_val = force_if_thunk(match_val);
         // Allocate a result variable for the match expression value
         result_var := new_ir_var("match_res", TI_INT);
         emit(IR_ALLOC, result_var, 0, 0, 0, TI_INT);
@@ -1192,6 +1252,7 @@ fn gen_expr(node: int) -> int {
                 }
             }
             body_val := gen_expr(arm_body);
+            body_val = force_if_thunk(body_val);
             if body_val >= 0 {
                 emit(IR_STORE, -1, result_var, body_val, 0, 0);
             }
@@ -1232,6 +1293,7 @@ fn gen_expr(node: int) -> int {
         }
         if val_node >= 0 {
             val_var := gen_expr(val_node);
+            val_var = force_if_thunk(val_var);
             if is_dyn_var != 0 {
                 // Dyn variable: pack value with its type tag
                 dyn_var := new_ir_var("_dyn", TI_DYN);
@@ -1254,7 +1316,7 @@ fn gen_expr(node: int) -> int {
     if ast_kind(node) == EXPR_YIELD {
         val_node := ast_a(node);
         val_var : ., mut = -1;
-        if val_node >= 0 { val_var = gen_expr(val_node); }
+        if val_node >= 0 { val_var = gen_expr(val_node); val_var = force_if_thunk(val_var); }
         emit(IR_YIELD, -1, val_var, 0, 0, 0);
         return -1;  // yield suspends — no return value for caller
     }
@@ -1262,6 +1324,7 @@ fn gen_expr(node: int) -> int {
     if ast_kind(node) == EXPR_AWAIT {
         val_node := ast_a(node);
         val_var := gen_expr(val_node);
+        val_var = force_if_thunk(val_var);
         dest := new_ir_var("await", TI_UNIT);
         emit(IR_AWAIT, dest, val_var, 0, 0, 0);
         return dest;
@@ -1270,6 +1333,7 @@ fn gen_expr(node: int) -> int {
     if ast_kind(node) == EXPR_RETURN {
         if ast_a(node) >= 0 {
             val_var := gen_expr(ast_a(node));
+            val_var = force_if_thunk(val_var);
             emit(IR_RETURN, -1, val_var, 0, 0, 0);
         } else {
             emit(IR_RETURN, -1, -1, 0, 0, 0);
@@ -1280,6 +1344,7 @@ fn gen_expr(node: int) -> int {
     // Field access
     if ast_kind(node) == EXPR_FIELD {
         obj_var := gen_expr(ast_a(node));
+        obj_var = force_if_thunk(obj_var);
         v := new_ir_var("field", TI_INT);
         fi : ., mut = ast_type_val(node);
         if fi > 0 {
@@ -1294,6 +1359,7 @@ fn gen_expr(node: int) -> int {
     // Index
     if ast_kind(node) == EXPR_INDEX {
         arr_var := gen_expr(ast_a(node));
+        arr_var = force_if_thunk(arr_var);
         idx_node := ast_b(node);
         idx_kind := ast_kind(idx_node);
         // Range index: arr[low..high] → slice (pointer to arr[low])
@@ -1301,7 +1367,9 @@ fn gen_expr(node: int) -> int {
             low_node := ast_a(idx_node);
             high_node := ast_b(idx_node);
             low_var := gen_expr(low_node);
+            low_var = force_if_thunk(low_var);
             high_var := gen_expr(high_node);
+            high_var = force_if_thunk(high_var);
             v := new_ir_var("slice", TI_INT);
             emit(IR_SLICE, v, arr_var, low_var, high_var, 0);
             return v;
@@ -1313,6 +1381,7 @@ fn gen_expr(node: int) -> int {
             }
         } else {
             idx_var := gen_expr(idx_node);
+            idx_var = force_if_thunk(idx_var);
             if pass_before_array_access(arr_var, idx_var, -1, -1) == 0 {
                 emit(IR_LOAD_INDEX_VAR, v, arr_var, idx_var, 0, 0);
             }
@@ -1330,6 +1399,7 @@ fn gen_expr(node: int) -> int {
         loop {
             if an < 0 { break; }
             val_var := gen_expr(ast_a(an));
+            val_var = force_if_thunk(val_var);
             emit(IR_STORE_FIELD, -1, s, val_var, ai + 1, 0);  // +1 for tag offset
             an = ast_b(an);
             ai = ai + 1;
@@ -1349,6 +1419,7 @@ fn gen_expr(node: int) -> int {
             if fn2 >= 0 {
                 // fn2 = wrapper node (kind=0, a=value expr)
                 val_var := gen_expr(fn2);
+                val_var = force_if_thunk(val_var);
                 field_idx := fi;
                 emit(IR_STORE_FIELD, -1, s, val_var, field_idx, 0);
                 fn2 = fn2 + 1;
@@ -1368,6 +1439,7 @@ fn gen_expr(node: int) -> int {
             if ei >= ast_b(node) { break; }
             if en >= 0 {
                 e_var := gen_expr(en);
+                e_var = force_if_thunk(e_var);
                 emit(IR_STORE_INDEX, -1, v, e_var, ei, 0);
                 en = en + 1;
             }
@@ -1379,7 +1451,9 @@ fn gen_expr(node: int) -> int {
     // Range expression (evaluates both ends, returns end)
     if ast_kind(node) == EXPR_RANGE {
         start_var := gen_expr(ast_a(node));
+        start_var = force_if_thunk(start_var);
         end_var := gen_expr(ast_b(node));
+        end_var = force_if_thunk(end_var);
         return end_var;
     }
 
@@ -1440,6 +1514,7 @@ fn gen_expr(node: int) -> int {
         loop {
             if e >= ec { break; }
             elem_var := gen_expr(elem_idx + e);
+            elem_var = force_if_thunk(elem_var);
             emit(IR_STORE_FIELD, -1, tv, elem_var, e, 0);
             e = e + 1;
         }
