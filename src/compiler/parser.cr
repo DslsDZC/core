@@ -86,6 +86,7 @@ fn parse_type() -> int {
         else if lex == "string" { res = alloc_node(0, 0, 0, 0, 0, TY_STRING, 0, line, col); }
         else if lex == "char" { res = alloc_node(0, 0, 0, 0, 0, TY_CHAR, 0, line, col); }
         else if lex == "never" { res = alloc_node(0, 0, 0, 0, 0, TY_NEVER, 0, line, col); }
+        else if lex == "dyn" { res = alloc_node(0, 0, 0, 0, 0, TI_DYN, 0, line, col); }
         else {
             ni := str_intern(lex);
             // Check for generic args: Box[int, ...]
