@@ -436,6 +436,7 @@ fn pass_cse() {
             if op == IR_DYN_VAL { ii = ii + 1; continue; }
             if op == IR_DYN_PACK { ii = ii + 1; continue; }
             if op == IR_DYN_DISPATCH { ii = ii + 1; continue; }
+            if op == IR_CALL_EXTERN { ii = ii + 1; continue; }
 
             // Only CSE for pure computations: BINARY, UNARY
             if (op == IR_BINARY || op == IR_UNARY) && d >= 0 {

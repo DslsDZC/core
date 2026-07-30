@@ -143,6 +143,11 @@ fn df_connect_srcs(node_id: int, opcode: int, s1: int, s2: int, s3: int) {
         }
         return;
     }
+    if opcode == IR_CALL_EXTERN {
+        // s1 = func_name_ni (int), s2 = first_arg_var, s3 = arg_count
+        df_use_var(node_id, s2);
+        return;
+    }
     if opcode == IR_RETURN {
         if s1 >= 0 { df_use_var(node_id, s1); }
         return;
@@ -370,5 +375,6 @@ fn df_opcode_name(opcode: int, s3: int) -> string {
     if opcode == IR_DYN_VAL { return "dyn_val"; }
     if opcode == IR_DYN_PACK { return "dyn_pack"; }
     if opcode == IR_DYN_DISPATCH { return "dyn_dispatch"; }
+    if opcode == IR_CALL_EXTERN { return "call_extern"; }
     return "?";
 }
