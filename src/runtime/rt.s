@@ -188,3 +188,61 @@ load64:
 _hotpatch_sighup:
     call hp_load_config
     ret
+
+# fiber_switch(current_sp_addr, next_sp) -> int
+# Save current context, load next context
+.globl fiber_switch
+.type fiber_switch, @function
+fiber_switch:
+    # rdi = &current_g.stack_ptr (address to save RSP to)
+    # rsi = next_g.stack_ptr (RSP to restore)
+
+    # Save callee-saved registers
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+    push rbp
+
+    # Save RSP
+    mov qword [rdi], rsp
+
+    # Restore next RSP
+    mov rsp, rsi
+
+    # Restore callee-saved registers
+    pop rbp
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+
+    ret
+
+# fiber_init(stack_bottom, entry_fn) -> int
+# Initialize a new fiber's stack and return its initial SP
+.globl fiber_init
+.type fiber_init, @function
+fiber_init:
+    # rdi = stack_bottom (highest address of the 16KB stack)
+    # rsi = entry_fn (function to call when fiber starts)
+
+    # Set up a fake stack frame so fiber_switch will jump to entry_fn
+    # Stack layout (from top):
+    #   [return address] = entry_fn
+    #   [saved rbp] = 0
+    #   [saved r15-r12, rbx] = 0
+    # RSP after fiber_switch pops these will be at entry_fn
+
+    mov rax, rdi        # rax = stack_bottom
+    sub rax, 48         # Reserve space for callee-saved regs (6*8)
+    mov qword [rax], rsi      # Return address = entry_fn
+
+    # Clear registers for clean start
+    sub rax, 8          # Fake return address for when entry_fn returns
+    xor ecx, ecx
+    mov [rax], rcx      # entry_fn returns to 0 = crash (intentional)
+
+    ret

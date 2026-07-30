@@ -261,8 +261,8 @@ fn compute_usage_counts() {
         dest := r64(g_df_nodes, from_id * ESZ_DFNODE + OFF_DF_DEST);
         if dest >= 0 {
             grow_var_use_count(dest + 1);
-            old := r64(g_var_use_count, dest * 8);
-            w64(g_var_use_count, dest * 8, old + 1);
+            prev := r64(g_var_use_count, dest * 8);
+            w64(g_var_use_count, dest * 8, prev + 1);
         }
         ei = ei + 1;
     }
