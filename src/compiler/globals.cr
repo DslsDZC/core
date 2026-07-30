@@ -36,6 +36,7 @@ g_borrow_scope_markers : string, mut; g_borrow_scope_depth : int, mut;  g_borrow
 g_ifaces : string, mut;          g_iface_count : int, mut;     g_iface_cap : int, mut;
 g_impl_for : string, mut;        g_impl_for_count : int, mut;  g_impl_for_cap : int, mut;
 g_generic_constr : string, mut;  g_generic_constr_count : int, mut; g_generic_constr_cap : int, mut;
+g_gen_params : string, mut;     g_gen_param_count : int, mut;     g_gen_param_cap : int, mut;
 g_checker_current_fi : int, mut;
 g_unsafe_depth : int, mut;
 g_alloc_pts : string, mut;     g_alloc_pts_cap : int, mut;

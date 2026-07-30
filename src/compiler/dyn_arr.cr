@@ -351,6 +351,7 @@ fn si_generic_name(n: int, gi: int) -> int { return r64(g_structs, n*ESZ_STRUCTI
 fn ei_name(n: int) -> int { return r64(g_enums, n * ESZ_ENUMINFO + OFF_EI_NAME); }
 fn ei_variant_count(n: int) -> int { return r64(g_enums, n * ESZ_ENUMINFO + OFF_EI_VARIANT_COUNT); }
 fn ei_generic_count(n: int) -> int { return r64(g_enums, n * ESZ_ENUMINFO + OFF_EI_GENERIC_COUNT); }
+fn ei_generic_name(n: int, gi: int) -> int { return r64(g_enums, n*ESZ_ENUMINFO + OFF_EI_GENERIC_NAMES + gi*8); }
 fn ei_variant_name(n: int, vi: int) -> int { return r64(g_enums, n*ESZ_ENUMINFO + OFF_EI_VARIANTS + vi*OFF_EV_SIZE + OFF_EV_NAME); }
 fn ei_variant_type(n: int, vi: int, ti: int) -> int { return r64(g_enums, n*ESZ_ENUMINFO + OFF_EI_VARIANTS + vi*OFF_EV_SIZE + OFF_EV_TYPES + ti*8); }
 fn ei_variant_type_count(n: int, vi: int) -> int { return r64(g_enums, n*ESZ_ENUMINFO + OFF_EI_VARIANTS + vi*OFF_EV_SIZE + OFF_EV_TYPE_COUNT); }
@@ -727,6 +728,13 @@ fn grow_impl_for(needed: int) {
     nc : ., mut = g_impl_for_cap * 2; if nc < 8 { nc = 8; } if nc < needed { nc = needed + 8; }
     nb := alloc(nc * 16); _dyncpy(g_impl_for, g_impl_for_cap * 16, nb);
     g_impl_for = nb; g_impl_for_cap = nc; }
+
+// Generic param name storage (for <T> syntax parsing)
+fn grow_gen_params(needed: int) {
+    if needed < g_gen_param_cap { return; }
+    nc : ., mut = g_gen_param_cap * 2; if nc < 16 { nc = 16; } if nc < needed { nc = needed + 16; }
+    nb := alloc(nc * 8); _dyncpy(g_gen_params, g_gen_param_cap * 8, nb);
+    g_gen_params = nb; g_gen_param_cap = nc; }
 
 // Generic constraints: for each (func_idx * MAX_GENERICS + param_idx), stores iface_ni or -1
 fn grow_gen_constr(needed: int) {

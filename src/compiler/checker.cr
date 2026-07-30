@@ -538,6 +538,27 @@ fn collect_decls() {
         }
         i = i + 1;
     }
+    // Register struct generic params for type resolution
+    i = 0;
+    loop {
+        if i >= g_struct_count { break; }
+        gc := si_generic_count(i);
+        if gc > 0 {
+            gj : ., mut = 0;
+            loop {
+                if gj >= gc { break; }
+                gname_ni := si_generic_name(i, gj);
+                g_ti := alloc_type(TYP_GENERIC_PARAM, gname_ni, 0);
+                grow_gen_params(g_gen_param_count + 2);
+                w64(g_gen_params, g_gen_param_count * 8, gname_ni);
+                w64(g_gen_params, (g_gen_param_count + 1) * 8, g_ti);
+                g_gen_param_count = g_gen_param_count + 2;
+                def_sym(gname_ni, SYM_TYPE, g_ti, -1);
+                gj = gj + 1;
+            }
+        }
+        i = i + 1;
+    }
     // Register all interface types
     i = 0;
     loop {
@@ -580,6 +601,28 @@ fn collect_decls() {
         i = i + 1;
     }
 
+    // Register enum generic params for type resolution
+    i = 0;
+    loop {
+        if i >= g_enum_count { break; }
+        gc := ei_generic_count(i);
+        if gc > 0 {
+            gj : ., mut = 0;
+            loop {
+                if gj >= gc { break; }
+                gname_ni := ei_generic_name(i, gj);
+                g_ti := alloc_type(TYP_GENERIC_PARAM, gname_ni, 0);
+                grow_gen_params(g_gen_param_count + 2);
+                w64(g_gen_params, g_gen_param_count * 8, gname_ni);
+                w64(g_gen_params, (g_gen_param_count + 1) * 8, g_ti);
+                g_gen_param_count = g_gen_param_count + 2;
+                def_sym(gname_ni, SYM_TYPE, g_ti, -1);
+                gj = gj + 1;
+            }
+        }
+        i = i + 1;
+    }
+
     // Register type aliases
     i = 0;
     loop {
@@ -603,6 +646,19 @@ fn collect_decls() {
         // For generic functions, skip return type resolution (depends on call site)
         if fi_generic_count(i) > 0 {
             rt_ti = TI_UNIT;
+            // Register function generic params for type resolution
+            gj : ., mut = 0;
+            loop {
+                if gj >= fi_generic_count(i) { break; }
+                gname_ni := fi_generic_name(i, gj);
+                g_ti := alloc_type(TYP_GENERIC_PARAM, gname_ni, 0);
+                grow_gen_params(g_gen_param_count + 2);
+                w64(g_gen_params, g_gen_param_count * 8, gname_ni);
+                w64(g_gen_params, (g_gen_param_count + 1) * 8, g_ti);
+                g_gen_param_count = g_gen_param_count + 2;
+                def_sym(gname_ni, SYM_TYPE, g_ti, -1);
+                gj = gj + 1;
+            }
         } else {
             type_node := ast_type_val(fn_node);
             if type_node > 0 && ast_kind(type_node) != 0 {
@@ -2235,6 +2291,7 @@ fn check_all() {
     g_gen_map_count = 0; g_gen_map_cap = 0;
     g_gen_apply_data_count = 0;
     g_gen_apply_data_cap = 0;
+    g_gen_param_count = 0; g_gen_param_cap = 0;
     g_dyn_type_set_count = 0; g_dyn_type_set_cap = 0; g_dyn_type_sets = 0;
 
     // First pass: collect declarations

@@ -89,13 +89,16 @@ fn parse_type() -> int {
         else if lex == "dyn" { res = alloc_node(0, 0, 0, 0, 0, TI_DYN, 0, line, col); }
         else {
             ni := str_intern(lex);
-            // Check for generic args: Box[int, ...]
-            if check(T_LBRACKET) {
+            // Check for generic args: Box[int,...] or Box<int,...>
+            close_tok : ., mut = 0;
+            if check(T_LBRACKET) { close_tok = T_RBRACKET; }
+            else if check(T_LT) { close_tok = T_GT; }
+            if close_tok > 0 {
                 advance_tok();
                 first_arg := parse_type();
                 arg_count : ., mut = 1;
                 loop {
-                    if check(T_RBRACKET) { break; }
+                    if check(close_tok) { break; }
                     if !check(T_COMMA) { break; }
                     advance_tok();
                     parse_type();
@@ -960,20 +963,22 @@ fn parse_pattern() -> int {
 // --- Top-level declarations ---
 
 fn parse_generics() -> int {
-    if check(T_LBRACKET) {
-        advance_tok(); // [
-        gc := 0;
+    open_tok : ., mut = 0;
+    close_tok : ., mut = 0;
+    if check(T_LBRACKET) { open_tok = T_LBRACKET; close_tok = T_RBRACKET; }
+    else if check(T_LT) { open_tok = T_LT; close_tok = T_GT; }
+    if open_tok > 0 {
+        advance_tok(); // [ or <
+        gc : ., mut = 0;
         loop {
-            if check(T_RBRACKET) { break; }
+            if check(close_tok) { break; }
             if gc >= MAX_GENERICS { break; }
-            gt := advance_tok();
-            // Store generic param name — caller copies into its own array
-            // We just consume and count; caller uses get_tok_text
+            advance_tok();
             gc = gc + 1;
             if !check(T_COMMA) { break; }
             advance_tok();
         }
-        advance_tok(); // ]
+        advance_tok(); // ] or >
         return gc;
     }
     return 0;
@@ -983,11 +988,15 @@ fn parse_generics_into(names: string, constrs: string) -> int {
     // Initialize constraints to -1 (no constraint)
     ci : ., mut = 0;
     loop { if ci >= 4 { break; } w64(constrs, ci * 8, -1); ci = ci + 1; }
-    if check(T_LBRACKET) {
-        advance_tok(); // [
+    open_tok : ., mut = 0;
+    close_tok : ., mut = 0;
+    if check(T_LBRACKET) { open_tok = T_LBRACKET; close_tok = T_RBRACKET; }
+    else if check(T_LT) { open_tok = T_LT; close_tok = T_GT; }
+    if open_tok > 0 {
+        advance_tok(); // [ or <
         gc : ., mut = 0;
         loop {
-            if check(T_RBRACKET) { break; }
+            if check(close_tok) { break; }
             if gc >= MAX_GENERICS { break; }
             gt := advance_tok();
             w64(names, gc * 8, tok_lx(gt));
@@ -1002,7 +1011,7 @@ fn parse_generics_into(names: string, constrs: string) -> int {
             if !check(T_COMMA) { break; }
             advance_tok();
         }
-        advance_tok(); // ]
+        advance_tok(); // ] or >
         return gc;
     }
     return 0;
@@ -1584,6 +1593,7 @@ fn parse_all() {
     g_iface_count = 0; g_iface_cap = 0;
     g_impl_for_count = 0; g_impl_for_cap = 0;
     g_generic_constr_count = 0; g_generic_constr_cap = 0;
+    g_gen_param_count = 0; g_gen_param_cap = 0;
 
     ci : ., mut = 0;
     loop {
