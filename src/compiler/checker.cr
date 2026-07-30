@@ -726,6 +726,42 @@ fn collect_decls() {
         }
         i = i + 1;
     }
+    // Register extern function declarations (EXPR_EXTERN nodes not yet in g_funcs)
+    ei : ., mut = 0;
+    loop {
+        if ei >= g_ast_count { break; }
+        if ast_kind(ei) == EXPR_EXTERN {
+            name_ni := ast_a(ei);
+            first_param := ast_b(ei);
+            param_count := ast_c(ei);
+            ret_type := ast_type_val(ei);
+
+            // Resolve return type to type index
+            rt_ti : ., mut = TI_UNIT;
+            if ret_type == TY_INT { rt_ti = TI_INT; }
+            else if ret_type == TY_FLOAT { rt_ti = TI_FLOAT; }
+            else if ret_type == TY_BOOL { rt_ti = TI_BOOL; }
+            else if ret_type == TY_STRING { rt_ti = TI_STR; }
+            else if ret_type == TY_UNIT { rt_ti = TI_UNIT; }
+            else if ret_type == TY_CHAR { rt_ti = TI_CHAR; }
+
+            // Register in symbol table (skip if duplicate)
+            if find_gsym(name_ni) < 0 {
+                def_sym(name_ni, SYM_FN, rt_ti, ei);
+            }
+
+            // Register in g_funcs for backend codegen and linking
+            func_idx := g_func_count;
+            grow_funcs(func_idx + 1);
+            fi_set_name(func_idx, name_ni);
+            fi_set_param_count(func_idx, param_count);
+            fi_set_return_type(func_idx, ret_type);
+            fi_set_ast_node(func_idx, ei);
+            fi_set_generic_count(func_idx, 0);
+            g_func_count = func_idx + 1;
+        }
+        ei = ei + 1;
+    }
     // Register all global variables
     i = 0;
     loop {
@@ -1058,6 +1094,8 @@ fn check_func(fi: int) {
     g_holder_count = 0; g_holder_cap = 0;
     g_borrow_scope_depth = 0; g_borrow_scope_markers_cap = 0;
     fn_node := fi_ast_node(fi);
+    // Extern functions have no body to check — skip
+    if ast_kind(fn_node) == EXPR_EXTERN { return; }
     name_idx := ast_a(fn_node);  // EXPR_FN: a = name idx
     first_param := ast_b(fn_node);  // EXPR_FN: b = first param node
     param_count := ast_c(fn_node);  // EXPR_FN: c = param count
