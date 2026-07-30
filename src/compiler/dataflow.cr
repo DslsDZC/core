@@ -223,6 +223,10 @@ fn df_connect_srcs(node_id: int, opcode: int, s1: int, s2: int, s3: int) {
         df_use_var(node_id, s2);  // first_arg is a variable
         return;
     }
+    if opcode == IR_DYN_TAG { df_use_var(node_id, s1); return; }
+    if opcode == IR_DYN_VAL { df_use_var(node_id, s1); return; }
+    if opcode == IR_DYN_PACK { df_use_var(node_id, s1); return; }
+    if opcode == IR_DYN_DISPATCH { df_use_var(node_id, s1); return; }
     // Other opcodes (LABEL, JUMP, ALLOC, ALLOC_STRUCT, ALLOC_ARRAY, PHI):
     // no variable inputs to track
 }
@@ -362,5 +366,9 @@ fn df_opcode_name(opcode: int, s3: int) -> string {
     if opcode == IR_UNROLL { return "unroll"; }
     if opcode == IR_SECTION { return "section"; }
     if opcode == IR_HOTPATCH_ROUTE { return "hotpatch_route"; }
+    if opcode == IR_DYN_TAG { return "dyn_tag"; }
+    if opcode == IR_DYN_VAL { return "dyn_val"; }
+    if opcode == IR_DYN_PACK { return "dyn_pack"; }
+    if opcode == IR_DYN_DISPATCH { return "dyn_dispatch"; }
     return "?";
 }
