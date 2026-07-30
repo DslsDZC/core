@@ -6,6 +6,7 @@ import toml
 import ast
 import globals
 import dyn_arr
+import monomorph
 import ccr_io
 import sizes
 import instr
