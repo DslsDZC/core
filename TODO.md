@@ -54,36 +54,38 @@
 - ELF 后端编码 + `g_hp_config`/`g_hp_inflight` 全局变量
 - 运行时 `hotpatch.cr` + rt.s SIGHUP 信号处理 + in_flight drain 追踪
 
-## 剩余工作
+## 预存 Bug（不阻塞开发，待修复）
 
-### 1. 目录自举 SIGSEGV（预存 bug）
-- **原因**: `_import.cr` 内容剥离后 segment tracking 偏移不对
-- **影响**: `./build/corec build src/compiler` crash，`--static` 也一样
+### 1. 目录自举 SIGSEGV
+- **根因**: `_import.cr` 内容剥离后 segment tracking 偏移不对
+- **影响**: `./build/corec build src/compiler` crash（所有版本，包括 RhineIris 修复后）
 - **绕过**: standalone `main.cr` 构建 5 代自举链正常工作
-- **涉及**: `src/compiler/module.cr` 的 `build_line_fileid()` 后的段追踪
+- **涉及**: `src/compiler/module.cr` `build_line_fileid()` 后的段追踪
+- **状态**: RhineIris PR #20 部分修复，剩余 checker type errors
 
-### 2. ELF 字符串常量 length header（预存 bug）
-- **原因**: `IR_CONST` 的 `TI_STR` 在 ELF 后端中字符串常量的隐藏长度头不对
+### 2. ELF 字符串常量 length header
+- **根因**: `IR_CONST` 的 `TI_STR` 在 ELF 后端中字符串常量的隐藏长度头不对
 - **影响**: `@fields(Point)` 等字符串值在 ELF 二进制中长度错误，解释器正确
 - **涉及**: `src/arch/linux/ld/` 的 str_const 处理
 
-### 3. 解释器局限
+### 3. Python bootstrap `old` 关键字冲突
+- **根因**: Python bootstrap 的 tokenizer 把 `old` 当作保留字
+- **影响**: 自举编译时变量名为 `old` 的行报 SyntaxError
+- **修复方向**: 变量名改为 `prev`
+
+### 4. 并发集成未端到端验证
+- goroutine_entry_wrapper 在静态链接时符号解析待确认
+- M 线程 worker loop 未连到调度器完整测试
+- channel wait queue 链表操作未在并发下验证
+
+### 5. 解释器局限
 - **for 循环**: label/branch 与 dataflow 顺序执行不兼容
 - **递归/跨函数调用**: inline 执行不支持 IR_CALL
 - **泛型函数**: 类型检查通过但解释器返回 255
 
-### 4. 并发（go/flow/yield）
-- IR_SPAWN(27)/IR_YIELD(28) 已定义，IR gen 部分支持，ELF 后端未实现
-- 调度器、通道、fiber 切换均未做
-- Arena 隔离接口已预留（SG_FLOW/SG_GO）
-
-### 5. 标准库补全
+### 6. 标准库补全
 - math.cr / collections.cr 均为 stub
 - 字符串操作、JSON 序列化待补
-
-### 6. 动态类型（设计文档已有，未实现）
-- `dyn` 关键字 + 路径类型追踪 + 汇合点 tagged union
-- 依赖滚动更新（hotpatch）机制作为前置
 
 ## 架构规划
 
