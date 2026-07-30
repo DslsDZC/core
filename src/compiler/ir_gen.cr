@@ -683,33 +683,38 @@ fn gen_expr(node: int) -> int {
         body := ast_b(node);
         range_node := ast_data(node);  // -1 = single, EXPR_RANGE = range go
         if range_node < 0 {
-            // Single go: spawn one goroutine
+            // Single go: emit call to sched_go(fn_ni, arg)
+            // sched_go creates a goroutine via g_new + sched_enqueue and returns a channel
             if ast_kind(body) == EXPR_CALL {
                 func_node := ast_a(body);
                 first_arg := ast_b(body);
-                arg_count := ast_c(body);
                 func_ni : ., mut = -1;
                 if ast_kind(func_node) == EXPR_IDENT {
                     func_ni = ast_int_val(func_node);
                 } else if ast_kind(func_node) == EXPR_FIELD {
                     func_ni = ast_data(body);
                 }
-                s_ac : ., mut = 0;
-                s_args : string, mut; s_args_cap : int, mut;
-                s_args = alloc(32 * 8); s_args_cap = 32;
-                an : ., mut = first_arg;
-                loop {
-                    if an < 0 { break; }
-                    go_arg := gen_expr(ast_a(an));
-                    go_arg = force_if_thunk(go_arg);
-                    if s_ac >= s_args_cap { nc := s_args_cap * 2; nb := alloc(nc * 8); _dyncpy(s_args, s_args_cap * 8, nb); s_args = nb; s_args_cap = nc; } w64(s_args, s_ac * 8, go_arg);
-                    s_ac = s_ac + 1;
-                    an = ast_b(an);
+                // Evaluate the first argument (if any)
+                arg_var : ., mut = -1;
+                if first_arg >= 0 {
+                    arg_var = gen_expr(ast_a(first_arg));
+                    arg_var = force_if_thunk(arg_var);
                 }
-                spawn_first_arg : ., mut = -1;
-                if s_ac > 0 { spawn_first_arg = r64(s_args, 0 * 8); }
-                dest := new_ir_var("go", TI_UNIT);
-                emit(IR_SPAWN, dest, spawn_first_arg, s_ac, func_ni, -1);
+                // Create contiguous argument variables for sched_go call
+                // arg0 = fn_ni (function name index), arg1 = arg value (if any)
+                packed0 := new_ir_var("_fn_ni", TI_INT);
+                emit(IR_CONST, packed0, func_ni, 0, 0, TI_INT);
+                if arg_var >= 0 {
+                    packed1 := new_ir_var("_sched_arg", TI_INT);
+                    emit(IR_STORE, -1, packed1, arg_var, 0, 0);
+                }
+                dest := new_ir_var("_go_ch", TI_UNIT);
+                sched_go_ni := str_intern("sched_go");
+                if arg_var >= 0 {
+                    emit(IR_CALL, dest, packed0, 2, sched_go_ni, 0);
+                } else {
+                    emit(IR_CALL, dest, packed0, 1, sched_go_ni, 0);
+                }
                 return dest;
             }
             return gen_expr(body);

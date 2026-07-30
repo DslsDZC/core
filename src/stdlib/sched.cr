@@ -1,4 +1,6 @@
 // M:N scheduler — M OS threads, N goroutines
+import goroutine
+import chan
 
 g_machines : string, mut;    // M array
 g_machine_count : int, mut;
@@ -69,4 +71,21 @@ fn sched_schedule() {
         }
         // else: first goroutine, just start it
     }
+}
+
+// sched_go: spawn a goroutine that calls fn_ptr(arg), return a channel for the result.
+// fn_ptr is the function's name index (resolved by the backend at link time).
+// arg is the single argument passed to the spawned function.
+fn sched_go(fn_ptr: int, arg: int) -> int {
+    // Create a 1-element channel for collecting the result
+    ch := chan_make(8, 1);
+
+    // Create a new goroutine via g_new
+    g := g_new(fn_ptr, arg, 0);
+
+    // Enqueue goroutine to the scheduler
+    sched_enqueue(g);
+
+    // Return the channel so the caller can await the result
+    return ch;
 }

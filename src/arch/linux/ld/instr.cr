@@ -1044,9 +1044,13 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
 
     if op == IR_YIELD {
         // yield: call sched.sched_yield()
-        // For now: no-op (0 bytes)
-        // Full implementation: emit call to sched_yield
-        return 0;
+        ni_sched_yield := str_intern("sched_yield");
+        grow_call_patch(g_x86_call_patch_count + 1);
+        w64(g_x86_call_patch_pos, g_x86_call_patch_count * 8, pos + cp);
+        w64(g_x86_call_patch_name, g_x86_call_patch_count * 8, ni_sched_yield);
+        g_x86_call_patch_count = g_x86_call_patch_count + 1;
+        e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;
+        return cp;
     }
 
     // ── Dynamic type opcodes ──
