@@ -616,6 +616,9 @@ g_df_edges : string, mut;               g_df_edge_count : int, mut;     g_df_edg
 g_df_var_producer : string, mut;        g_df_func_node_start : string, mut;  g_df_func_node_count : string, mut;
 g_df_cap : int, mut;
 
+// Usage count: how many consumers each IR variable has
+g_var_use_count : string, mut;          g_var_use_count_cap : int, mut;
+
 
 // ── Optimization metadata keys (.ccr v3+ extensible section) ──
 OPT_KEY_REG_ASSIGN  : int = 0;  // [var_idx:u32, reg_num:u8]...

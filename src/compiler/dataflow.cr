@@ -236,6 +236,36 @@ fn df_connect_srcs(node_id: int, opcode: int, s1: int, s2: int, s3: int) {
     // no variable inputs to track
 }
 
+// --- Usage count analysis ---
+
+fn grow_var_use_count(needed: int) {
+    if needed < g_var_use_count_cap { return; }
+    nc : ., mut = g_var_use_count_cap * 2;
+    if nc < 128 { nc = 128; }
+    if nc < needed { nc = needed + 128; }
+    nb := alloc(nc * 8);
+    _dyncpy(g_var_use_count, g_var_use_count_cap * 8, nb);
+    g_var_use_count = nb;
+    g_var_use_count_cap = nc;
+}
+
+fn compute_usage_counts() {
+    // For each edge from_id→to_id, increment the usage count of
+    // from_id's dest variable (the IR variable it produces).
+    ei : ., mut = 0;
+    loop {
+        if ei >= g_df_edge_count { break; }
+        from_id := r64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_FROM);
+        dest := r64(g_df_nodes, from_id * ESZ_DFNODE + OFF_DF_DEST);
+        if dest >= 0 {
+            grow_var_use_count(dest + 1);
+            old := r64(g_var_use_count, dest * 8);
+            w64(g_var_use_count, dest * 8, old + 1);
+        }
+        ei = ei + 1;
+    }
+}
+
 // --- Lowering: dataflow graph → linear CFG IR (.ccr) ---
 
 fn lower_to_ccr() {
@@ -271,6 +301,9 @@ fn lower_to_ccr() {
             r64(g_df_func_node_count, fi * 8));
         fi = fi + 1;
     }
+
+    // After lowering, compute per-variable usage counts for optimization passes
+    compute_usage_counts();
 }
 
 // --- Mark function boundary in graph ---
