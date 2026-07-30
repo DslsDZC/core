@@ -1006,5 +1006,38 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
         return 0;
     }
 
+    // ── Dynamic type opcodes ──
+    if op == IR_DYN_PACK && d >= 0 {
+        // Pack value (s1) + tag (s2) into 16-byte dyn_var slot
+        do2 := g2_slot(d);
+        cp = cp + e2_load_var(buf, pos+cp, 10, s1);
+        cp = cp + e2_st(buf, pos+cp, 10, do2);      // low 8: value
+        cp = cp + e2_li(buf, pos+cp, do2 + 8, s2);  // high 8: tag (type index)
+        return cp;
+    }
+
+    if op == IR_DYN_TAG && d >= 0 {
+        // Extract tag from dyn_var (offset +8)
+        do2 := g2_slot(d);
+        s1do := g2_slot(s1);
+        cp = cp + e2_ld(buf, pos+cp, 10, s1do + 8);
+        cp = cp + e2_st(buf, pos+cp, 10, do2);
+        return cp;
+    }
+
+    if op == IR_DYN_VAL && d >= 0 {
+        // Extract value from dyn_var (offset +0)
+        do2 := g2_slot(d);
+        s1do := g2_slot(s1);
+        cp = cp + e2_ld(buf, pos+cp, 10, s1do);
+        cp = cp + e2_st(buf, pos+cp, 10, do2);
+        return cp;
+    }
+
+    if op == IR_DYN_DISPATCH {
+        // Placeholder: full tag dispatch table implementation in future pass
+        return 0;
+    }
+
     return 0;
 }
