@@ -232,6 +232,8 @@ fn df_connect_srcs(node_id: int, opcode: int, s1: int, s2: int, s3: int) {
     if opcode == IR_DYN_VAL { df_use_var(node_id, s1); return; }
     if opcode == IR_DYN_PACK { df_use_var(node_id, s1); return; }
     if opcode == IR_DYN_DISPATCH { df_use_var(node_id, s1); return; }
+    if opcode == IR_LAZY_THUNK { df_use_var(node_id, s1); return; }
+    if opcode == IR_LAZY_FORCE { df_use_var(node_id, s1); return; }
     // Other opcodes (LABEL, JUMP, ALLOC, ALLOC_STRUCT, ALLOC_ARRAY, PHI):
     // no variable inputs to track
 }
@@ -409,5 +411,7 @@ fn df_opcode_name(opcode: int, s3: int) -> string {
     if opcode == IR_DYN_PACK { return "dyn_pack"; }
     if opcode == IR_DYN_DISPATCH { return "dyn_dispatch"; }
     if opcode == IR_CALL_EXTERN { return "call_extern"; }
+    if opcode == IR_LAZY_THUNK { return "lazy_thunk"; }
+    if opcode == IR_LAZY_FORCE { return "lazy_force"; }
     return "?";
 }

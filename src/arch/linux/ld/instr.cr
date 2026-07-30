@@ -1020,6 +1020,14 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
         // No-op — consumed by section assignment pass
         return 0;
     }
+    if op == IR_LAZY_THUNK {
+        // No-op encoding — placeholder for lazy thunk allocation
+        return 0;
+    }
+    if op == IR_LAZY_FORCE {
+        // No-op encoding — placeholder for lazy force evaluation
+        return 0;
+    }
 
     // ── Dynamic type opcodes ──
     if op == IR_DYN_PACK && d >= 0 {
