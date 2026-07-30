@@ -1035,8 +1035,65 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
     }
 
     if op == IR_DYN_DISPATCH {
-        // Placeholder: full tag dispatch table implementation in future pass
-        return 0;
+        // Tag dispatch table: load tag from dyn_var, compare against known types,
+        // jump to common handler that extracts value, or type_error on mismatch.
+        do2 := g2_slot(d);
+        s1do := g2_slot(s1);
+        ti_int : int = 0; ti_bool : int = 2; ti_str : int = 3;
+
+        // 1. Load tag from dyn_var offset +8: mov r10, [rbp + s1do + 8]
+        cp = cp + e2_ld(buf, pos+cp, 10, s1do + 8);
+
+        // 2. Compare-and-jump chain using short rel8 jumps
+        // cmp r10d, TI_INT (0) — REX.RB + 0x83 + ModRM(/7,r10%8) + imm8
+        cp = cp + emit_rex(buf, pos+cp, 0, 0, 0, 10/8);
+        e2_w8(buf, pos+cp, 131); cp = cp + 1;
+        cp = cp + emit_modrm(buf, pos+cp, 3, 7, 10%8);
+        e2_w8(buf, pos+cp, ti_int); cp = cp + 1;
+        j1_off := cp;  // position of the je rel8 offset byte
+        e2_w8(buf, pos+cp, 116); e2_w8(buf, pos+cp+1, 0); cp = cp + 2;  // 0x74 = je rel8
+
+        // cmp r10d, TI_BOOL (2)
+        cp = cp + emit_rex(buf, pos+cp, 0, 0, 0, 10/8);
+        e2_w8(buf, pos+cp, 131); cp = cp + 1;
+        cp = cp + emit_modrm(buf, pos+cp, 3, 7, 10%8);
+        e2_w8(buf, pos+cp, ti_bool); cp = cp + 1;
+        j2_off := cp;
+        e2_w8(buf, pos+cp, 116); e2_w8(buf, pos+cp+1, 0); cp = cp + 2;
+
+        // cmp r10d, TI_STR (3)
+        cp = cp + emit_rex(buf, pos+cp, 0, 0, 0, 10/8);
+        e2_w8(buf, pos+cp, 131); cp = cp + 1;
+        cp = cp + emit_modrm(buf, pos+cp, 3, 7, 10%8);
+        e2_w8(buf, pos+cp, ti_str); cp = cp + 1;
+        j3_off := cp;
+        e2_w8(buf, pos+cp, 116); e2_w8(buf, pos+cp+1, 0); cp = cp + 2;
+
+        // 3. .type_error: no known type matched — fall through from compare chain
+        //    xor eax, eax; ret
+        e2_w8(buf, pos+cp, 49); e2_w8(buf, pos+cp+1, 192); cp = cp + 2;  // xor eax, eax
+        e2_w8(buf, pos+cp, 195); cp = cp + 1;  // ret
+
+        // 4. .case_common: extract value from dyn_var offset +0
+        case_pos := cp;
+        cp = cp + e2_ld(buf, pos+cp, 10, s1do);
+        // jmp rel8 .done
+        jmp_done_off := cp;
+        e2_w8(buf, pos+cp, 235); e2_w8(buf, pos+cp+1, 0); cp = cp + 2;  // 0xEB = jmp rel8
+
+        // 5. .done: store extracted value in destination slot
+        done_pos := cp;
+        if d >= 0 {
+            cp = cp + e2_st(buf, pos+cp, 10, do2);
+        }
+
+        // 6. Patch all forward jump offsets (rel8)
+        e2_w8(buf, j1_off + 1, case_pos - (j1_off + 2));
+        e2_w8(buf, j2_off + 1, case_pos - (j2_off + 2));
+        e2_w8(buf, j3_off + 1, case_pos - (j3_off + 2));
+        e2_w8(buf, jmp_done_off + 1, done_pos - (jmp_done_off + 2));
+
+        return cp;
     }
 
     return 0;
