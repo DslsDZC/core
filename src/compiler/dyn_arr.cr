@@ -50,7 +50,7 @@ ESZ_ASTNODE  : int = 72;    // kind,a,b,c,int_val,type_val,data,line,col = 9×8
 ESZ_SYMENTRY : int = 32;    // name_idx,kind,type_idx,node_idx = 4×8
 ESZ_IRVAR    : int = 24;    // name_idx,id,type_kind = 3×8
 ESZ_IRINSTR  : int = 48;    // opcode,dest,src1,src2,src3,type_kind = 6×8
-ESZ_FUNCINFO : int = 200;
+ESZ_FUNCINFO : int = 208;
 ESZ_STRUCTINFO : int = 440;
 ESZ_ENUMINFO : int = 2360;  // name+variants[16]+variant_count+generic_names[4]+generic_count
 
@@ -80,6 +80,7 @@ OFF_FI_NAME : int = 0; OFF_FI_PARAM_COUNT : int = 8;
 OFF_FI_PARAM_TYPES : int = 16;
 OFF_FI_RETURN_TYPE : int = 144; OFF_FI_AST_NODE : int = 152;
 OFF_FI_GENERIC_NAMES : int = 160; OFF_FI_GENERIC_COUNT : int = 192;
+OFF_FI_ISPURE : int = 200;  // 1 = pure (no side effects), 0 = impure
 
 // StructInfo offsets
 OFF_SI_NAME : int = 0; OFF_SI_FIELD_NAMES : int = 8;
@@ -337,6 +338,9 @@ fn fi_set_return_type(n: int, v: int) { w64(g_funcs, n * ESZ_FUNCINFO + OFF_FI_R
 fn fi_set_ast_node(n: int, v: int) { w64(g_funcs, n * ESZ_FUNCINFO + OFF_FI_AST_NODE, v); }
 fn fi_set_generic_name(n: int, gi: int, v: int) { w64(g_funcs, n * ESZ_FUNCINFO + OFF_FI_GENERIC_NAMES + gi*8, v); }
 fn fi_set_generic_count(n: int, v: int) { w64(g_funcs, n * ESZ_FUNCINFO + OFF_FI_GENERIC_COUNT, v); }
+
+fn fi_ispure(n: int) -> int { return r64(g_funcs, n * ESZ_FUNCINFO + OFF_FI_ISPURE); }
+fn fi_set_ispure(n: int, v: int) { w64(g_funcs, n * ESZ_FUNCINFO + OFF_FI_ISPURE, v); }
 
 // StructInfo helpers
 fn si_name(n: int) -> int { return r64(g_structs, n * ESZ_STRUCTINFO + OFF_SI_NAME); }

@@ -724,6 +724,7 @@ fn collect_decls() {
             }
             def_sym(name_idx, SYM_FN, rt_ti, fn_node);
         }
+        fi_set_ispure(i, 1);  // optimistic: all functions are pure
         i = i + 1;
     }
     // Register extern function declarations (EXPR_EXTERN nodes not yet in g_funcs)
@@ -758,6 +759,7 @@ fn collect_decls() {
             fi_set_return_type(func_idx, ret_type);
             fi_set_ast_node(func_idx, ei);
             fi_set_generic_count(func_idx, 0);
+            fi_set_ispure(func_idx, 1);  // optimistic: extern functions are pure
             g_func_count = func_idx + 1;
         }
         ei = ei + 1;

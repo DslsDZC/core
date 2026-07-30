@@ -568,6 +568,8 @@ IR_DYN_VAL      : int = 42;  // dest=val_var, s1=dyn_var — extract value
 IR_DYN_PACK     : int = 43;  // dest=dyn_var, s1=val_var, s2=type_idx — pack dyn
 IR_DYN_DISPATCH : int = 44;  // s1=dyn_var, s2=dispatch_table_ni — dispatch by tag
 IR_CALL_EXTERN : int = 45;  // dest=result_var, s1=func_name_ni, s2=first_arg, s3=arg_count
+IR_LAZY_THUNK  : int = 46;  // dest=thunk_var, s1=expr_var — wrap as lazy thunk
+IR_LAZY_FORCE  : int = 47;  // dest=val_var, s1=thunk_var — force evaluation
 
 // Resolution flag for BRANCH/JUMP (stored in type_kind field after label resolution)
 IR_RESOLVED : int = 1;
