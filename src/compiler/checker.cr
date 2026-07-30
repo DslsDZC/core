@@ -24,6 +24,8 @@ fn init_types() {
     alloc_type(TYP_BASE, TY_STRING, 0);  // TI_STR = 3
     alloc_type(TYP_BASE, TY_UNIT, 0);    // TI_UNIT = 4
     alloc_type(TYP_BASE, TY_NEVER, 0);   // TI_NEVER = 5
+    alloc_type(TYP_BASE, TY_CHAR, 0);    // TI_CHAR = 6
+    alloc_type(TYP_DYN, 0, 0);           // TI_DYN = 7
 }
 
 // ── Runtime builtin declarations (no .cr body, implemented in rt.s) ──
@@ -362,6 +364,7 @@ fn res_type_node(node: int) -> int {
         if tv == TY_UNIT { return TI_UNIT; }
         if tv == TY_NEVER { return TI_NEVER; }
         if tv == TY_CHAR { return TI_CHAR; }
+        if tv == TI_DYN { return TI_DYN; }
         return TI_UNIT;
     }
     if ast_kind(node) == EXPR_IDENT {
@@ -777,6 +780,7 @@ fn res_call_type(node: int, func_fi: int) -> int {
         if tv == TY_STRING { return TI_STR; }
         if tv == TY_UNIT { return TI_UNIT; }
         if tv == TY_CHAR { return TI_CHAR; }
+        if tv == TI_DYN { return TI_DYN; }
         return TI_UNIT;
     }
     if ast_kind(node) == EXPR_IDENT {
@@ -1177,6 +1181,76 @@ fn check_global_let(node: int) {
     }
 }
 
+// --- Dynamic type set tracking ---
+
+fn grow_dyn_type_sets(needed: int) {
+    if needed < g_dyn_type_set_cap { return; }
+    nc : ., mut = g_dyn_type_set_cap * 2; if nc < 64 { nc = 64; } if nc < needed { nc = needed + 64; }
+    nb := alloc(nc * 8); _dyncpy(g_dyn_type_sets, g_dyn_type_set_cap * 8, nb);
+    g_dyn_type_sets = nb; g_dyn_type_set_cap = nc;
+}
+
+fn dyn_set_type(var_idx: int, ti: int) {
+    grow_dyn_type_sets(var_idx + 1);
+    old_bits := r64(g_dyn_type_sets, var_idx * 8);
+    bit : ., mut = 1;
+    if ti >= 0 && ti < 64 {
+        bit = 1; shl := ti; loop { if shl <= 0 { break; } bit = bit * 2; shl = shl - 1; }
+    }
+    w64(g_dyn_type_sets, var_idx * 8, old_bits + bit);
+    if var_idx >= g_dyn_type_set_count { g_dyn_type_set_count = var_idx + 1; }
+}
+
+fn dyn_has_type(var_idx: int, ti: int) -> int {
+    if var_idx < 0 || var_idx >= g_dyn_type_set_count { return 0; }
+    set := r64(g_dyn_type_sets, var_idx * 8);
+    bit : ., mut = 1;
+    if ti >= 0 && ti < 64 {
+        bit = 1; shl := ti; loop { if shl <= 0 { break; } bit = bit * 2; shl = shl - 1; }
+    }
+    if (set / bit) % 2 != 0 { return 1; }
+    return 0;
+}
+
+fn union_bitmaps(a: int, b: int) -> int {
+    r : ., mut = 0;
+    pos : ., mut = 0;
+    loop {
+        if pos >= 64 { break; }
+        bit : ., mut = 1;
+        shl := pos;
+        loop { if shl <= 0 { break; } bit = bit * 2; shl = shl - 1; }
+        if (a / bit) % 2 != 0 || (b / bit) % 2 != 0 { r = r + bit; }
+        pos = pos + 1;
+    }
+    return r;
+}
+
+fn validate_dyn_method(si: int, method_ni: int, line: int, col: int) {
+    if si < 0 || si >= g_dyn_type_set_count { return; }
+    set := r64(g_dyn_type_sets, si * 8);
+    if set == 0 { return; }
+    ti : ., mut = 0;
+    loop {
+        if ti >= g_type_count { break; }
+        if ti >= 64 { break; }
+        bit : ., mut = 1;
+        shl := ti;
+        loop { if shl <= 0 { break; } bit = bit * 2; shl = shl - 1; }
+        if (set / bit) % 2 != 0 {
+            type_ni := get_type_name(ti);
+            if type_ni >= 0 {
+                if !type_has_method(type_ni, method_ni) {
+                    tname := istr_get(type_ni);
+                    mname := istr_get(method_ni);
+                    check_error(EC_N_METHOD, "dyn: method '" + mname + "' not found on type '" + tname + "'", line, col);
+                }
+            }
+        }
+        ti = ti + 1;
+    }
+}
+
 // --- Type inference ---
 
 fn infer_expr(node: int) -> int {
@@ -1342,6 +1416,24 @@ fn infer_expr(node: int) -> int {
             }
 
             obj_ti := infer_expr(obj);
+            // --- Dyn method validation ---
+            if obj_ti == TI_DYN {
+                if ast_kind(obj) == EXPR_IDENT {
+                    obj_ni := ast_int_val(obj);
+                    obj_si := find_sym(obj_ni);
+                    if obj_si >= 0 {
+                        validate_dyn_method(obj_si, method_ni, ast_line(node), ast_col(node));
+                    }
+                }
+                // Infer arg types (for side effects)
+                an_dyn : ., mut = first_arg;
+                loop {
+                    if an_dyn < 0 { break; }
+                    infer_expr(ast_a(an_dyn));
+                    an_dyn = ast_b(an_dyn);
+                }
+                return TI_UNIT;
+            }
             lookup_ti : ., mut = obj_ti;
             // Unwrap generic apply to base type
             if lookup_ti >= 0 && lookup_ti < g_type_count && get_type_kind(lookup_ti) == TYP_GENERIC_APPLY {
@@ -1526,13 +1618,57 @@ fn infer_expr(node: int) -> int {
         if cond_ti != TI_BOOL && cond_ti != TI_INT {
             check_error(EC_TC_IF_COND, "If condition must be bool or int", ast_line(node), ast_col(node));
         }
+        // --- Dyn type set merge: save pre-if state ---
+        pre_dyn_count : ., mut = g_dyn_type_set_count;
+        pre_dyn_save : string, mut = 0;
+        if pre_dyn_count > 0 {
+            pre_dyn_save = alloc(pre_dyn_count * 8);
+            _dyncpy(g_dyn_type_sets, pre_dyn_count * 8, pre_dyn_save);
+        }
+        // --- Process then branch ---
         push_borrow_scope();
         then_ti := infer_expr(then_node);
         pop_borrow_scope();
+        // --- Save then-branch dyn state ---
+        then_dyn_count : ., mut = g_dyn_type_set_count;
+        then_dyn_save : string, mut = 0;
+        if then_dyn_count > 0 {
+            then_dyn_save = alloc(then_dyn_count * 8);
+            _dyncpy(g_dyn_type_sets, then_dyn_count * 8, then_dyn_save);
+        }
+        // --- Restore pre-if state (zero stale entries beyond pre_dyn_count) ---
+        g_dyn_type_set_count = pre_dyn_count;
+        if pre_dyn_count > 0 {
+            _dyncpy(pre_dyn_save, pre_dyn_count * 8, g_dyn_type_sets);
+        }
+        iz : ., mut = pre_dyn_count;
+        loop {
+            if iz >= then_dyn_count { break; }
+            w64(g_dyn_type_sets, iz * 8, 0);
+            iz = iz + 1;
+        }
+        // --- Process else branch (if any) ---
         if else_node >= 0 {
             push_borrow_scope();
             else_ti := infer_expr(else_node);
             pop_borrow_scope();
+            // --- Merge dyn type sets from both branches ---
+            merge_count : ., mut = then_dyn_count;
+            if g_dyn_type_set_count > merge_count { merge_count = g_dyn_type_set_count; }
+            grow_dyn_type_sets(merge_count);
+            g_dyn_type_set_count = merge_count;
+            mi : ., mut = 0;
+            loop {
+                if mi >= merge_count { break; }
+                then_bits : ., mut = 0;
+                if mi < then_dyn_count { then_bits = r64(then_dyn_save, mi * 8); }
+                else_bits : ., mut = 0;
+                if mi < g_dyn_type_set_count { else_bits = r64(g_dyn_type_sets, mi * 8); }
+                merged := union_bitmaps(then_bits, else_bits);
+                w64(g_dyn_type_sets, mi * 8, merged);
+                mi = mi + 1;
+            }
+            g_dyn_type_set_count = merge_count;
             if !type_equal(then_ti, else_ti) && then_ti != TI_NEVER && else_ti != TI_NEVER {
                 check_error(EC_TC_IF_BRANCH, "If branches have different types", ast_line(node), ast_col(node));
             }
@@ -1684,6 +1820,11 @@ fn infer_expr(node: int) -> int {
         if type_node >= 0 { ti = res_type_node(type_node); }
         if istr_get(var_ni) != "_" {
             def_sym(var_ni, SYM_LOCAL, ti, -1);
+            if ti == TI_DYN && val_node >= 0 {
+                grow_dyn_type_sets(g_sym_count);
+                w64(g_dyn_type_sets, (g_sym_count - 1) * 8, 0);
+                dyn_set_type(g_sym_count - 1, val_ti);
+            }
         }
         return TI_UNIT;
     }
@@ -1817,7 +1958,16 @@ fn infer_expr(node: int) -> int {
         val := ast_b(node);
         tt := infer_expr(target);
         vt := infer_expr(val);
-        if !type_equal(tt, vt) {
+        if tt == TI_DYN {
+            // dyn assignment: track the RHS type, skip strict type check
+            if ast_kind(target) == EXPR_IDENT {
+                target_ni := ast_int_val(target);
+                target_si := find_sym(target_ni);
+                if target_si >= 0 {
+                    dyn_set_type(target_si, vt);
+                }
+            }
+        } else if !type_equal(tt, vt) {
             check_error(EC_TA_ASSIGN, "Assignment type mismatch", ast_line(node), ast_col(node));
         }
         return vt;
@@ -2085,6 +2235,7 @@ fn check_all() {
     g_gen_map_count = 0; g_gen_map_cap = 0;
     g_gen_apply_data_count = 0;
     g_gen_apply_data_cap = 0;
+    g_dyn_type_set_count = 0; g_dyn_type_set_cap = 0; g_dyn_type_sets = 0;
 
     // First pass: collect declarations
     collect_decls();
