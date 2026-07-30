@@ -882,53 +882,33 @@ fn gen_expr(node: int) -> int {
             ac = ac + 1;
             an = ast_b(an);
         }
-        // Generic function: inline the body with concrete type substitution
+        // Generic function: redirect to monomorphized (specialized) version
         if func_ni >= 0 && (ast_kind(func_node) == EXPR_IDENT) {
             gen_fi := find_func(func_ni);
             if gen_fi >= 0 && fi_generic_count(gen_fi) > 0 {
-                fn_node3 := fi_ast_node(gen_fi);
-                body3 := ast_data(fn_node3);
-                conc_type_ni3 := ast_int_val(node);
-                if conc_type_ni3 >= 0 && body3 >= 0 {
-                    gen_name3 := istr_get(fi_generic_name(gen_fi, 0));
-                    conc_name3 := istr_get(conc_type_ni3);
-                    ast_patch_node(body3, gen_name3, conc_name3);
-                    // Bind params to arg vars
-                    first_param3 := ast_b(fn_node3);
-                    param_count3 := ast_c(fn_node3);
-                    push_ir_scope();
-                    ppi3 : ., mut = 0;
-                    ppn3 : ., mut = first_param3;
-                    loop {
-                        if ppi3 >= param_count3 { break; }
-                        if ppi3 >= ac { break; }
-                        pname_ni3 := ast_a(ppn3);
-                        bind_local(pname_ni3, r64(arg_vars, ppi3 * 8));
-                        ppi3 = ppi3 + 1;
-                        ppn3 = ppn3 + 1;
-                        loop { if ppn3 >= g_ast_count { break; } if ast_kind(ppn3) == EXPR_PARAM { break; } ppn3 = ppn3 + 1; }
-                    }
-                    // Inline the body: for block, process each stmt, skip IR_RETURN
-                    inline_result : ., mut = -1;
-                    if ast_kind(body3) == EXPR_BLOCK {
-                        bstart := ast_a(body3); bcnt := ast_b(body3);
-                        bi : ., mut = 0;
-                        loop {
-                            if bi >= bcnt { break; }
-                            sn3 := r64(g_block_stmts, (bstart + bi) * 8);
-                            if bi + 1 == bcnt && ast_kind(sn3) == EXPR_RETURN && ast_a(sn3) >= 0 {
-                                // Last stmt is return: inline the inner expression only
-                                inline_result = gen_expr(ast_a(sn3));
-                            } else {
-                                inline_result = gen_expr(sn3);
-                            }
-                            bi = bi + 1;
-                        }
-                    } else {
-                        inline_result = gen_expr(body3);
-                    }
-                    pop_ir_scope();
-                    return inline_result;
+                // Build type args string from call argument types
+                type_args : ., mut = "";
+                ai : ., mut = 0;
+                loop {
+                    if ai >= ac { break; }
+                    av := r64(arg_vars, ai * 8);
+                    ti := TI_INT;
+                    if av >= 0 { ti = irv_type(av); }
+                    if ai > 0 { type_args = type_args + ","; }
+                    if ti == TI_INT { type_args = type_args + "int"; }
+                    else if ti == TI_STR { type_args = type_args + "string"; }
+                    else if ti == TI_BOOL { type_args = type_args + "bool"; }
+                    else if ti == TI_CHAR { type_args = type_args + "char"; }
+                    else if ti == TI_FLOAT { type_args = type_args + "float"; }
+                    else if ti == TI_UNIT { type_args = type_args + "unit"; }
+                    else { type_args = type_args + "int"; }
+                    ai = ai + 1;
+                }
+                // Find or create specialized function instance
+                spec_ni := gen_find_or_create(func_ni, type_args);
+                if spec_ni >= 0 {
+                    func_ni = spec_ni;
+                    // Fall through to normal IR_CALL emission
                 }
             }
         }
