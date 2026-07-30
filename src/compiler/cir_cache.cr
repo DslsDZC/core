@@ -132,8 +132,9 @@ fn write_fd(fd: int, data: string, len: int) {
 }
 
 // Load a .cir cache file and restore DFG state.
-// Returns 0 on success, -1 on failure (cache miss).
-fn load_cir_cache(path: string) -> int {
+// func_idx is the function index used to verify the cached fingerprints
+// against the current AST. Returns 0 on success, -1 on failure (cache miss).
+fn load_cir_cache(path: string, func_idx: int) -> int {
     data := read_file(path);
     if str_len(data) < 48 { return -1; }
     pos : ., mut = 0;
@@ -146,6 +147,14 @@ fn load_cir_cache(path: string) -> int {
 
     fp := r64(data, pos); pos = pos + 8;
     sig := r64(data, pos); pos = pos + 8;
+
+    // Verify fingerprints against current AST.
+    // If the function body or signature changed, the cache is stale.
+    fn_node := fi_ast_node(func_idx);
+    current_fp := func_fingerprint(fn_node);
+    if fp != current_fp { return -1; }
+    current_sig := sig_fingerprint(fn_node);
+    if sig != current_sig { return -1; }
 
     // Verify function identity (name)
     name_len := r64(data, pos); pos = pos + 8;
