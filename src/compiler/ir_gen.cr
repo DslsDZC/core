@@ -907,7 +907,7 @@ fn gen_expr(node: int) -> int {
                 // Find or create specialized function instance
                 spec_ni := gen_find_or_create(func_ni, type_args);
                 if spec_ni >= 0 {
-                    func_ni = spec_ni;
+                    func_ni = fi_name(spec_ni);
                     // Fall through to normal IR_CALL emission
                 }
             }

@@ -1110,6 +1110,7 @@ fn extract_hotpatch_ver(args_node: int) -> int {
 
 fn parse_body(fn_name: string, fn_ni: int, fn_line: int, fn_col: int, hotpatch_ver: int) {
     gnames : string, mut;    gnames_cap : int, mut;
+    gnames = alloc(64 * 8); gnames_cap = 64;
     gconstrs : string, mut;    gconstrs_cap : int, mut;
     gconstrs = alloc(64 * 8); gconstrs_cap = 64;
     gc := parse_generics_into(gnames, gconstrs);

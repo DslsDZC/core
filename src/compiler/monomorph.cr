@@ -390,12 +390,19 @@ fn gen_create_instance(func_ni: int, type_args: string) -> int {
     g_gen_dedup_count = 0; g_gen_dedup_cap = 0;
     new_fn_node := gen_clone_tree(orig_fn_node);
 
+    // Compute mangled name: "orig_name[type_args]" for unique identification
+    orig_name := istr_get(fi_name(func_ni));
+    mangled_name : ., mut = orig_name + "[" + type_args + "]";
+    mangled_ni := str_intern(mangled_name);
+    // Update the cloned AST node's name to the mangled name
+    ast_set_a(new_fn_node, mangled_ni);
+
     // 3. Register new function in g_funcs
     new_fi := g_func_count;
     grow_funcs(new_fi + 1);
 
-    // Copy FuncInfo fields from original
-    fi_set_name(new_fi, fi_name(func_ni));
+    // Use mangled name for unique lookup
+    fi_set_name(new_fi, mangled_ni);
 
     // Clone params: param type info from FuncInfo
     pc := fi_param_count(func_ni);
