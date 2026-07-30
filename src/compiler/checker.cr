@@ -52,6 +52,8 @@ fn init_builtins() {
     bi_add("sched_call_2", TI_INT);
     bi_add("sched_call_3", TI_INT);
     bi_add("sched_call_4", TI_INT);
+    bi_add("fiber_switch", TI_INT);
+    bi_add("fiber_init", TI_INT);
 }
 
 fn bi_add(name: string, ret_ti: int) {

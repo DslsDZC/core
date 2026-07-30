@@ -62,7 +62,7 @@ fn basename(path: string) -> string {
     slen := str_len(path);
     if slen == 0 { return ""; }
     end : ., mut = slen;
-    // 去掉末尾的 /
+    // strip trailing /
     loop {
         if end <= 0 { break; }
         if str_eq(get_char(path, end - 1), "/") != 0 { end = end - 1; }
@@ -373,157 +373,170 @@ fn res_imports() {
     w64(g_seg_fileids, g_seg_count * 8, main_fni);
     g_seg_count = g_seg_count + 1;
 
-    extra_src : ., mut = "";
-    extra_bytes : ., mut = 0;
+    total_accumulated : ., mut = 0;
 
-    // Scan imports
-    i : ., mut = 0;
+    // Multi-pass import resolution: keep scanning until no new imports found.
+    // This enables imports from within imported files (recursive imports).
     loop {
-        if i >= g_token_count { break; }
-        tk := r64(g_tokens, i * ESZ_TOKEN + OFF_TK_KIND);
+        pass_src : ., mut = "";
+        pass_bytes : ., mut = 0;
+        any_new : ., mut = 0;
 
-        if tk == T_IMPORT {
-            pos : ., mut = i + 1;
-            is_project : ., mut = false;
-            project_name : ., mut = "";
-            if pos < g_token_count && r64(g_tokens, pos * ESZ_TOKEN + OFF_TK_KIND) == T_AT {
-                is_project = true;
-                pos = pos + 1;
-                if pos < g_token_count && r64(g_tokens, pos * ESZ_TOKEN + OFF_TK_KIND) == T_IDENT {
-                    project_name = istr_get(r64(g_tokens, pos * ESZ_TOKEN + OFF_TK_LEXEME));
+        i : ., mut = 0;
+        loop {
+            if i >= g_token_count { break; }
+            tk := r64(g_tokens, i * ESZ_TOKEN + OFF_TK_KIND);
+
+            if tk == T_IMPORT {
+                pos : ., mut = i + 1;
+                is_project : ., mut = false;
+                project_name : ., mut = "";
+                if pos < g_token_count && r64(g_tokens, pos * ESZ_TOKEN + OFF_TK_KIND) == T_AT {
+                    is_project = true;
                     pos = pos + 1;
-                }
-            }
-            import_fileid : ., mut = "";
-            if pos < g_token_count && r64(g_tokens, pos * ESZ_TOKEN + OFF_TK_KIND) == T_IDENT {
-                import_fileid = istr_get(r64(g_tokens, pos * ESZ_TOKEN + OFF_TK_LEXEME));
-                pos = pos + 1;
-                // Handle :: segments: backend::x86_64 → backend::x86_64
-                loop {
-                    if pos + 1 < g_token_count &&
-                       r64(g_tokens, pos * ESZ_TOKEN + OFF_TK_KIND) == T_PATHSEP &&
-                       r64(g_tokens, (pos + 1) * ESZ_TOKEN + OFF_TK_KIND) == T_IDENT {
-                        import_fileid = import_fileid + "::" + istr_get(r64(g_tokens, (pos + 1) * ESZ_TOKEN + OFF_TK_LEXEME));
-                        pos = pos + 2;
-                    } else { break; }
-                }
-            }
-            alias_str : ., mut = "";
-            if pos < g_token_count && r64(g_tokens, pos * ESZ_TOKEN + OFF_TK_KIND) == T_COLON {
-                pos = pos + 1;
-                if pos < g_token_count && r64(g_tokens, pos * ESZ_TOKEN + OFF_TK_KIND) == T_IDENT {
-                    alias_str = istr_get(r64(g_tokens, pos * ESZ_TOKEN + OFF_TK_LEXEME));
-                    pos = pos + 1;
-                }
-            }
-            path : ., mut = "";
-            content : ., mut = "";
-            // Skip import if it references the same file as the main source
-            // (prevents duplicate definitions when _import.cr imports the entry file)
-            if str_len(import_fileid) > 0 && str_eq(import_fileid, main_fileid_str) != 0 {
-                i = pos;
-                continue;
-            }
-            if str_len(import_fileid) > 0 {
-                if is_project {
-                    proj_toml : ., mut = "src/" + project_name + "/Core.toml";
-                    ptc := read_file(proj_toml);
-                    if str_len(ptc) > 0 {
-                        pn := extract_toml_name(ptc);
-                        if str_len(pn) > 0 && str_eq(pn, project_name) == 0 {
-                            print("  warning: @");
-                            print(project_name);
-                            print(" toml name='");
-                            print(pn);
-                            println("' mismatch");
-                        }
+                    if pos < g_token_count && r64(g_tokens, pos * ESZ_TOKEN + OFF_TK_KIND) == T_IDENT {
+                        project_name = istr_get(r64(g_tokens, pos * ESZ_TOKEN + OFF_TK_LEXEME));
+                        pos = pos + 1;
                     }
-                    path = "src/" + project_name + "/" + import_fileid + ".cr";
-                    content = read_file(path);
-                } else {
-                    // Convert :: to / for subdirectory paths (e.g. backend::x86_64::instr → backend/x86_64/instr)
-                    fs_path : ., mut = import_fileid;
-                    pi : ., mut = 0;
+                }
+                import_fileid : ., mut = "";
+                if pos < g_token_count && r64(g_tokens, pos * ESZ_TOKEN + OFF_TK_KIND) == T_IDENT {
+                    import_fileid = istr_get(r64(g_tokens, pos * ESZ_TOKEN + OFF_TK_LEXEME));
+                    pos = pos + 1;
+                    // Handle :: segments: backend::x86_64 -> backend::x86_64
                     loop {
-                        if pi >= str_len(fs_path) { break; }
-                        if load8(fs_path, pi) == 58 && pi + 1 < str_len(fs_path) && load8(fs_path, pi+1) == 58 {
-                            fs_path = str_sub(fs_path, 0, pi) + "/" + str_sub(fs_path, pi+2, str_len(fs_path)-pi-2);
-                        }
-                        pi = pi + 1;
-                    }
-                    // Try .so extension index: $HOME/.core/lib/<name>/index
-                    // Loads metadata (tags). The .cr file still provides runtime implementation.
-                    home_dir : ., mut = get_env("HOME");
-                    if str_len(home_dir) == 0 { home_dir = "/home/DslsDZC"; }
-                    so_idx_path : ., mut = home_dir + "/.core/lib/" + fs_path + "/index";
-                    so_idx := read_file(so_idx_path);
-                    if str_len(so_idx) > 0 {
-                        reg_so_funcs(so_idx, fs_path);
-                    }
-                    // Always load .cr for runtime implementation
-                    path = g_source_dir + fs_path + ".cr";
-                    content = read_file(path);
-                    if str_len(content) == 0 {
-                        path = "src/stdlib/" + fs_path + ".cr";
-                        content = read_file(path);
-                    }
-                    if str_len(content) == 0 {
-                        path = "src/runtime/" + fs_path + ".cr";
-                        content = read_file(path);
-                    }
-                    if str_len(content) == 0 {
-                        path = "src/compiler/" + fs_path + ".cr";
-                        content = read_file(path);
-                    }
-                    if str_len(content) == 0 {
-                        path = fs_path + ".cr";
-                        content = read_file(path);
-                    }
-                    if str_len(content) == 0 {
-                        print("!! import fail: "); println(import_fileid);
+                        if pos + 1 < g_token_count &&
+                           r64(g_tokens, pos * ESZ_TOKEN + OFF_TK_KIND) == T_PATHSEP &&
+                           r64(g_tokens, (pos + 1) * ESZ_TOKEN + OFF_TK_KIND) == T_IDENT {
+                            import_fileid = import_fileid + "::" + istr_get(r64(g_tokens, (pos + 1) * ESZ_TOKEN + OFF_TK_LEXEME));
+                            pos = pos + 2;
+                        } else { break; }
                     }
                 }
-            }
-            if str_len(content) > 0 {
-                content_len := str_len(content);
-                loaded_fid : ., mut = get_fileid(content);
-                if str_len(loaded_fid) == 0 { loaded_fid = import_fileid; }
-                loaded_fni := reg_fileid(loaded_fid, path);
-                // Check if this file was already loaded (prevent duplicates)
-                already_loaded : ., mut = 0;
-                mi : ., mut = 0;
-                loop { if mi >= g_mod_count { break; }
-                    if r64(g_mods, mi * 24 + 8) == loaded_fni { already_loaded = 1; break; }
-                mi = mi + 1; }
-                if already_loaded != 0 {
+                alias_str : ., mut = "";
+                if pos < g_token_count && r64(g_tokens, pos * ESZ_TOKEN + OFF_TK_KIND) == T_COLON {
+                    pos = pos + 1;
+                    if pos < g_token_count && r64(g_tokens, pos * ESZ_TOKEN + OFF_TK_KIND) == T_IDENT {
+                        alias_str = istr_get(r64(g_tokens, pos * ESZ_TOKEN + OFF_TK_LEXEME));
+                        pos = pos + 1;
+                    }
+                }
+                path : ., mut = "";
+                content : ., mut = "";
+                // Skip import if it references the same file as the main source
+                // (prevents duplicate definitions when _import.cr imports the entry file)
+                if str_len(import_fileid) > 0 && str_eq(import_fileid, main_fileid_str) != 0 {
                     i = pos;
                     continue;
                 }
-                print("  -> "); println(path);
-                seg_byte := main_len + extra_bytes + 1;
-                grow_segs(g_seg_count + 1); w64(g_seg_starts, g_seg_count * 8, seg_byte);
-                w64(g_seg_fileids, g_seg_count * 8, loaded_fni);
-                g_seg_count = g_seg_count + 1;
-                extra_bytes = extra_bytes + 1 + content_len;
-                alias_ni : ., mut = -1;
-                if str_len(alias_str) > 0 {
-                    alias_ni = str_intern(alias_str);
-                } else {
-                    alias_ni = loaded_fni;
+                if str_len(import_fileid) > 0 {
+                    if is_project {
+                        proj_toml : ., mut = "src/" + project_name + "/Core.toml";
+                        ptc := read_file(proj_toml);
+                        if str_len(ptc) > 0 {
+                            pn := extract_toml_name(ptc);
+                            if str_len(pn) > 0 && str_eq(pn, project_name) == 0 {
+                                print("  warning: @");
+                                print(project_name);
+                                print(" toml name='");
+                                print(pn);
+                                println("' mismatch");
+                            }
+                        }
+                        path = "src/" + project_name + "/" + import_fileid + ".cr";
+                        content = read_file(path);
+                    } else {
+                        // Convert :: to / for subdirectory paths (e.g. backend::x86_64::instr -> backend/x86_64/instr)
+                        fs_path : ., mut = import_fileid;
+                        pi : ., mut = 0;
+                        loop {
+                            if pi >= str_len(fs_path) { break; }
+                            if load8(fs_path, pi) == 58 && pi + 1 < str_len(fs_path) && load8(fs_path, pi+1) == 58 {
+                                fs_path = str_sub(fs_path, 0, pi) + "/" + str_sub(fs_path, pi+2, str_len(fs_path)-pi-2);
+                            }
+                            pi = pi + 1;
+                        }
+                        // Try .so extension index: $HOME/.core/lib/<name>/index
+                        // Loads metadata (tags). The .cr file still provides runtime implementation.
+                        home_dir : ., mut = get_env("HOME");
+                        if str_len(home_dir) == 0 { home_dir = "/home/DslsDZC"; }
+                        so_idx_path : ., mut = home_dir + "/.core/lib/" + fs_path + "/index";
+                        so_idx := read_file(so_idx_path);
+                        if str_len(so_idx) > 0 {
+                            reg_so_funcs(so_idx, fs_path);
+                        }
+                        // Always load .cr for runtime implementation
+                        path = g_source_dir + fs_path + ".cr";
+                        content = read_file(path);
+                        if str_len(content) == 0 {
+                            path = "src/stdlib/" + fs_path + ".cr";
+                            content = read_file(path);
+                        }
+                        if str_len(content) == 0 {
+                            path = "src/runtime/" + fs_path + ".cr";
+                            content = read_file(path);
+                        }
+                        if str_len(content) == 0 {
+                            path = "src/compiler/" + fs_path + ".cr";
+                            content = read_file(path);
+                        }
+                        if str_len(content) == 0 {
+                            path = fs_path + ".cr";
+                            content = read_file(path);
+                        }
+                        if str_len(content) == 0 {
+                            print("!! import fail: "); println(import_fileid);
+                        }
+                    }
                 }
-                grow_mods(g_mod_count + 1);
-                w64(g_mods, g_mod_count * 24, alias_ni);
-                w64(g_mods, g_mod_count * 24 + 8, loaded_fni);
-                store_str_ptr(g_mods, g_mod_count * 24 + 16, path);
-                g_mod_count = g_mod_count + 1;
-                extra_src = extra_src + "\n" + content;
+                if str_len(content) > 0 {
+                    content_len := str_len(content);
+                    loaded_fid : ., mut = get_fileid(content);
+                    if str_len(loaded_fid) == 0 { loaded_fid = import_fileid; }
+                    loaded_fni := reg_fileid(loaded_fid, path);
+                    // Check if this file was already loaded (prevent duplicates)
+                    already_loaded : ., mut = 0;
+                    mi : ., mut = 0;
+                    loop { if mi >= g_mod_count { break; }
+                        if r64(g_mods, mi * 24 + 8) == loaded_fni { already_loaded = 1; break; }
+                    mi = mi + 1; }
+                    if already_loaded != 0 {
+                        i = pos;
+                        continue;
+                    }
+                    print("  -> "); println(path);
+                    any_new = 1;
+                    seg_byte := main_len + total_accumulated + pass_bytes + 1;
+                    grow_segs(g_seg_count + 1); w64(g_seg_starts, g_seg_count * 8, seg_byte);
+                    w64(g_seg_fileids, g_seg_count * 8, loaded_fni);
+                    g_seg_count = g_seg_count + 1;
+                    pass_bytes = pass_bytes + 1 + content_len;
+                    alias_ni : ., mut = -1;
+                    if str_len(alias_str) > 0 {
+                        alias_ni = str_intern(alias_str);
+                    } else {
+                        alias_ni = loaded_fni;
+                    }
+                    grow_mods(g_mod_count + 1);
+                    w64(g_mods, g_mod_count * 24, alias_ni);
+                    w64(g_mods, g_mod_count * 24 + 8, loaded_fni);
+                    store_str_ptr(g_mods, g_mod_count * 24 + 16, path);
+                    g_mod_count = g_mod_count + 1;
+                    pass_src = pass_src + "\n" + content;
+                }
+                i = pos;
+                continue;
             }
+            i = i + 1;
         }
-        i = i + 1;
-    }
-    if str_len(extra_src) > 0 {
-        g_source = g_source + extra_src;
-        tokenize(g_source);
+
+        if any_new == 0 { break; }
+
+        if str_len(pass_src) > 0 {
+            g_source = g_source + pass_src;
+            tokenize(g_source);
+            total_accumulated = total_accumulated + pass_bytes;
+        }
     }
 
     // Strip _import.cr preamble to prevent re-parsing import tokens as code.
