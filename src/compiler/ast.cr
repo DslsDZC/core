@@ -102,6 +102,7 @@ T_UNIT_TYPE : int = 93;
 T_STR_TYPE : int = 94;
 T_AUTO_TYPE : int = 95;
 T_REF : int = 96;
+T_DYN : int = 99;  // dynamic type
 
 // Width constants (stored in EXPR_INT/EXPR_FLOAT data field)
 W_I8 : int = 1;
@@ -294,6 +295,7 @@ TI_STR : int = 3;
 TI_UNIT : int = 4;
 TI_NEVER : int = 5;
 TI_CHAR : int = 6;
+TI_DYN : int = 7;    // dynamic type
 
 // Type table entry kinds
 TYP_BASE : int = 0;   // data = TY_* constant
@@ -305,6 +307,7 @@ TYP_GENERIC_PARAM : int = 7;  // data = name string index (unresolved generic pa
 TYP_GENERIC_APPLY : int = 8;  // data = base type idx, extra = arg list start in g_gen_apply_data
 TYP_SLICE : int = 9;   // data = element type idx (dynamic-length view into array)
 TYP_TUPLE : int = 10;  // data = element_count, extra = elem types start in g_gen_apply_data
+TYP_DYN : int = 11;  // data = type set bitmap (0 = single known type)
 
 // Error codes: category * 1000 + number, matching docs/error-codes.md
 // Category 0 = unclassified (000-)
@@ -558,6 +561,10 @@ IR_FAST              : int = 36;   // — allow precision-for-speed optimization
 IR_UNROLL            : int = 37;   // src1=unroll_count — loop unroll hint
 IR_SECTION           : int = 38;   // src1=section_name_ni — code section hint
 IR_HOTPATCH_ROUTE    : int = 39;   // dest=result_var, s1=fn_name_ni, s2=first_arg, s3=arg_count
+IR_DYN_TAG      : int = 41;  // dest=tag_var, s1=dyn_var — extract tag
+IR_DYN_VAL      : int = 42;  // dest=val_var, s1=dyn_var — extract value
+IR_DYN_PACK     : int = 43;  // dest=dyn_var, s1=val_var, s2=type_idx — pack dyn
+IR_DYN_DISPATCH : int = 44;  // s1=dyn_var, s2=dispatch_table_ni — dispatch by tag
 
 // Resolution flag for BRANCH/JUMP (stored in type_kind field after label resolution)
 IR_RESOLVED : int = 1;

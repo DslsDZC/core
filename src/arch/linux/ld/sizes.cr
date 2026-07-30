@@ -60,6 +60,10 @@ fn instr_size(op: int) -> int {
     if op == IR_UNROLL         { return 0; }
     if op == IR_SECTION        { return 0; }
     if op == IR_HOTPATCH_ROUTE { return 9; }  // call(5) + store(4) = 9 bytes
+    if op == IR_DYN_PACK      { return 16; }  // load_var + st + li (value+tag pack)
+    if op == IR_DYN_TAG       { return 8; }   // ld(off+8) + st
+    if op == IR_DYN_VAL       { return 8; }   // ld(off+0) + st
+    if op == IR_DYN_DISPATCH  { return 20; }  // tag load + cmp/je chain (placeholder)
     // Unknown / non-annotation opcodes fall back to caller's heuristic (ic*5)
     return 0;
 }

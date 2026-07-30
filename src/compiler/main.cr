@@ -427,8 +427,8 @@ fn corec_main() -> int {
         instr_start := g_ir_instr_count;
         var_start := g_ir_var_count;
 
-        // Try loading from cache
-        cached := load_cir_cache(cache_path);
+        // Try loading from cache (pass func_idx for signature verification)
+        cached := load_cir_cache(cache_path, fi);
         if cached == 0 {
             // Cache hit: setup function metadata for restored data
             func_idx := g_ir_func_count;

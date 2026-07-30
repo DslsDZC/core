@@ -427,7 +427,14 @@ fn gen_expr(node: int) -> int {
                 name_idx := ast_int_val(left);
                 target := find_local(name_idx);
                 if target >= 0 {
-                    emit(IR_STORE, -1, target, val_var, 0, 0);
+                    if irv_type(target) == TI_DYN {
+                        // Dyn variable assignment: pack value with type tag
+                        tag := irv_type(val_var);
+                        if tag < 0 { tag = TI_INT; }
+                        emit(IR_DYN_PACK, target, val_var, tag, 0, 0);
+                    } else {
+                        emit(IR_STORE, -1, target, val_var, 0, 0);
+                    }
                 } else {
                     gtarget := find_global(name_idx);
                     if gtarget >= 0 {
@@ -493,6 +500,20 @@ fn gen_expr(node: int) -> int {
         lt := irv_type(left_var);
         rt := irv_type(right_var);
 
+        // Unwrap dyn operands: extract the underlying value for binary ops
+        if lt == TI_DYN {
+            uv := new_ir_var("_dynval", TI_UNIT);
+            emit(IR_DYN_VAL, uv, left_var, 0, 0, 0);
+            left_var = uv;
+            lt = irv_type(left_var);
+        }
+        if rt == TI_DYN {
+            uv := new_ir_var("_dynval", TI_UNIT);
+            emit(IR_DYN_VAL, uv, right_var, 0, 0, 0);
+            right_var = uv;
+            rt = irv_type(right_var);
+        }
+
         // String equality compares contents, not pointer values.
         if (op == OP_EQ || op == OP_NE) && (lt == TI_STR || rt == TI_STR) {
             eq_ni := str_intern("str_eq");
@@ -555,7 +576,14 @@ fn gen_expr(node: int) -> int {
             name_idx := ast_int_val(target);
             lv := find_local(name_idx);
             if lv >= 0 {
-                emit(IR_STORE, -1, lv, val_var, 0, 0);
+                if irv_type(lv) == TI_DYN {
+                    // Dyn variable assignment: pack value with type tag
+                    tag := irv_type(val_var);
+                    if tag < 0 { tag = TI_INT; }
+                    emit(IR_DYN_PACK, lv, val_var, tag, 0, 0);
+                } else {
+                    emit(IR_STORE, -1, lv, val_var, 0, 0);
+                }
             } else {
                 gv := find_global(name_idx);
                 if gv >= 0 { emit(IR_STORE, -1, gv, val_var, 0, 0); }
@@ -938,6 +966,16 @@ fn gen_expr(node: int) -> int {
                 ai = ai + 1;
             }
         }
+        // Dyn method dispatch: receiver is a dyn value, emit dynamic dispatch
+        if ast_kind(func_node) == EXPR_FIELD && ac > 0 && func_ni >= 0 {
+            dyn_receiver := first_arg_var;
+            if dyn_receiver >= 0 && irv_type(dyn_receiver) == TI_DYN {
+                dest := new_ir_var("_dyncall", TI_UNIT);
+                emit(IR_DYN_DISPATCH, dest, dyn_receiver, func_ni, 0, 0);
+                return dest;
+            }
+        }
+
         // Hotpatch function call: emit IR_HOTPATCH_ROUTE instead of IR_CALL
         if func_ni >= 0 && is_hotpatch_func(func_ni) != 0 {
             emit(IR_HOTPATCH_ROUTE, dest, func_ni, first_arg_var, ac);
@@ -1184,6 +1222,11 @@ fn gen_expr(node: int) -> int {
         var_ni := ast_a(node);
         type_node := ast_b(node);
         val_node := ast_c(node);
+        // Detect dyn variable (type annotation is `dyn`)
+        is_dyn_var : ., mut = 0;
+        if type_node >= 0 && ast_kind(type_node) == 0 && ast_type_val(type_node) == TI_DYN {
+            is_dyn_var = 1;
+        }
         var := new_ir_var(istr_get(var_ni), TI_UNIT);
         is_arr : ., mut = 0;
         if type_node >= 0 && val_node < 0 {
@@ -1192,9 +1235,21 @@ fn gen_expr(node: int) -> int {
                 if sz > 0 { emit(IR_ALLOC_ARRAY, var, sz, 8, 0, 0); is_arr = 1; }
             }
         }
-        if is_arr == 0 { emit(IR_ALLOC, var, 0, 0, 0, TI_UNIT); }
+        // For dyn vars with initializer: skip allocation (value is packed below)
+        if is_dyn_var == 0 || val_node < 0 {
+            if is_arr == 0 { emit(IR_ALLOC, var, 0, 0, 0, TI_UNIT); }
+        }
         if val_node >= 0 {
             val_var := gen_expr(val_node);
+            if is_dyn_var != 0 {
+                // Dyn variable: pack value with its type tag
+                dyn_var := new_ir_var("_dyn", TI_DYN);
+                tag := irv_type(val_var);
+                if tag < 0 { tag = TI_INT; }
+                emit(IR_DYN_PACK, dyn_var, val_var, tag, 0, 0);
+                bind_local(var_ni, dyn_var);
+                return dyn_var;
+            }
             // Preserve the initializer type so later operations can select
             // type-specific lowering (notably string + -> concat()).
             irv_set_type(var, irv_type(val_var));
