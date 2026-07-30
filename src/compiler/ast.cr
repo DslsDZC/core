@@ -103,6 +103,7 @@ T_STR_TYPE : int = 94;
 T_AUTO_TYPE : int = 95;
 T_REF : int = 96;
 T_DYN : int = 99;  // dynamic type
+T_EXTERN : int = 100;  // extern "C" / foreign function declaration
 
 // Width constants (stored in EXPR_INT/EXPR_FLOAT data field)
 W_I8 : int = 1;
@@ -250,6 +251,7 @@ EXPR_UNSAFE : int = 34;   // a=block body
 EXPR_STRUCTPAT : int = 35; // struct pattern: a=name ni, b=first field pat, c=field count
 EXPR_AS : int = 36;        // a=expr, b=type node (cast: expr as Type)
 EXPR_PTRTYPE : int = 47;  // a=inner_type (for *T in type position)
+EXPR_EXTERN : int = 48;  // a=name_ni, b=first_param, c=param_count, data=ffi_lang_ni
 
 // Field representation in struct literal: two consecutive AST nodes
 // (name_idx, value_idx, line=line, col=col)
@@ -565,6 +567,7 @@ IR_DYN_TAG      : int = 41;  // dest=tag_var, s1=dyn_var — extract tag
 IR_DYN_VAL      : int = 42;  // dest=val_var, s1=dyn_var — extract value
 IR_DYN_PACK     : int = 43;  // dest=dyn_var, s1=val_var, s2=type_idx — pack dyn
 IR_DYN_DISPATCH : int = 44;  // s1=dyn_var, s2=dispatch_table_ni — dispatch by tag
+IR_CALL_EXTERN : int = 45;  // dest=result_var, s1=func_name_ni, s2=first_arg, s3=arg_count
 
 // Resolution flag for BRANCH/JUMP (stored in type_kind field after label resolution)
 IR_RESOLVED : int = 1;
