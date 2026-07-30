@@ -15,7 +15,7 @@ fn g2_init() {
     g_x86_emit_stack_size = 0;
     g_x86_ret_patch_count = 0;
     // g_x86_alloc_patch_count NOT reset: alloc calls are patched after all funcs.
-    g_x86_ext_rel_count = 0;
+    // g_x86_ext_rel_count NOT reset: extern relocations span all functions.
     // g_x86_rip_patch_count NOT reset
 }
 
@@ -583,6 +583,21 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
                 e2_w32(buf, pos+cp+3, stack_bytes); cp = cp + 7;
             }
         }
+        return cp;
+    }
+
+    if op == IR_CALL_EXTERN {
+        do2 := g2_slot(d);
+        name_ni := s1;
+        // Record external relocation
+        grow_ext_rel(g_x86_ext_rel_count + 1);
+        w64(g_x86_ext_rel_pos, g_x86_ext_rel_count * 8, pos + cp);
+        w64(g_x86_ext_rel_name, g_x86_ext_rel_count * 8, name_ni);
+        g_x86_ext_rel_count = g_x86_ext_rel_count + 1;
+        // Emit call placeholder (E8 + rel32 = 0, patched later)
+        e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;
+        // Store return value from rax
+        cp = cp + e2_st(buf, pos+cp, 0, do2);
         return cp;
     }
 

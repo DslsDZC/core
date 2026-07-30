@@ -59,6 +59,7 @@ fn instr_size(op: int) -> int {
     if op == IR_FAST           { return 0; }
     if op == IR_UNROLL         { return 0; }
     if op == IR_SECTION        { return 0; }
+    if op == IR_CALL_EXTERN    { return 9; }  // call(5) + store(4) = 9 bytes
     if op == IR_HOTPATCH_ROUTE { return 9; }  // call(5) + store(4) = 9 bytes
     if op == IR_DYN_PACK      { return 16; }  // load_var + st + li (value+tag pack)
     if op == IR_DYN_TAG       { return 8; }   // ld(off+8) + st
