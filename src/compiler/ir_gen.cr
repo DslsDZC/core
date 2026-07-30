@@ -961,6 +961,17 @@ fn gen_expr(node: int) -> int {
             emit(IR_HOTPATCH_ROUTE, dest, func_ni, first_arg_var, ac);
             return dest;
         }
+        // Extern function call: emit IR_CALL_EXTERN for FFI dispatch
+        if func_ni >= 0 {
+            fi := find_func(func_ni);
+            if fi >= 0 {
+                fn_node := fi_ast_node(fi);
+                if fn_node >= 0 && ast_kind(fn_node) == EXPR_EXTERN {
+                    emit(IR_CALL_EXTERN, dest, func_ni, first_arg_var, ac, 0);
+                    return dest;
+                }
+            }
+        }
         emit(IR_CALL, dest, first_arg_var, ac, func_ni, 0);
         return dest;
     }
