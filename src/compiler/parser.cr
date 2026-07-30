@@ -1205,6 +1205,24 @@ fn parse_body(fn_name: string, fn_ni: int, fn_line: int, fn_col: int, hotpatch_v
             pstore_n = pstore_n + 1; } }
 }
 
+fn parse_ffi_annotation() -> int {
+    // Current token is T_AT; consume it and parse @ffi("lang")
+    advance_tok(); // skip @
+    if tok_k(cur_tok()) != T_IDENT { add_error("expected ffi"); return -1; }
+    lex := tok_lx(cur_tok());
+    if str_eq(lex, "ffi") == 0 { add_error("expected ffi"); return -1; }
+    advance_tok();
+    // Expect ( "lang_name" )
+    if tok_k(cur_tok()) != T_LPAREN { add_error("expected ("); return -1; }
+    advance_tok();
+    if tok_k(cur_tok()) != T_STRING { add_error("expected string literal for FFI language"); return -1; }
+    lang_ni := str_intern(tok_lx(cur_tok()));
+    advance_tok();
+    if tok_k(cur_tok()) != T_RPAREN { add_error("expected )"); return -1; }
+    advance_tok();
+    return lang_ni;
+}
+
 fn parse_declaration() {
     hotpatch_ver : ., mut = 0;
 
@@ -1212,7 +1230,7 @@ fn parse_declaration() {
     if check(T_AT) {
         saved_ast := g_ast_count;
         annotation := parse_expr();
-        if check(T_FN) || check(T_FLOW) || check(T_PUB) {
+        if check(T_FN) || check(T_FLOW) || check(T_PUB) || check(T_EXTERN) {
             k := ast_kind(annotation);
             if k == EXPR_CALL {
                 callee := ast_a(annotation);
@@ -1237,6 +1255,57 @@ fn parse_declaration() {
 
     ip : ., mut = 0;
     if check(T_PUB) { ip = 1; advance_tok(); }
+
+    // extern fn declaration (FFI)
+    if check(T_EXTERN) {
+        t := cur_tok();
+        advance_tok();
+        ffi_lang_ni : ., mut = -1;
+        // Check for @ffi("...")
+        if check(T_AT) {
+            ffi_lang_ni = parse_ffi_annotation();
+        }
+        // Expect fn keyword
+        if tok_k(cur_tok()) != T_FN {
+            add_error("expected 'fn' after extern");
+            return;
+        }
+        advance_tok();
+        // Parse function name
+        nt := advance_tok();
+        name := tok_lx(nt);
+        fn_name_ni := str_intern(name);
+        // Parse param list: (name: type, ...)
+        advance_tok(); // (
+        first_param : ., mut = -1;
+        param_count : ., mut = 0;
+        if !check(T_RPAREN) {
+            loop {
+                pt := advance_tok();
+                pn := str_intern(tok_lx(pt));
+                advance_tok(); // :
+                pty := parse_type();
+                if first_param < 0 { first_param = g_ast_count; }
+                alloc_node(EXPR_PARAM, pn, 0, 0, 0, unpack_type(pty), pty, tok_ln(pt), tok_cl(pt));
+                param_count = param_count + 1;
+                if !check(T_COMMA) { break; }
+                advance_tok();
+            }
+        }
+        advance_tok(); // )
+        // Parse return type (optional, defaults to unit)
+        ret_type : ., mut = TY_UNIT;
+        if check(T_ARROW) {
+            advance_tok();
+            ret_node := parse_type();
+            ret_type = unpack_type(ret_node);
+        }
+        // Create EXPR_EXTERN node (no body)
+        node : ., mut = alloc_node(EXPR_EXTERN, fn_name_ni, first_param, param_count, 0, ret_type, ffi_lang_ni, tok_ln(t), tok_cl(t));
+        // Consume semicolon
+        if check(T_SEMI) { advance_tok(); }
+        return;
+    }
 
     // fn / flow
     if check(T_FN) || check(T_FLOW) {

@@ -54,6 +54,7 @@ class TokenType(Enum):
     UNIT = auto()
     NONE = auto()
     SOME = auto()
+    EXTERN = auto()
 
     # 符号
     FAT_ARROW = auto()
@@ -133,6 +134,7 @@ KEYWORDS = {
     "auto": TokenType.AUTO,
     "true": TokenType.TRUE,
     "false": TokenType.FALSE,
+    "extern": TokenType.EXTERN,
     "unit": TokenType.UNIT,
     "None": TokenType.NONE,
     "Some": TokenType.SOME,

@@ -74,6 +74,7 @@ fn lookup_keyword(s: string) -> int {
     if s == "false" { return T_FALSE; }
     if s == "struct" { return T_STRUCT; }
     if s == "enum" { return T_ENUM; }
+    if s == "extern" { return T_EXTERN; }
     if s == "impl" { return T_IMPL; }
     if s == "match" { return T_MATCH; }
     if s == "import" { return T_IMPORT; }
