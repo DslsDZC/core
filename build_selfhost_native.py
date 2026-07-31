@@ -28,6 +28,13 @@ def concat(files, wrapper_fn=None):
             with open(path) as fh:
                 content = fh.read().strip()
                 if content:
+                    # This build creates one flat compilation unit from an explicit
+                    # dependency closure, so per-file imports would appear after
+                    # declarations and are both invalid and redundant.
+                    content = '\n'.join(
+                        line for line in content.splitlines()
+                        if not line.strip().startswith('import ')
+                    )
                     parts.append(f"// === {f} ===\n{content}")
     src = '\n\n'.join(parts)
     if wrapper_fn:
@@ -115,6 +122,7 @@ def main():
     # corec — frontend: .cr → .ccr/.cir
     compile_and_assemble(
         concat([
+            'src/runtime/arena_globals.cr',
             'src/runtime/rt.cr',
             'src/stdlib/io.cr',
             'src/stdlib/fmt.cr',
@@ -139,6 +147,10 @@ def main():
             'src/compiler/module.cr',
             'src/stdlib/toml.cr',
             'src/stdlib/hotpatch.cr',
+            'src/stdlib/arena.cr',
+            'src/stdlib/goroutine.cr',
+            'src/stdlib/chan.cr',
+            'src/stdlib/sched.cr',
             'src/compiler/project.cr',
             'src/stdlib/os.cr',
             'src/compiler/interp.cr',
@@ -154,6 +166,7 @@ def main():
     # corearch — backend: .ccr → binary/asm
     compile_and_assemble(
         concat([
+            'src/runtime/arena_globals.cr',
             'src/runtime/rt.cr',
             'src/stdlib/io.cr',
             'src/stdlib/fmt.cr',
@@ -170,6 +183,10 @@ def main():
             'src/compiler/ccr_io.cr',
             'src/compiler/monomorph.cr',
             'src/stdlib/hotpatch.cr',
+            'src/stdlib/arena.cr',
+            'src/stdlib/goroutine.cr',
+            'src/stdlib/chan.cr',
+            'src/stdlib/sched.cr',
             'src/compiler/corearch.cr',
         ], wrapper_fn='corearch_main'),
         label='corearch',

@@ -6,7 +6,11 @@
 
 // Magic header for .cir cache files
 CIR_CACHE_MAGIC : int = 0xC1C1C1C1C1C1C1C1;
-CIR_CACHE_VER   : int = 1;
+CIR_CACHE_VER   : int = 4;
+
+g_cir_write_buf : string, mut;
+g_cir_write_pos : int, mut;
+g_cir_write_cap : int, mut;
 
 // Save one function's DFG state to a .cir cache file.
 // path: full file path (including .core/cache/cir/ prefix)
@@ -24,6 +28,37 @@ fn save_cir_cache(path: string, func_idx: int) -> int {
     name := istr_get(name_ni);
     name_len := str_len(name);
 
+    var_start := r64(g_ir_func_var_start, func_idx * 8);
+    var_count := r64(g_ir_func_var_count, func_idx * 8);
+    node_start := r64(g_df_func_node_start, func_idx * 8);
+    node_count := r64(g_df_func_node_count, func_idx * 8);
+    instr_start := r64(g_ir_func_instr_start, func_idx * 8);
+    instr_count := r64(g_ir_func_instr_count, func_idx * 8);
+
+    // Serialize in memory and issue one write. The previous per-field writes
+    // made a full self-host build perform millions of syscalls on its cache.
+    total_size : ., mut = 40 + name_len;
+    total_size = total_size + 8 + var_count * 24;
+    total_size = total_size + 8 + node_count * 64;
+    total_size = total_size + 8 + g_df_edge_count * 24;
+    total_size = total_size + 8 + instr_count * 48;
+    total_size = total_size + 8;
+    size_si : ., mut = 0;
+    loop {
+        if size_si >= g_ir_str_const_count { break; }
+        size_ni := r64(g_ir_str_consts, size_si * 8);
+        total_size = total_size + 8 + str_len(istr_get(size_ni));
+        size_si = size_si + 1;
+    }
+    if total_size > g_cir_write_cap {
+        new_cap := g_cir_write_cap * 2;
+        if new_cap < 4096 { new_cap = 4096; }
+        if new_cap < total_size { new_cap = total_size; }
+        g_cir_write_buf = alloc(new_cap);
+        g_cir_write_cap = new_cap;
+    }
+    g_cir_write_pos = 0;
+
     // Write header
     w64_cir(fd, CIR_CACHE_MAGIC);
     w64_cir(fd, CIR_CACHE_VER);
@@ -33,8 +68,6 @@ fn save_cir_cache(path: string, func_idx: int) -> int {
     write_fd(fd, name, name_len);
 
     // Determine var range for this function
-    var_start := r64(g_ir_func_var_start, func_idx * 8);
-    var_count := r64(g_ir_func_var_count, func_idx * 8);
     w64_cir(fd, var_count);
     vi : ., mut = 0;
     loop {
@@ -47,8 +80,6 @@ fn save_cir_cache(path: string, func_idx: int) -> int {
     }
 
     // Write function's node range
-    node_start := r64(g_df_func_node_start, func_idx * 8);
-    node_count := r64(g_df_func_node_count, func_idx * 8);
     w64_cir(fd, node_count);
     ni2 : ., mut = 0;
     loop {
@@ -78,8 +109,6 @@ fn save_cir_cache(path: string, func_idx: int) -> int {
     }
 
     // Write function's instruction range
-    instr_start := r64(g_ir_func_instr_start, func_idx * 8);
-    instr_count := r64(g_ir_func_instr_count, func_idx * 8);
     w64_cir(fd, instr_count);
     ii : ., mut = 0;
     loop {
@@ -110,25 +139,31 @@ fn save_cir_cache(path: string, func_idx: int) -> int {
         si = si + 1;
     }
 
+    written := syscall3(1, fd, g_cir_write_buf, g_cir_write_pos);
     syscall3(3, fd, 0, 0);
+    if written != g_cir_write_pos { return -1; }
     return 0;
 }
 
-// Write helpers for syscall-based file I/O
+// Write helpers for the in-memory cache serializer.
 fn w64_cir(fd: int, val: int) {
-    buf := alloc(8);
-    w64(buf, 0, val);
-    syscall3(1, fd, buf, 8);
+    w64(g_cir_write_buf, g_cir_write_pos, val);
+    g_cir_write_pos = g_cir_write_pos + 8;
 }
 
 fn w8_cir(fd: int, val: int) {
-    b := alloc(1);
-    store8(b, 0, val);
-    syscall3(1, fd, b, 1);
+    store8(g_cir_write_buf, g_cir_write_pos, val);
+    g_cir_write_pos = g_cir_write_pos + 1;
 }
 
 fn write_fd(fd: int, data: string, len: int) {
-    if len > 0 { syscall3(1, fd, data, len); }
+    write_pos : ., mut = 0;
+    loop {
+        if write_pos >= len { break; }
+        store8(g_cir_write_buf, g_cir_write_pos, load8(data, write_pos));
+        g_cir_write_pos = g_cir_write_pos + 1;
+        write_pos = write_pos + 1;
+    }
 }
 
 // Load a .cir cache file and restore DFG state.

@@ -45,7 +45,6 @@ class TokenType(Enum):
     UNSAFE = auto()
     REQUIRES = auto()
     ENSURES = auto()
-    OLD = auto()
     RESULT = auto()
     SELF = auto()
     SELF_TYPE = auto()
@@ -127,7 +126,6 @@ KEYWORDS = {
     "unsafe": TokenType.UNSAFE,
     "requires": TokenType.REQUIRES,
     "ensures": TokenType.ENSURES,
-    "old": TokenType.OLD,
     "result": TokenType.RESULT,
     "self": TokenType.SELF,
     "Self": TokenType.SELF_TYPE,

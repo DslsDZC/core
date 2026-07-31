@@ -592,6 +592,9 @@ class X86_64StackAsmGen:
             self.emit(".section .data")
             for name, g in global_vars.items():
                 lbl = self._global_label(name)
+                # Runtime assembly links as a separate object and accesses Core
+                # globals through the backend's mangled symbol names.
+                self.emit(f".globl {lbl}")
                 cv = getattr(g, 'constant_value', None)
                 if cv is not None:
                     self.emit(f"{lbl}: .quad {cv}")

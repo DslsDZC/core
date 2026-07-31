@@ -37,9 +37,13 @@ def main() -> int:
         (project / "Core.toml").write_text(
             'name = "directory_build_smoke"\n', encoding="utf-8"
         )
+        (project / "_import.cr").write_text("import helper\n", encoding="utf-8")
+        (project / "helper.cr").write_text(
+            "fn imported_result() -> int { return 23; }\n", encoding="utf-8"
+        )
         (project / "main.cr").write_text(
             "fn runtime_symbol_visible() -> string { return g_heap_ptr; }\n"
-            "fn main() -> int { return 23; }\n",
+            "fn main() -> int { return imported_result(); }\n",
             encoding="utf-8",
         )
 
@@ -63,8 +67,30 @@ def main() -> int:
         run_result = subprocess.run([str(output)], cwd=project, timeout=30)
         if run_result.returncode != 23:
             print(f"[FAIL] directory output returned {run_result.returncode}, expected 23")
+            print(result.stdout)
+            print(result.stderr)
             return 1
-        print("[PASS] `corec build .` uses the Core.toml name and emits a working ELF")
+        print(
+            "[PASS] `corec build .` resolves _import.cr and emits a working ELF"
+        )
+
+        (project / "helper.cr").write_text(
+            "fn imported_result() -> int { return 25; }\n", encoding="utf-8"
+        )
+        rebuilt = run_corec(["build", ".", "--static", "-O", "0"], project)
+        if rebuilt.returncode != 0:
+            print(f"[FAIL] changed import rebuild exited {rebuilt.returncode}")
+            print(rebuilt.stdout)
+            print(rebuilt.stderr)
+            return 1
+        rebuilt_run = subprocess.run([str(output)], cwd=project, timeout=30)
+        if rebuilt_run.returncode != 25:
+            print(
+                f"[FAIL] changed import reused stale IR: got "
+                f"{rebuilt_run.returncode}, expected 25"
+            )
+            return 1
+        print("[PASS] imported source changes invalidate the function cache")
 
         unnamed = TEST_BUILD / "unnamed-directory"
         unnamed.mkdir()

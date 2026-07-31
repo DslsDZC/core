@@ -1720,7 +1720,7 @@ fn infer_expr(node: int) -> int {
         }
         // --- Dyn type set merge: save pre-if state ---
         pre_dyn_count : ., mut = g_dyn_type_set_count;
-        pre_dyn_save : string, mut = 0;
+        pre_dyn_save : string, mut = "";
         if pre_dyn_count > 0 {
             pre_dyn_save = alloc(pre_dyn_count * 8);
             _dyncpy(g_dyn_type_sets, pre_dyn_count * 8, pre_dyn_save);
@@ -1731,7 +1731,7 @@ fn infer_expr(node: int) -> int {
         pop_borrow_scope();
         // --- Save then-branch dyn state ---
         then_dyn_count : ., mut = g_dyn_type_set_count;
-        then_dyn_save : string, mut = 0;
+        then_dyn_save : string, mut = "";
         if then_dyn_count > 0 {
             then_dyn_save = alloc(then_dyn_count * 8);
             _dyncpy(g_dyn_type_sets, then_dyn_count * 8, then_dyn_save);
@@ -2336,7 +2336,7 @@ fn check_all() {
     g_gen_apply_data_count = 0;
     g_gen_apply_data_cap = 0;
     g_gen_param_count = 0; g_gen_param_cap = 0;
-    g_dyn_type_set_count = 0; g_dyn_type_set_cap = 0; g_dyn_type_sets = 0;
+    g_dyn_type_set_count = 0; g_dyn_type_set_cap = 0; g_dyn_type_sets = "";
 
     // First pass: collect declarations
     collect_decls();
