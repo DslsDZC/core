@@ -947,6 +947,18 @@ fn gen_expr(node: int) -> int {
                 return -1;
             }
 
+            // @addr(fn): get function address (patched at ELF link time)
+            if str_eq(name, "addr") != 0 {
+                fn_expr := ast_a(first_arg);
+                if ast_kind(fn_expr) == EXPR_IDENT {
+                    fn_ni := ast_int_val(fn_expr);
+                    v := new_ir_var("_fnaddr", TI_INT);
+                    emit(IR_FNADDR, v, fn_ni, 0, 0, 0);
+                    return v;
+                }
+                return -1;
+            }
+
             return -1;
         }
 

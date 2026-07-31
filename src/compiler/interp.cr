@@ -175,6 +175,11 @@ fn ir_interpret() -> int {
             if s1 >= 0 { w64(g_ir_vals, d * 8, r64(g_ir_vals, s1 * 8)); }
         }
 
+        // IR_FNADDR — no real addresses in the interpreter; dest = 0
+        if op == 48 {
+            if d >= 0 { w64(g_ir_vals, d * 8, 0); }
+        }
+
         // IR_STORE_PTR
         if op == 26 { if d >= 0 && s1 >= 0 { w64(g_ir_vals, s1 * 8, r64(g_ir_vals, d * 8)); } }
 

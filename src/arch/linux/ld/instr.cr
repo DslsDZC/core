@@ -626,6 +626,23 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
         return cp;
     }
 
+    if op == IR_FNADDR {
+        // Load function address into dest: movabs r10, imm64 + store.
+        // The imm64 is a placeholder patched in Phase 3 (after all functions
+        // are placed) with the function's absolute VA (TEXT_BASE + buf pos).
+        do2 := g2_slot(d);
+        name_ni := s1;
+        grow_fnaddr_patch(g_x86_fnaddr_patch_count + 1);
+        w64(g_x86_fnaddr_patch_pos, g_x86_fnaddr_patch_count * 8, pos + cp);
+        w64(g_x86_fnaddr_patch_name, g_x86_fnaddr_patch_count * 8, name_ni);
+        g_x86_fnaddr_patch_count = g_x86_fnaddr_patch_count + 1;
+        e2_w8(buf, pos+cp, 73); e2_w8(buf, pos+cp+1, 187);  // movabs r10, imm64
+        e2_w64(buf, pos+cp+2, 0);  // placeholder — patched in elf.cr Phase 3
+        cp = cp + 10;
+        cp = cp + e2_st(buf, pos+cp, 10, do2);
+        return cp;
+    }
+
     if op == IR_RETURN {
         if s1 >= 0 {
             if r64(g_x86_is_global, s1 * 8) != 0 {

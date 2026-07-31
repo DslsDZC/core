@@ -446,6 +446,7 @@ fn pass_cse() {
             if op == IR_CALL_EXTERN { ii = ii + 1; continue; }
             if op == IR_LAZY_THUNK { ii = ii + 1; continue; }
             if op == IR_LAZY_FORCE { ii = ii + 1; continue; }
+            if op == IR_FNADDR { ii = ii + 1; continue; }
 
             // Only CSE for pure computations: BINARY, UNARY
             if (op == IR_BINARY || op == IR_UNARY) && d >= 0 {

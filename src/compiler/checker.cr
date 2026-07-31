@@ -2225,6 +2225,12 @@ fn infer_expr(node: int) -> int {
             return TI_INT;
         }
 
+        // @addr(fn) — function address, type int
+        if str_eq(name, "addr") != 0 {
+            ast_set_type_val(node, TI_INT);  // function address is an int
+            return TI_INT;
+        }
+
         // @alignOf(T) — 1 type argument
         if str_eq(name, "alignOf") != 0 {
             if args < 0 { check_error(EC_N_UNDEFINED, "@alignOf requires a type argument", ast_line(node), ast_col(node)); return TI_NEVER; }

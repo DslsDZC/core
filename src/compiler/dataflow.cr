@@ -398,6 +398,7 @@ fn df_opcode_name(opcode: int, s3: int) -> string {
     if opcode == IR_STORE_PTR { return "store_ptr"; }
     if opcode == IR_SPAWN { return "spawn"; }
     if opcode == IR_YIELD { return "yield"; }
+    if opcode == IR_FNADDR { return "fnaddr"; }
     if opcode == IR_ARENA_NEW { return "arena_new"; }
     if opcode == IR_ARENA_RESET { return "arena_reset"; }
     if opcode == IR_INLINE { return "inline"; }

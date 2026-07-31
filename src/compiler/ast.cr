@@ -570,6 +570,7 @@ IR_DYN_DISPATCH : int = 44;  // s1=dyn_var, s2=dispatch_table_ni — dispatch by
 IR_CALL_EXTERN : int = 45;  // dest=result_var, s1=func_name_ni, s2=first_arg, s3=arg_count
 IR_LAZY_THUNK  : int = 46;  // dest=thunk_var, s1=expr_var — wrap as lazy thunk
 IR_LAZY_FORCE  : int = 47;  // dest=val_var, s1=thunk_var — force evaluation
+IR_FNADDR : int = 48;  // dest=addr_var, s1=fn_name_ni — load function address (movabs + link-time patch)
 
 // Resolution flag for BRANCH/JUMP (stored in type_kind field after label resolution)
 IR_RESOLVED : int = 1;

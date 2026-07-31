@@ -108,6 +108,8 @@ g_x86_emit_vars : string, mut;          g_x86_emit_vars_cap : int, mut; g_x86_em
 g_x86_ret_patch_pos : string, mut;      g_x86_ret_patch_cap : int, mut; g_x86_ret_patch_count : int, mut;
 g_x86_call_patch_pos : string, mut;     g_x86_call_patch_name : string, mut;
 g_x86_call_patch_count : int, mut;      g_x86_call_patch_cap : int, mut;
+g_x86_fnaddr_patch_pos : string, mut;   g_x86_fnaddr_patch_name : string, mut;
+g_x86_fnaddr_patch_count : int, mut;    g_x86_fnaddr_patch_cap : int, mut;
 g_x86_sub_rsp_pos : int, mut;
 g_x86_alloc_patch_pos : string, mut;    g_x86_alloc_patch_cap : int, mut; g_x86_alloc_patch_count : int, mut;
 g_x86_emit_rt_stubs : int, mut;         // 1 = pure-static: backend emits g_set_curg/g_get_curg stubs

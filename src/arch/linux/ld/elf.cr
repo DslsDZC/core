@@ -769,6 +769,7 @@ fn elf_gen(buf: string) -> int {
     g_x86_rip_patch_count = 0;
     g_x86_rodataref_count = 0;
     g_x86_alloc_patch_count = 0;
+    g_x86_fnaddr_patch_count = 0;
 
     println("  elf: Phase 1 (rodata layout)...");
     // Phase 1: rodata layout — collect string constants
@@ -933,6 +934,7 @@ fn elf_gen(buf: string) -> int {
     // ── All functions ──
     g_x86_ret_patch_count = 0;
     g_x86_call_patch_count = 0;
+    g_x86_fnaddr_patch_count = 0;
     g_x86_rodataref_count = 0;
     g_x86_alloc_patch_count = 0;
     g_x86_ext_rel_count = 0;
@@ -1199,6 +1201,37 @@ fi = 0; loop { if fi >= g_ir_func_count { break; }
         }
     cpi = cpi + 1; }
     g_x86_call_patch_count = 0;
+
+    // ── Patch function addresses (IR_FNADDR movabs placeholders) ──
+    // Each placeholder is a movabs r10, imm64 at an absolute buffer position.
+    // Resolve the same way as call patches: user functions by name in
+    // g_ir_func_name_idx/g_x86_func_cp, builtins via g_x86_func_offsets.
+    fpi := 0; loop { if fpi >= g_x86_fnaddr_patch_count { break; }
+        fp_pos := r64(g_x86_fnaddr_patch_pos, fpi * 8);
+        fn_ni := r64(g_x86_fnaddr_patch_name, fpi * 8);
+        fn_va : ., mut = 0;
+        fcfi : ., mut = 0;
+        loop { if fcfi >= g_ir_func_count { break; }
+            name_at := r64(g_ir_func_name_idx, fcfi * 8);
+            if str_eq(istr_get(name_at), istr_get(fn_ni)) != 0 {
+                func_cp := r64(g_x86_func_cp, fcfi * 8);
+                if func_cp > 0 { fn_va = TEXT_BASE + func_cp; }
+                break; }
+        fcfi = fcfi + 1; }
+        // Fallback: search g_x86_func_offsets for builtins
+        if fn_va == 0 {
+            bfi3 : ., mut = 0;
+            loop { if bfi3 >= g_x86_func_off_count { break; }
+                if str_eq(istr_get(r64(g_x86_func_offsets, bfi3*16)), istr_get(fn_ni)) != 0 {
+                    func_off := r64(g_x86_func_offsets, bfi3*16+8);
+                    target_pos := 176 + func_off;
+                    if target_pos > 0 && target_pos < cp { fn_va = TEXT_BASE + target_pos; }
+                    break; }
+            bfi3 = bfi3 + 1; }
+        }
+        if fn_va > 0 { w64(buf, fp_pos + 2, fn_va); }  // imm64 placeholder starts after the 49 BB opcode
+    fpi = fpi + 1; }
+    g_x86_fnaddr_patch_count = 0;
 
     // Pad code to page boundary so RW segment doesn't share a page with RX
     // (kernel maps shared page with RW permissions → code becomes non-executable)
