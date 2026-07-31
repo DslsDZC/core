@@ -2,6 +2,14 @@
 import arena
 import sched
 
+// goroutine_wrapper_addr() — the address of goroutine_entry_wrapper
+// (rt.s / emitted by the ELF backend). The backend intercepts calls to
+// this name and emits movabs r10, <wrapper VA> (patched at link time),
+// so the stub body is never executed.
+fn goroutine_wrapper_addr() -> int {
+    return 0;
+}
+
 // Goroutine ID counter
 g_next_id : int, mut = 1;
 
@@ -25,8 +33,13 @@ fn g_new(entry_fn: int, arg: int, arg_type: int) -> int {
     // Create new arena for this goroutine
     aid := arena_new();
 
-    // Initialize fiber
-    sp := fiber_init(stack_top, entry_fn);
+    // Initialize fiber. The entry is ALWAYS goroutine_entry_wrapper
+    // (rt.s / emitted by the ELF backend): it reads saved_fn/saved_arg
+    // from this G (offsets 56/64), calls saved_fn(saved_arg), and sends
+    // the result to result_ch (offset 40). goroutine_wrapper_addr() is a
+    // backend builtin resolving the wrapper's VA at link time.
+    wrap_addr := goroutine_wrapper_addr();
+    sp := fiber_init(stack_top, wrap_addr);
 
     // Allocate G struct (80 bytes)
     g := alloc(80);

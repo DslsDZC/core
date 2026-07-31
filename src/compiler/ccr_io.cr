@@ -54,6 +54,24 @@ fn buf_read_i32(buf: string, pos: int) -> int {
     return val + b3 * 16777216;
 }
 
+fn buf_read_i64(buf: string, pos: int) -> int {
+    // Little-endian signed 64-bit. The low dword must be read UNSIGNED:
+    // reading it signed (buf_read_i32) would double-subtract for negatives
+    // (e.g. -7 = lo -7 + hi -1 → -7 + -2^32, not -7).
+    b0 := load8(buf, pos);
+    b1 := load8(buf, pos + 1);
+    b2 := load8(buf, pos + 2);
+    b3 := load8(buf, pos + 3);
+    lo := b0 + b1 * 256 + b2 * 65536 + b3 * 16777216;
+    h0 := load8(buf, pos + 4);
+    h1 := load8(buf, pos + 5);
+    h2 := load8(buf, pos + 6);
+    h3 := load8(buf, pos + 7);
+    hi : ., mut = h0 + h1 * 256 + h2 * 65536;
+    if h3 >= 128 { hi = hi + (h3 - 256) * 16777216; }
+    return lo + hi * 4294967296;
+}
+
 // --- Size calculation ---
 
 fn calc_ccr_size() -> int {
@@ -99,8 +117,8 @@ fn calc_ccr_size() -> int {
         ei = ei + 1;
     }
 
-    // globals: count + pairs of (name_idx, var_idx) = 8 bytes each
-    sz = sz + 4 + g_ir_global_count * 8;
+    // globals: count + triples of (name_idx, var_idx, init_val) = 16 bytes each
+    sz = sz + 4 + g_ir_global_count * 16;
 
     // optimization metadata: count + [key, data_len, data]
     sz = sz + 4;
@@ -123,7 +141,7 @@ fn save_ccr(path: string) -> int {
 
     // Magic + version
     buf_write_u32(buf, pos, CCR_MAGIC); pos = pos + 4;
-    buf_write_u32(buf, pos, 3); pos = pos + 4;
+    buf_write_u32(buf, pos, 4); pos = pos + 4;
 
     // Counts
     buf_write_u32(buf, pos, g_ir_func_count); pos = pos + 4;
@@ -237,13 +255,14 @@ fn save_ccr(path: string) -> int {
         ei = ei + 1;
     }
 
-    // Globals
+    // Globals: (name_idx u32, var_idx u32, init_val i64) = 16 bytes each
     buf_write_u32(buf, pos, g_ir_global_count); pos = pos + 4;
     gi : ., mut = 0;
     loop {
         if gi >= g_ir_global_count { break; }
-        buf_write_u32(buf, pos, r64(g_ir_globals, gi * 16)); pos = pos + 4;     // name_idx
-        buf_write_u32(buf, pos, r64(g_ir_globals, gi * 16 + 8)); pos = pos + 4; // var_idx
+        buf_write_u32(buf, pos, r64(g_ir_globals, gi * 24)); pos = pos + 4;     // name_idx
+        buf_write_u32(buf, pos, r64(g_ir_globals, gi * 24 + 8)); pos = pos + 4; // var_idx
+        w64(buf, pos, r64(g_ir_globals, gi * 24 + 16)); pos = pos + 8;          // init_val
         gi = gi + 1;
     }
 
@@ -289,7 +308,7 @@ fn load_ccr(data: string, fsize: int) -> int {
 
     // Version
     ver := buf_read_u32(data, pos); pos = pos + 4;
-    if ver != 1 && ver != 2 && ver != 3 { return -1; }
+    if ver != 1 && ver != 2 && ver != 3 && ver != 4 { return -1; }
 
     // Counts
     func_cnt := buf_read_u32(data, pos); pos = pos + 4;
@@ -483,8 +502,13 @@ fn load_ccr(data: string, fsize: int) -> int {
             if gi >= gc { break; }
             name_ni := buf_read_u32(data, pos); pos = pos + 4;
             var_idx := buf_read_u32(data, pos); pos = pos + 4;
-            w64(g_ir_globals, gi * 16, name_ni);
-            w64(g_ir_globals, gi * 16 + 8, var_idx);
+            init_val : ., mut = 0;
+            if ver >= 4 {
+                init_val = buf_read_i64(data, pos); pos = pos + 8;
+            }
+            w64(g_ir_globals, gi * 24, name_ni);
+            w64(g_ir_globals, gi * 24 + 8, var_idx);
+            w64(g_ir_globals, gi * 24 + 16, init_val);
             g_ir_global_count = gi + 1;
             gi = gi + 1;
         }

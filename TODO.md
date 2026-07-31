@@ -69,10 +69,12 @@
 - `corec build src/compiler` 在约 477 个函数完成 IR/缓存后耗尽 `rt.s` 的固定 1 GiB bump heap
 - 仅增加 mmap 扩容会让热缓存路径增长到约 7.6 GiB RSS 并触发 WSL OOM；需要按函数回收临时 IR/缓存数据，而不是继续扩大堆
 
-### 2. 并发集成未端到端验证
-- goroutine_entry_wrapper 在静态链接时符号解析待确认
-- M 线程 worker loop 未连到调度器完整测试
-- channel wait queue 链表操作未在并发下验证
+### 2. 并发集成：单 M 已端到端验证，多 M 未验证
+- ✅ `go f(args)` 端到端已通：`sched_go(@addr(f), arg)` → g_new 存 saved_fn/saved_arg → 静态构建由 ELF 后端内联发射 fiber_init/fiber_switch/goroutine_entry_wrapper（不再依赖 rt.s 链接）→ wrapper 调用 saved_fn(saved_arg) → 结果经 result_ch 回传
+- ✅ 主线程注册为 G 0，可经 channel 阻塞/唤醒；sched_yield 不再重排 Gwaiting
+- ⏳ M 线程 worker loop（m_start_workers）未连到调度器完整测试——静态构建尚未内联发射 m_start_workers（rt.s 符号）
+- ⏳ channel wait queue 链表操作未在多线程并发下验证
+- 注意：G 结构 offset 56 同时用作 saved_fn（goroutine.cr）与 temp_val（chan.cr 等待队列 handoff）——单 G 流程可用（wrapper 在 chan 操作前读取 saved_fn），但字段语义重叠，重构时需拆分
 
 ### 3. 解释器局限
 - **for 循环**: label/branch 与 dataflow 顺序执行不兼容

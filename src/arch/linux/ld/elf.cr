@@ -86,19 +86,19 @@ fn emit_alloc_body(buf: string, pos: int, bss_va: int, globals_size: int) -> int
     w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 1); w8(buf, pos+cp+2, 195); cp = cp + 3;
 
     // ── Load cursors + sizes (rdx must not be clobbered after this) ──
-    // lea r11, [rip + g_arena_cursors] — e2_lrb, rip_patch
+    // NB: r11 MUST keep chunk_start (pool_data + max_size*ai) — Part 5b/6
+    // depend on it. Load the cursors array into rdx directly.
+    // lea rdx, [rip + g_arena_cursors] — 48 8D 15, rip_patch
     rip_pos1 := pos + cp + 3;
-    cp = cp + e2_lrb(buf, pos + cp, 0);
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 21); e2_w32(buf, pos+cp+3, 0); cp = cp + 7;
     grow_rip_patch(g_x86_rip_patch_count + 1);
     w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, rip_pos1);
     w64(g_x86_rip_patch_globals, g_x86_rip_patch_count * 8, gv_arena_cursors);
     g_x86_rip_patch_count = g_x86_rip_patch_count + 1;
-    // mov r11, [r11] — 4D 8B 1B
-    w8(buf, pos+cp, 77); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 27); cp = cp + 3;
-    // mov rcx, [r11 + r10*8] — 4B 8B 0C D3
-    w8(buf, pos+cp, 75); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 12); w8(buf, pos+cp+3, 211); cp = cp + 4;
-    // mov rdx, r11 (save cursor pointer) — 49 8B D3
-    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 211); cp = cp + 3;
+    // mov rdx, [rdx] — 48 8B 12
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 18); cp = cp + 3;
+    // mov rcx, [rdx + r10*8] — 4A 8B 0C D2 (SIB: scale=3, index=r10, base=rdx)
+    w8(buf, pos+cp, 74); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 12); w8(buf, pos+cp+3, 210); cp = cp + 4;
     // lea r11, [rip + g_arena_sizes] — e2_lrb, rip_patch
     rip_pos2 := pos + cp + 3;
     cp = cp + e2_lrb(buf, pos + cp, 0);
@@ -525,6 +525,91 @@ fn emit_curg_stubs(buf: string, pos: int, curg_va: int) -> int {
     w8(buf, pos+cp, 195); cp = cp + 1;  // ret
     return cp;
 }
+// ── Goroutine runtime stubs (pure-static self-contained runtime) ──
+// rt.s equivalents emitted into the binary so `go f()` works without
+// linking rt.s: fiber_init, fiber_switch, goroutine_entry_wrapper.
+// The wrapper is the fiber entry for every G (g_new sets it via @addr);
+// it reads saved_fn/saved_arg from the G struct (offsets 56/64), calls
+// saved_fn(saved_arg), sends the result to result_ch (G+40), then yields
+// forever. chan_send/sched_yield are Core functions — recorded as call
+// patches resolved by the Phase 3 patch loop (user function names).
+fn emit_goroutine_stubs(buf: string, pos: int) -> int {
+    cp : ., mut = 0;
+
+    // fiber_init(stack_bottom, entry_fn) -> int — fake frame on the new stack.
+    // Layout: fiber_switch pops 6 regs (48 bytes) then ret reads
+    // [stack_bottom-8] — entry_fn MUST be at [stack_bottom-8]:
+    //   mov rax, rdi; sub rax, 8; mov [rax], rsi; sub rax, 48;
+    //   xor ecx, ecx; mov [rax], rcx; ret
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 248); cp = cp + 3;  // mov rax, rdi
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 131); w8(buf, pos+cp+2, 232); w8(buf, pos+cp+3, 8); cp = cp + 4;  // sub rax, 8
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 48); cp = cp + 3;  // mov [rax], rsi
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 131); w8(buf, pos+cp+2, 232); w8(buf, pos+cp+3, 48); cp = cp + 4;  // sub rax, 48
+    w8(buf, pos+cp, 49); w8(buf, pos+cp+1, 201); cp = cp + 2;  // xor ecx, ecx
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 8); cp = cp + 3;  // mov [rax], rcx
+    w8(buf, pos+cp, 195); cp = cp + 1;  // ret
+    // 20 bytes
+
+    // fiber_switch(current_sp_addr, next_sp) -> int — save/restore context:
+    //   push rbx,r12-r15,rbp; mov [rdi], rsp; mov rsp, rsi; pop rbp,r15-r12,rbx; ret
+    w8(buf, pos+cp, 83); cp = cp + 1;  // push rbx
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 84); cp = cp + 2;  // push r12
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 85); cp = cp + 2;  // push r13
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 86); cp = cp + 2;  // push r14
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 87); cp = cp + 2;  // push r15
+    w8(buf, pos+cp, 85); cp = cp + 1;  // push rbp
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 39); cp = cp + 3;  // mov [rdi], rsp
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 244); cp = cp + 3;  // mov rsp, rsi
+    w8(buf, pos+cp, 93); cp = cp + 1;  // pop rbp
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 95); cp = cp + 2;  // pop r15
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 94); cp = cp + 2;  // pop r14
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 93); cp = cp + 2;  // pop r13
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 92); cp = cp + 2;  // pop r12
+    w8(buf, pos+cp, 91); cp = cp + 1;  // pop rbx
+    w8(buf, pos+cp, 195); cp = cp + 1;  // ret
+    // 27 bytes
+
+    // goroutine_entry_wrapper — fiber entry, no prologue (runs on the G's stack):
+    //   call g_get_curg; rdi = [rax+64] (saved_arg — first param, SysV rdi);
+    //   rax = [rax+56] (saved_fn); call rax; push rax; call g_get_curg;
+    //   rdi = [rax+40] (result_ch); pop rsi; call chan_send;
+    //   loop: call sched_yield; jmp loop
+    call_pos0 := pos + cp;
+    grow_call_patch(g_x86_call_patch_count + 1);
+    w64(g_x86_call_patch_pos, g_x86_call_patch_count * 8, call_pos0);
+    w64(g_x86_call_patch_name, g_x86_call_patch_count * 8, str_intern("g_get_curg"));
+    g_x86_call_patch_count = g_x86_call_patch_count + 1;
+    e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;  // call g_get_curg
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 120); w8(buf, pos+cp+3, 64); cp = cp + 4;  // mov rdi, [rax+64]
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 64); w8(buf, pos+cp+3, 56); cp = cp + 4;  // mov rax, [rax+56]  (modrm 01 000 000 = 0x40 + disp8)
+    w8(buf, pos+cp, 255); w8(buf, pos+cp+1, 208); cp = cp + 2;  // call rax
+    w8(buf, pos+cp, 80); cp = cp + 1;  // push rax
+    call_pos1 := pos + cp;
+    grow_call_patch(g_x86_call_patch_count + 1);
+    w64(g_x86_call_patch_pos, g_x86_call_patch_count * 8, call_pos1);
+    w64(g_x86_call_patch_name, g_x86_call_patch_count * 8, str_intern("g_get_curg"));
+    g_x86_call_patch_count = g_x86_call_patch_count + 1;
+    e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;  // call g_get_curg
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 120); w8(buf, pos+cp+3, 40); cp = cp + 4;  // mov rdi, [rax+40]
+    w8(buf, pos+cp, 94); cp = cp + 1;  // pop rsi
+    call_pos2 := pos + cp;
+    grow_call_patch(g_x86_call_patch_count + 1);
+    w64(g_x86_call_patch_pos, g_x86_call_patch_count * 8, call_pos2);
+    w64(g_x86_call_patch_name, g_x86_call_patch_count * 8, str_intern("chan_send"));
+    g_x86_call_patch_count = g_x86_call_patch_count + 1;
+    e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;  // call chan_send
+    // yield loop (7 bytes): call sched_yield; jmp -7 back to the call
+    call_pos3 := pos + cp;
+    grow_call_patch(g_x86_call_patch_count + 1);
+    w64(g_x86_call_patch_pos, g_x86_call_patch_count * 8, call_pos3);
+    w64(g_x86_call_patch_name, g_x86_call_patch_count * 8, str_intern("sched_yield"));
+    g_x86_call_patch_count = g_x86_call_patch_count + 1;
+    e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;  // call sched_yield
+    w8(buf, pos+cp, 235); w8(buf, pos+cp+1, 249); cp = cp + 2;  // jmp -7 (back to call sched_yield)
+
+    return cp;
+}
+
 fn sched_reg_one(name: string, offset: int, cp: int) {
     grow_func_offsets(g_x86_func_off_count * 2 + 2);
     w64(g_x86_func_offsets, g_x86_func_off_count * 16, str_intern(name));
@@ -706,6 +791,34 @@ fn emit_start(buf: string, pos: int) -> int {
         e2_w32(buf, cp, -1); cp = cp + 4;      // immediate = -1 (0xFFFFFFFF)
     }
 
+    // Write compile-time constant global initializers (g_ir_globals[i].
+    // init_val, i64 at +16; 0 = none — BSS is already zero).
+    // g_current_arena is also covered by the explicit init above; the
+    // LET-based init below writes it again with the same value (harmless).
+    gi0 : ., mut = 0;
+    loop { if gi0 >= g_ir_global_count { break; }
+        iv := r64(g_ir_globals, gi0 * 24 + 16);
+        gvv0 := r64(g_ir_globals, gi0 * 24 + 8);
+        if iv != 0 && gvv0 >= 0 {
+            // lea r10, [rip+0] — rip_patch for the global's BSS slot
+            rip_pos_g := cp + 3;
+            cp = cp + e2_lr(buf, cp, 0);
+            grow_rip_patch(g_x86_rip_patch_count + 1);
+            w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, rip_pos_g);
+            w64(g_x86_rip_patch_globals, g_x86_rip_patch_count * 8, gvv0);
+            g_x86_rip_patch_count = g_x86_rip_patch_count + 1;
+            if iv >= -2147483647 - 1 && iv <= 2147483647 {
+                // mov qword [r10], imm32 (sign-extended) — 49 C7 02 imm32
+                w8(buf, cp, 73); w8(buf, cp+1, 199); w8(buf, cp+2, 2);
+                e2_w32(buf, cp+3, iv); cp = cp + 7;
+            } else {
+                // mov rax, imm64; mov [r10], rax
+                w8(buf, cp, 72); w8(buf, cp+1, 184); e2_w64(buf, cp+2, iv); cp = cp + 10;
+                w8(buf, cp, 73); w8(buf, cp+1, 137); w8(buf, cp+2, 2); cp = cp + 3;
+            }
+        }
+    gi0 = gi0 + 1; }
+
     g_call_main_pos = cp;
     cp = cp + e2_call(buf, cp, 0);  // call main
 
@@ -730,6 +843,17 @@ fn emit_start_size() -> int {
     if gv_argv >= 0 { sz = sz + sz_start_argv_save(); }
     // g_current_arena init: lea(7) + rex+mov+modrm+imm32(7) = 14 bytes
     if gv_current_arena >= 0 { sz = sz + 14; }
+    // Constant global initializers: lea r10(7) + mov imm32(7) = 14 bytes,
+    // or mov rax imm64 + mov [r10],rax = 20 bytes for large values.
+    gi0s : ., mut = 0;
+    loop { if gi0s >= g_ir_global_count { break; }
+        ivs := r64(g_ir_globals, gi0s * 24 + 16);
+        gvvs := r64(g_ir_globals, gi0s * 24 + 8);
+        if ivs != 0 && gvvs >= 0 {
+            if ivs >= -2147483647 - 1 && ivs <= 2147483647 { sz = sz + 14; }
+            else { sz = sz + 20; }
+        }
+    gi0s = gi0s + 1; }
     return sz;
 }
 
@@ -737,7 +861,7 @@ fn emit_start_size() -> int {
 fn elf_gen(buf: string) -> int {
     // Mark global variables for RIP-relative addressing
     gi := 0; loop { if gi >= g_ir_global_count { break; }
-        gv := r64(g_ir_globals, gi * 16 + 8);
+        gv := r64(g_ir_globals, gi * 24 + 8);
         if gv >= 0 { grow_is_global(gv + 1); w64(g_x86_is_global, gv * 8, 1); }
     gi = gi + 1; }
     grow_is_global(g_ir_var_count);
@@ -745,6 +869,7 @@ fn elf_gen(buf: string) -> int {
     g_ni_syscall3 = -1; g_ni_load8 = -1; g_ni_store8 = -1; g_ni_load64 = -1;
     g_ni_load_str_ptr = -1; g_ni_store_str_ptr = -1; g_ni_get_arg = -1;
     g_ni_w64 = -1; g_ni_dyncpy = -1; g_ni_r64 = -1;
+    g_ni_goroutine_wrapper_addr = -1;
     ni_i : ., mut = 0;
     loop { if ni_i >= g_str_count { break; }
         ns := istr_get(ni_i);
@@ -758,6 +883,7 @@ fn elf_gen(buf: string) -> int {
         if str_eq(ns, "get_arg") != 0 { g_ni_get_arg = ni_i; }
         if str_eq(ns, "w64") != 0 { g_ni_w64 = ni_i; }
         if str_eq(ns, "_dyncpy") != 0 { g_ni_dyncpy = ni_i; }
+        if str_eq(ns, "goroutine_wrapper_addr") != 0 { g_ni_goroutine_wrapper_addr = ni_i; }
     ni_i = ni_i + 1; }
 
     print("  ni: syscall3="); print(int_str(g_ni_syscall3));
@@ -789,18 +915,18 @@ fn elf_gen(buf: string) -> int {
     cur_ni8 := str_intern("g_hp_config"); cur_ni9 := str_intern("g_hp_inflight");
     gvsi : ., mut = 0;
     loop { if gvsi >= g_ir_global_count { break; }
-        ni := r64(g_ir_globals, gvsi * 16);
-        if ni == argc_ni { gv_argc = r64(g_ir_globals, gvsi * 16 + 8); }
-        if ni == argv_ni { gv_argv = r64(g_ir_globals, gvsi * 16 + 8); }
-        if ni == cur_ni { gv_current_arena = r64(g_ir_globals, gvsi * 16 + 8); }
-        if ni == cur_ni2 { gv_arena_cursors = r64(g_ir_globals, gvsi * 16 + 8); }
-        if ni == cur_ni3 { gv_arena_sizes = r64(g_ir_globals, gvsi * 16 + 8); }
-        if ni == cur_ni4 { gv_arena_pool_data = r64(g_ir_globals, gvsi * 16 + 8); }
-        if ni == cur_ni5 { gv_arena_max_size = r64(g_ir_globals, gvsi * 16 + 8); }
-        if ni == cur_ni6 { gv_heap_ptr = r64(g_ir_globals, gvsi * 16 + 8); }
-        if ni == cur_ni7 { gv_heap_end = r64(g_ir_globals, gvsi * 16 + 8); }
-        if ni == cur_ni8 { gv_hp_config = r64(g_ir_globals, gvsi * 16 + 8); }
-        if ni == cur_ni9 { gv_hp_inflight = r64(g_ir_globals, gvsi * 16 + 8); }
+        ni := r64(g_ir_globals, gvsi * 24);
+        if ni == argc_ni { gv_argc = r64(g_ir_globals, gvsi * 24 + 8); }
+        if ni == argv_ni { gv_argv = r64(g_ir_globals, gvsi * 24 + 8); }
+        if ni == cur_ni { gv_current_arena = r64(g_ir_globals, gvsi * 24 + 8); }
+        if ni == cur_ni2 { gv_arena_cursors = r64(g_ir_globals, gvsi * 24 + 8); }
+        if ni == cur_ni3 { gv_arena_sizes = r64(g_ir_globals, gvsi * 24 + 8); }
+        if ni == cur_ni4 { gv_arena_pool_data = r64(g_ir_globals, gvsi * 24 + 8); }
+        if ni == cur_ni5 { gv_arena_max_size = r64(g_ir_globals, gvsi * 24 + 8); }
+        if ni == cur_ni6 { gv_heap_ptr = r64(g_ir_globals, gvsi * 24 + 8); }
+        if ni == cur_ni7 { gv_heap_end = r64(g_ir_globals, gvsi * 24 + 8); }
+        if ni == cur_ni8 { gv_hp_config = r64(g_ir_globals, gvsi * 24 + 8); }
+        if ni == cur_ni9 { gv_hp_inflight = r64(g_ir_globals, gvsi * 24 + 8); }
     gvsi = gvsi + 1; }
 
     // Phase 2: compute sizes for all functions
@@ -1083,7 +1209,7 @@ fi = 0; loop { if fi >= g_ir_func_count { break; }
     max_gv : ., mut = 0;
     gsi : ., mut = 0;
     loop { if gsi >= g_ir_global_count { break; }
-        gvv := r64(g_ir_globals, gsi * 16 + 8);
+        gvv := r64(g_ir_globals, gsi * 24 + 8);
         if gvv >= 0 && gvv > max_gv { max_gv = gvv; }
     gsi = gsi + 1; }
     // globals_size = (max_var_idx + 1) * 8 ensures BSS covers all globals
@@ -1165,6 +1291,18 @@ fi = 0; loop { if fi >= g_ir_func_count { break; }
             if str_eq(nm2, "g_set_curg") != 0 { w64(g_x86_func_offsets, gsi2*16+8, g_curg_stub_start - 176); }
             if str_eq(nm2, "g_get_curg") != 0 { w64(g_x86_func_offsets, gsi2*16+8, g_curg_stub_start - 176 + 11); }
         gsi2 = gsi2 + 1; }
+    }
+
+    // ── Goroutine runtime stubs (fiber_init / fiber_switch / goroutine_entry_wrapper) ──
+    // Required by g_new → go f(): the wrapper is the fiber entry, fiber_init
+    // builds the fake frame, fiber_switch performs the context switch.
+    // Registered in func_offsets so IR_CALL (fiber_init/fiber_switch from
+    // Core) and IR_FNADDR (@addr(goroutine_entry_wrapper)) resolve here.
+    if g_x86_emit_rt_stubs != 0 {
+        sched_reg_one("fiber_init", 0, cp);
+        sched_reg_one("fiber_switch", 0, cp + 20);
+        sched_reg_one("goroutine_entry_wrapper", 0, cp + 47);
+        cp = cp + emit_goroutine_stubs(buf, cp);
     }
 
     // ── Patch forward calls using actual cp positions ──
@@ -1291,7 +1429,7 @@ fi = 0; loop { if fi >= g_ir_func_count { break; }
     // ── Allocate BSS for globals ──
     gi2 := 0; goff : ., mut = 0;
     loop { if gi2 >= g_ir_global_count { break; }
-        gv2 := r64(g_ir_globals, gi2 * 16 + 8);
+        gv2 := r64(g_ir_globals, gi2 * 24 + 8);
         if gv2 >= 0 { grow_global_off(gv2 + 1); w64(g_x86_global_off, gv2 * 8, goff); goff = goff + 8; }
     gi2 = gi2 + 1; }
 

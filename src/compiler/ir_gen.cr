@@ -95,7 +95,7 @@ fn find_global(name_idx: int) -> int {
     i : ., mut = g_ir_global_count - 1;
     loop {
         if i < 0 { return -1; }
-        if r64(g_ir_globals, i * 16) == name_idx { return r64(g_ir_globals, i * 16 + 8); }
+        if r64(g_ir_globals, i * 24) == name_idx { return r64(g_ir_globals, i * 24 + 8); }
         i = i - 1;
     }
     return -1;
@@ -151,6 +151,18 @@ fn is_ptr_var(var_idx: int) -> int {
        prod_op == IR_ALLOC_STRUCT || prod_op == IR_ALLOC_ARRAY {
         return 1;
     }
+    return 0;
+}
+
+fn is_byte_buf_var(var_idx: int) -> int {
+    // Raw byte buffers produced by alloc() (TI_UNIT internal sentinel,
+    // Core `string`) are byte-addressed: `buf + n` must NOT scale n by
+    // the 8-byte element size.
+    if var_idx < 0 { return 0; }
+    prod := r64(g_df_var_producer, var_idx * 8);
+    if prod < 0 { return 0; }
+    prod_op := r64(g_df_nodes, prod * ESZ_DFNODE + OFF_DF_OPCODE);
+    if prod_op == IR_ALLOC { return 1; }
     return 0;
 }
 
@@ -615,14 +627,19 @@ fn gen_expr(node: int) -> int {
             }
         }
         // Pointer arithmetic: use PTR_ADD/PTR_SUB/PTR_DIFF instead of standard opcodes
-        // Detection uses the producer node's opcode since irv_type stores TI_UNIT for pointers
-        if is_ptr_var(left_var) || is_ptr_var(right_var) {
-            if op == OP_ADD { op = OP_PTR_ADD; }
-            else if op == OP_SUB {
-                if is_ptr_var(left_var) && is_ptr_var(right_var) {
-                    op = OP_PTR_DIFF;
-                } else {
-                    op = OP_PTR_SUB;
+        // Detection uses the producer node's opcode since irv_type stores TI_UNIT for pointers.
+        // Raw byte buffers from alloc() are byte-addressed — plain ADD/SUB, no scaling.
+        if is_ptr_var(left_var) != 0 || is_ptr_var(right_var) != 0 {
+            buf_left := is_byte_buf_var(left_var);
+            buf_right := is_byte_buf_var(right_var);
+            if buf_left == 0 && buf_right == 0 {
+                if op == OP_ADD { op = OP_PTR_ADD; }
+                else if op == OP_SUB {
+                    if is_ptr_var(left_var) != 0 && is_ptr_var(right_var) != 0 {
+                        op = OP_PTR_DIFF;
+                    } else {
+                        op = OP_PTR_SUB;
+                    }
                 }
             }
         }
@@ -728,9 +745,9 @@ fn gen_expr(node: int) -> int {
     // Function call
     if ast_kind(node) == EXPR_GO {
         body := ast_b(node);
-        range_node := ast_data(node);  // -1 = single, EXPR_RANGE = range go
-        if range_node < 0 {
-            // Single go: emit call to sched_go(fn_ni, arg)
+        range_node := ast_data(node);  // 0 = single, EXPR_RANGE node = range go
+        if range_node <= 0 {
+            // Single go: emit call to sched_go(@addr(f), arg)
             // sched_go creates a goroutine via g_new + sched_enqueue and returns a channel
             if ast_kind(body) == EXPR_CALL {
                 func_node := ast_a(body);
@@ -747,21 +764,25 @@ fn gen_expr(node: int) -> int {
                     arg_var = gen_expr(ast_a(first_arg));
                     arg_var = force_if_thunk(arg_var);
                 }
-                // Create contiguous argument variables for sched_go call
-                // arg0 = fn_ni (function name index), arg1 = arg value (if any)
-                packed0 := new_ir_var("_fn_ni", TI_INT);
-                emit(IR_CONST, packed0, func_ni, 0, 0, TI_INT);
+                // Function address via IR_FNADDR — the movabs placeholder is
+                // patched to the function's absolute VA at ELF link time
+                // (elf.cr Phase 3). goroutine_entry_wrapper reads it back
+                // from G+56 (saved_fn) and calls saved_fn(saved_arg).
+                fnaddr_var := new_ir_var("_go_fnaddr", TI_INT);
+                emit(IR_FNADDR, fnaddr_var, func_ni, 0, 0, 0);
+                // Create contiguous argument variables for the sched_go call:
+                // arg0 = fn address, arg1 = arg value (0 when no arg)
+                packed0 := new_ir_var("_go_fna", TI_INT);
+                emit(IR_STORE, -1, packed0, fnaddr_var, 0, 0);
+                packed1 := new_ir_var("_go_arg", TI_INT);
                 if arg_var >= 0 {
-                    packed1 := new_ir_var("_sched_arg", TI_INT);
                     emit(IR_STORE, -1, packed1, arg_var, 0, 0);
-                }
-                dest := new_ir_var("_go_ch", TI_UNIT);
-                sched_go_ni := str_intern("sched_go");
-                if arg_var >= 0 {
-                    emit(IR_CALL, dest, packed0, 2, sched_go_ni, 0);
                 } else {
-                    emit(IR_CALL, dest, packed0, 1, sched_go_ni, 0);
+                    emit(IR_CONST, packed1, 0, 0, 0, TI_INT);
                 }
+                dest := new_ir_var("_go_ch", TI_INT);
+                sched_go_ni := str_intern("sched_go");
+                emit(IR_CALL, dest, packed0, 2, sched_go_ni, TI_INT);
                 return dest;
             }
             return gen_expr(body);
@@ -1662,19 +1683,51 @@ fn ir_gen_func(fi: int) {
 
 // --- Initialize global IR vars from global lets ---
 
+// Extract the compile-time constant initializer of a file-scope let
+// (0 = none/not constant — BSS is zero-initialized anyway).
+// NB: applies to mutable AND immutable lets (mut/const init values both
+// need to be written at startup — unlike find_global_const_node which
+// only folds immutable constants at compile time).
+fn global_init_val(name_idx: int) -> int {
+    i : ., mut = g_global_let_count - 1;
+    loop {
+        if i < 0 { break; }
+        node := r64(g_global_lets, i * 8);
+        if ast_a(node) == name_idx {
+            value_node := ast_c(node);
+            if value_node >= 0 {
+                vk := ast_kind(value_node);
+                if vk == EXPR_INT || vk == EXPR_BOOL {
+                    return ast_int_val(value_node);
+                }
+                if vk == EXPR_UNARY && ast_c(value_node) == UOP_NEG {
+                    inner := ast_a(value_node);
+                    if ast_kind(inner) == EXPR_INT || ast_kind(inner) == EXPR_BOOL {
+                        return 0 - ast_int_val(inner);
+                    }
+                }
+            }
+        }
+        i = i - 1;
+    }
+    return 0;
+}
+
 // Register one IR global, deduplicated by name_idx.
 fn reg_one_global(name_idx: int) {
     found : ., mut = 0;
     gi : ., mut = 0;
     loop { if gi >= g_ir_global_count { break; }
-        if r64(g_ir_globals, gi * 16) == name_idx { found = 1; break; }
+        if r64(g_ir_globals, gi * 24) == name_idx { found = 1; break; }
     gi = gi + 1; }
     if found == 0 {
         name := istr_get(name_idx);
         gvar := new_ir_var(name, TI_INT);
         grow_ir_globals(g_ir_global_count + 1);
-        w64(g_ir_globals, g_ir_global_count * 16, name_idx);
-        w64(g_ir_globals, g_ir_global_count * 16 + 8, gvar);
+        w64(g_ir_globals, g_ir_global_count * 24, name_idx);
+        w64(g_ir_globals, g_ir_global_count * 24 + 8, gvar);
+        // Const initializer — emitted by the ELF backend's _init_globals.
+        w64(g_ir_globals, g_ir_global_count * 24 + 16, global_init_val(name_idx));
         g_ir_global_count = g_ir_global_count + 1;
     }
 }

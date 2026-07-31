@@ -239,13 +239,13 @@ fiber_init:
     # RSP after fiber_switch pops these will be at entry_fn
 
     mov rax, rdi        # rax = stack_bottom
-    sub rax, 48         # Reserve space for callee-saved regs (6*8)
-    mov qword [rax], rsi      # Return address = entry_fn
-
-    # Clear registers for clean start
-    sub rax, 8          # Fake return address for when entry_fn returns
+    sub rax, 8          # [stack_bottom-8] = the return-address slot:
+    mov qword [rax], rsi      # fiber_switch pops 6 regs (48 bytes) then ret
+                        # reads [stack_bottom-8] — entry_fn must live there.
+    sub rax, 48         # [stack_bottom-56] = first pop slot (saved rbp)
     xor ecx, ecx
-    mov [rax], rcx      # entry_fn returns to 0 = crash (intentional)
+    mov [rax], rcx      # 0 — popped into rbp; the rest of the slots are
+                        # already zeroed by alloc's zero-init.
 
     ret
 
@@ -359,9 +359,9 @@ worker_entry:
 .type goroutine_entry_wrapper, @function
 goroutine_entry_wrapper:
     call g_get_curg       # rax = current G pointer
-    mov rdi, [rax + 56]   # rdi = saved_fn
-    mov rsi, [rax + 64]   # rsi = saved_arg
-    call rdi              # call saved_fn(saved_arg)
+    mov rdi, [rax + 64]   # rdi = saved_arg (first parameter — SysV rdi)
+    mov rax, [rax + 56]   # rax = saved_fn (G pointer no longer needed)
+    call rax              # call saved_fn(saved_arg)
     # rax = return value
     push rax
     call g_get_curg

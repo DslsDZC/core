@@ -218,7 +218,7 @@ fn grow_ir_locals(needed: int) {
 fn grow_ir_globals(needed: int) {
     if needed < g_ir_global_cap { return; }
     nc : ., mut = g_ir_global_cap * 2; if nc < 16 { nc = 16; } if nc < needed { nc = needed + 16; }
-    nb := alloc(nc * 16); _dyncpy(g_ir_globals, g_ir_global_cap * 16, nb);
+    nb := alloc(nc * 24); _dyncpy(g_ir_globals, g_ir_global_cap * 24, nb);
     g_ir_globals = nb; g_ir_global_cap = nc; }
 
 fn grow_ir_str_consts(needed: int) {

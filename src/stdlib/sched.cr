@@ -27,7 +27,23 @@ fn sched_init() {
     w64(m, 24, -1);    // runq_tail = empty
     g_machines = m;
     g_machine_count = 1;
-    g_set_curg(-1);    // current_g = none (mirrors M[0].cur_g)
+
+    // Register the main thread as G 0 so it can block/wake via channels.
+    // Its stack_ptr is filled in by fiber_switch the first time it yields
+    // (fiber_switch saves the current RSP into [G+16]).
+    main_g := alloc(80);
+    w64(main_g, 0, 0);     // id = 0
+    w64(main_g, 8, 1);     // _Grunning
+    w64(main_g, 16, 0);    // stack_ptr (filled on first yield)
+    w64(main_g, 24, 0);    // stack_lo (thread stack — no arena)
+    w64(main_g, 32, -1);   // arena_id = none
+    w64(main_g, 40, -1);   // chan_wait = none
+    w64(main_g, 48, -1);   // next = -1
+    w64(main_g, 56, 0);    // saved_fn = 0 (never dispatched by a wrapper)
+    w64(main_g, 64, 0);    // saved_arg = 0
+    w64(main_g, 72, 0);    // temp_val = 0
+    w64(m, 8, main_g);     // M[0].cur_g = main_g
+    g_set_curg(main_g);
     g_sched_inited = 1;
 }
 
@@ -60,10 +76,15 @@ fn sched_yield() {
     // Current goroutine yields
     cur_g := sched_get_curg();
 
-    // Re-enqueue current G
+    // Re-enqueue current G only if it is still runnable.
+    // Blocked (_Gwaiting) Gs stay on their channel wait lists until a
+    // sender/receiver handoff wakes them — re-enqueueing would double-schedule.
     if cur_g >= 0 {
-        w64(cur_g, 8, 0);  // _Grunnable
-        sched_enqueue(cur_g);
+        st := r64(cur_g, 8);
+        if st != 2 {  // not _Gwaiting
+            w64(cur_g, 8, 0);  // _Grunnable
+            sched_enqueue(cur_g);
+        }
     }
 
     // Schedule next

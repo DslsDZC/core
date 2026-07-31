@@ -547,6 +547,20 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
             e2_w8(buf, pos+cp, 72); e2_w8(buf, pos+cp+1, 255); e2_w8(buf, pos+cp+2, 193); cp = cp + 3;  // inc rcx
             e2_w8(buf, pos+cp, 235); e2_w8(buf, pos+cp+1, 240); cp = cp + 2;  // jmp -16 (back to cmp rcx,rsi)
             // done:
+        } else if s3 == g_ni_goroutine_wrapper_addr {
+            // goroutine_wrapper_addr() — the address of goroutine_entry_wrapper
+            // (backend-emitted stub / rt.s). Same encoding as IR_FNADDR:
+            // movabs r10, imm64 + store; imm64 patched in elf.cr Phase 3.
+            do2 := g2_slot(d);
+            grow_fnaddr_patch(g_x86_fnaddr_patch_count + 1);
+            w64(g_x86_fnaddr_patch_pos, g_x86_fnaddr_patch_count * 8, pos + cp);
+            w64(g_x86_fnaddr_patch_name, g_x86_fnaddr_patch_count * 8, str_intern("goroutine_entry_wrapper"));
+            g_x86_fnaddr_patch_count = g_x86_fnaddr_patch_count + 1;
+            // movabs r10, imm64: REX.W+B = 0x49, opcode 0xBA (0xB8 + reg 2)
+            e2_w8(buf, pos+cp, 73); e2_w8(buf, pos+cp+1, 186);
+            e2_w64(buf, pos+cp+2, 0);  // placeholder — patched in elf.cr Phase 3
+            cp = cp + 10;
+            cp = cp + e2_st(buf, pos+cp, 10, do2);
         } else if s3 >= 0 {
             fn2 := istr_get(s3);
             to := -1; tf := 0;
@@ -636,7 +650,10 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
         w64(g_x86_fnaddr_patch_pos, g_x86_fnaddr_patch_count * 8, pos + cp);
         w64(g_x86_fnaddr_patch_name, g_x86_fnaddr_patch_count * 8, name_ni);
         g_x86_fnaddr_patch_count = g_x86_fnaddr_patch_count + 1;
-        e2_w8(buf, pos+cp, 73); e2_w8(buf, pos+cp+1, 187);  // movabs r10, imm64
+        // movabs r10, imm64: REX.W+B = 0x49, opcode 0xBA (0xB8 + reg 2,
+        // REX.B extends to 10 = r10). 0x49 0xBB would encode r11 — the
+        // following e2_st(..., 10, ...) stores r10, so the register MUST be r10.
+        e2_w8(buf, pos+cp, 73); e2_w8(buf, pos+cp+1, 186);  // movabs r10, imm64
         e2_w64(buf, pos+cp+2, 0);  // placeholder — patched in elf.cr Phase 3
         cp = cp + 10;
         cp = cp + e2_st(buf, pos+cp, 10, do2);
