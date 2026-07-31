@@ -452,7 +452,7 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
         } else if s3 == g_ni_store8 {
             // mov [rdi+rsi], dl — 0x88 + SIB (3rd arg in rdx = register 2)
             e2_w8(buf, pos+cp, 136); cp = cp + 1; cp = cp + emit_modrm(buf, pos+cp, 0, 2, 4); cp = cp + emit_sib(buf, pos+cp, 0, 6, 7);
-        } else if s3 == g_ni_load64 || s3 == g_ni_load_str_ptr {
+        } else if s3 == g_ni_load64 || s3 == g_ni_load_str_ptr || s3 == g_ni_r64 {
             // mov rax, [rdi + rsi]
             // mov rax, [rdi+rsi] — REX.W + 0x8B + SIB
             cp = cp + emit_rex(buf, pos+cp, 1, 0, 0, 0); e2_w8(buf, pos+cp, 139); cp = cp + 1;
@@ -684,19 +684,37 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
 
     if op == IR_ARENA_NEW {
         do2 := g2_slot(d);
-        ni_arena_new := str_intern("arena_new");
-        grow_call_patch(g_x86_call_patch_count + 1);
-        w64(g_x86_call_patch_pos, g_x86_call_patch_count * 8, pos + cp);
-        w64(g_x86_call_patch_name, g_x86_call_patch_count * 8, ni_arena_new);
-        g_x86_call_patch_count = g_x86_call_patch_count + 1;
-        e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;  // call placeholder
-        cp = cp + e2_st(buf, pos+cp, 0, do2);  // store returned arena_id from rax
+        if s1 > 0 {
+            // Scope actually allocates: create a fresh arena via arena_new().
+            ni_arena_new := str_intern("arena_new");
+            grow_call_patch(g_x86_call_patch_count + 1);
+            w64(g_x86_call_patch_pos, g_x86_call_patch_count * 8, pos + cp);
+            w64(g_x86_call_patch_name, g_x86_call_patch_count * 8, ni_arena_new);
+            g_x86_call_patch_count = g_x86_call_patch_count + 1;
+            e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;  // call placeholder
+            cp = cp + e2_st(buf, pos+cp, 0, do2);  // store returned arena_id from rax
+        } else {
+            // No allocations in this scope: no arena. dest = -1 (none).
+            // Avoids calling arena_new from arena infrastructure itself
+            // (arena_new/arena_reset/_grow_arena_meta), which would recurse.
+            // IR_ARENA_RESET with id < 0 is a safe no-op in arena_reset.
+            w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 199); w8(buf, pos+cp+2, 192);
+            e2_w32(buf, pos+cp+3, -1); cp = cp + 7;  // mov rax, -1
+            cp = cp + e2_st(buf, pos+cp, 0, do2);
+        }
         return cp;
     }
 
     if op == IR_ARENA_RESET {
         // Load arena_id into edi (register 7 = rdi for first arg)
         cp = cp + e2_load_var(buf, pos+cp, 7, s1);
+        // Skip the call when no arena was created (id < 0). Without this,
+        // arena_reset's own exit marker would call arena_reset(-1), whose
+        // early return still runs its exit marker → infinite recursion.
+        // test rdi, rdi — 48 85 FF
+        w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 133); w8(buf, pos+cp+2, 255); cp = cp + 3;
+        // jl +5 (skip the 5-byte call) — 7C 05
+        w8(buf, pos+cp, 124); w8(buf, pos+cp+1, 5); cp = cp + 2;
         ni_arena_reset := str_intern("arena_reset");
         grow_call_patch(g_x86_call_patch_count + 1);
         w64(g_x86_call_patch_pos, g_x86_call_patch_count * 8, pos + cp);

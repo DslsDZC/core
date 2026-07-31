@@ -497,7 +497,8 @@ class TypeChecker:
         # Handle runtime functions (defined in rt.s, no decl node)
         rt_funcs = {'alloc', 'get_arg', 'syscall3', 'fiber_init', 'fiber_switch',
                     'load8', 'store8',
-                    'load_str_ptr', 'store_str_ptr'}
+                    'load_str_ptr', 'store_str_ptr',
+                    'g_set_curg', 'g_get_curg', 'm_start_workers'}
         if isinstance(call.func, Ident) and call.func.name in rt_funcs:
             sym = self.symtab.lookup(call.func.name)
             if sym and sym.type:

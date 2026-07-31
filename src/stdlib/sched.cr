@@ -27,6 +27,7 @@ fn sched_init() {
     w64(m, 24, -1);    // runq_tail = empty
     g_machines = m;
     g_machine_count = 1;
+    g_set_curg(-1);    // current_g = none (mirrors M[0].cur_g)
     g_sched_inited = 1;
 }
 
@@ -52,7 +53,7 @@ fn sched_dequeue() -> int {
 }
 
 fn sched_get_curg() -> int {
-    return r64(g_machines, 0 * 32 + 8);  // M[0].cur_g
+    return g_get_curg();
 }
 
 fn sched_yield() {
@@ -74,6 +75,7 @@ fn sched_schedule(m_idx: int) {
     if next_g >= 0 {
         old_g := r64(g_machines, m_idx * 32 + 8);
         w64(g_machines, m_idx * 32 + 8, next_g);
+        g_set_curg(next_g);
         w64(next_g, 8, 1);  // _Grunning
 
         if old_g >= 0 {
@@ -97,6 +99,7 @@ fn sched_worker_run(m_idx: int) {
         if next_g >= 0 {
             old_g := r64(g_machines, m_idx * 32 + 8);
             w64(g_machines, m_idx * 32 + 8, next_g);
+            g_set_curg(next_g);
             w64(next_g, 8, 1);  // _Grunning
 
             if old_g >= 0 {
@@ -133,21 +136,20 @@ fn sched_go(fn_ptr: int, arg: int) -> int {
 }
 
 // sched_spawn_workers: create n worker threads via m_start_workers (rt.s)
-// Commented out until corec is rebuilt with m_start_workers builtin.
-// fn sched_spawn_workers(n: int) {
-//     if n <= 1 { return; }
-//     total_ms := alloc(n * 32);
-//     mi := 0;
-//     loop {
-//         if mi >= n { break; }
-//         w64(total_ms, mi * 32, mi);         // m.id
-//         w64(total_ms, mi * 32 + 8, -1);     // m.cur_g = none
-//         w64(total_ms, mi * 32 + 16, -1);    // runq_head
-//         w64(total_ms, mi * 32 + 24, -1);    // runq_tail
-//         mi = mi + 1;
-//     }
-//     g_machines = total_ms;
-//     g_machine_count = n;
-//     g_num_workers = n - 1;
-//     m_start_workers(n);  // launch workers (assembly in rt.s)
-// }
+fn sched_spawn_workers(n: int) {
+    if n <= 1 { return; }
+    total_ms := alloc(n * 32);
+    mi : ., mut = 0;
+    loop {
+        if mi >= n { break; }
+        w64(total_ms, mi * 32, mi);          // m.id
+        w64(total_ms, mi * 32 + 8, -1);      // m.cur_g = none
+        w64(total_ms, mi * 32 + 16, -1);     // runq_head
+        w64(total_ms, mi * 32 + 24, -1);     // runq_tail
+        mi = mi + 1;
+    }
+    g_machines = total_ms;
+    g_machine_count = n;
+    g_num_workers = n - 1;
+    m_start_workers(n);  // launch workers (assembly in rt.s)
+}

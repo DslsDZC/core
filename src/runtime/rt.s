@@ -15,6 +15,8 @@ rt_argv: .quad 0
 heap_start:
     .space 1024 * 1024 * 1024
 heap_end:
+.balign 8
+current_g: .space 8  # current goroutine pointer (set via g_set_curg)
 
 .section .data
 heap_ptr: .quad 0
@@ -247,6 +249,24 @@ fiber_init:
 
     ret
 
+# g_set_curg(ptr) — set current goroutine pointer
+# Core-side bridge: rt.s cannot reference Core globals directly
+# (they are managed by the ELF backend), so the current G lives here.
+.globl g_set_curg
+.type g_set_curg, @function
+g_set_curg:
+    lea rax, [rip + current_g]
+    mov [rax], rdi
+    ret
+
+# g_get_curg() — get current goroutine pointer
+.globl g_get_curg
+.type g_get_curg, @function
+g_get_curg:
+    lea rax, [rip + current_g]
+    mov rax, [rax]
+    ret
+
 # m_start_workers(n: int) — launch N worker threads via clone
 # Each worker runs the scheduler loop (sched_worker_run).
 # clone flags: CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD
@@ -332,38 +352,22 @@ worker_entry:
 
 # goroutine_entry_wrapper: entry point for goroutines spawned via go.
 # Called via fiber_init as the fiber entry.
-# Reads the current G from M[0].cur_g,
+# Reads the current G via g_get_curg(),
 # loads saved_fn and saved_arg from G, calls saved_fn(saved_arg),
 # sends rax to result_ch, then yields forever.
 .globl goroutine_entry_wrapper
 .type goroutine_entry_wrapper, @function
 goroutine_entry_wrapper:
-    # Get current G from M[0].cur_g (offset 8)
-    mov rax, [rip + _g_g_machines]
-    mov rax, [rax + 8]       # rax = M[0].cur_g (G pointer)
-
-    # Load saved_fn and saved_arg from G struct
-    # G layout: id(0), status(8), sp(16), stack_lo(24), arena_id(32),
-    #           result_ch(40), next(48), saved_fn(56), saved_arg(64)
-    mov rdi, [rax + 56]      # rdi = saved_fn
-    mov rsi, [rax + 64]      # rsi = saved_arg
-
-    # Call saved_fn(saved_arg)
-    # saved_fn must be a function pointer address (resolved by the backend)
-    call rdi
-
-    # rax = return value from saved_fn
-    # Store rax temporarily, load result_ch (offset 40)
+    call g_get_curg       # rax = current G pointer
+    mov rdi, [rax + 56]   # rdi = saved_fn
+    mov rsi, [rax + 64]   # rsi = saved_arg
+    call rdi              # call saved_fn(saved_arg)
+    # rax = return value
     push rax
-    mov rax, [rip + _g_g_machines]
-    mov rax, [rax + 8]       # reload G pointer
-    mov rdi, [rax + 40]      # rdi = result_ch
-    pop rsi                  # rsi = return value
-
-    # Send return value to result_ch: chan_send(ch, val)
-    call chan_send
-
-    # Yield forever
+    call g_get_curg
+    mov rdi, [rax + 40]   # rdi = result_ch
+    pop rsi               # rsi = return value
+    call chan_send        # chan_send(result_ch, return_value)
 .Lyield_loop:
     call sched_yield
     jmp .Lyield_loop

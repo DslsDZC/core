@@ -21,6 +21,9 @@ class NameResolver:
             ('fiber_switch', BaseType('int')),
             ('load_str_ptr', BaseType('string')),
             ('store_str_ptr', BaseType('int')),
+            ('g_set_curg', BaseType('unit')),
+            ('g_get_curg', BaseType('int')),
+            ('m_start_workers', BaseType('unit')),
         ]
         for name, typ in rt_funcs:
             self.symtab.define(name, SymbolKind.FUNCTION, typ)

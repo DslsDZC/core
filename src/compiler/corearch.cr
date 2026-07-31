@@ -54,6 +54,12 @@ fn corearch_main() -> int {
     link_val := cli_get("link");
     out_path := cli_get("output");
 
+    // Pure-static (no --link, not --shared): the binary must be self-contained,
+    // so the backend emits g_set_curg/g_get_curg bridge stubs (rt.s is not linked).
+    // With --link, the stubs stay external and resolve from core_rt.so (rt.s).
+    g_x86_emit_rt_stubs = 0;
+    if str_len(link_val) == 0 && emit_so == 0 { g_x86_emit_rt_stubs = 1; }
+
     // --shared: emit as ET_DYN
     if emit_so != 0 {
         if str_len(out_path) == 0 { out_path = "core_lib.so"; }

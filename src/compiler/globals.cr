@@ -79,7 +79,7 @@ g_label_count : int, mut;
 g_ni_syscall3 : int, mut;  g_ni_load8 : int, mut;  g_ni_store8 : int, mut;
 g_ni_load64 : int, mut;    g_ni_load_str_ptr : int, mut;
 g_ni_store_str_ptr : int, mut;  g_ni_get_arg : int, mut;
-g_ni_w64 : int, mut;  g_ni_dyncpy : int, mut;
+g_ni_w64 : int, mut;  g_ni_dyncpy : int, mut;  g_ni_r64 : int, mut;
 // Single-pass backpatching: pending forward jumps
 g_pending_pos : string, mut;        // rel32 buffer positions to patch
 g_pending_label : string, mut;      // target label indices
@@ -110,6 +110,7 @@ g_x86_call_patch_pos : string, mut;     g_x86_call_patch_name : string, mut;
 g_x86_call_patch_count : int, mut;      g_x86_call_patch_cap : int, mut;
 g_x86_sub_rsp_pos : int, mut;
 g_x86_alloc_patch_pos : string, mut;    g_x86_alloc_patch_cap : int, mut; g_x86_alloc_patch_count : int, mut;
+g_x86_emit_rt_stubs : int, mut;         // 1 = pure-static: backend emits g_set_curg/g_get_curg stubs
 // Optimization levels and metadata (extensible key-value store)
 g_opt_level : int, mut;     // 0=none, 1=regalloc, 2=stackshare, 3=cse
 g_opt_meta : string, mut;   // metadata buffer for .ccr v3+
