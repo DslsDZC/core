@@ -23,6 +23,35 @@ There are two compilers:
 - **Python bootstrap** (`bootstrap/corec/`) — the initial compiler, written in Python, used to build the self-hosted compiler
 - **Self-hosted compiler** (`src/compiler/`) — the Core compiler written in Core itself, built by the Python bootstrap
 
+## 版本控制流程（GitFlow）
+
+- 全面使用 `jj`（铁律 #2，hook 机械拦截 git）。分支模型：feature → develop → main
+- **main = 正式版线**：仅维护者 DslsDZC 可合入（ruleset：update 规则 + 无管理员绕过）
+- **develop = 集成分支**：日常 PR 目标（ruleset：PR 通道 + 审批 + merge queue + CI 门槛）
+- 日常开发（feature → develop）：
+
+```bash
+jj bookmark create feature/xxx        # 每个改动独立分支（base = develop）
+# ...开发提交（SSH 自动签名）...
+jj git push -b feature/xxx
+gh pr create --base develop --fill    # PR 指向 develop（"不能指向 main"）
+# → 审查 → merge queue → squash 合入 develop → 自动删源分支
+jj git fetch && jj bookmark move develop -r develop@origin
+```
+
+- 发布（develop → main，仅维护者）：
+
+```bash
+jj git push -b develop
+gh pr create --base main --fill       # required reviewers = 你 → 你批准 → queue 合入
+```
+
+- 合入 main 后（发布线）：
+
+```bash
+jj git fetch && jj bookmark move main -r main@origin
+```
+
 ## Build & Test Commands
 
 ```bash
