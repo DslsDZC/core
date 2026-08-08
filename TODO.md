@@ -114,3 +114,9 @@ RVSDG 式嵌套 region 已落地（规格 docs/superpowers/specs/2026-08-08-regi
 - `docs/pointer-model.md` — 指针安全完整设计
 - `docs/language-syntax.md` — 指针、@ 内建语法已更新
 - `docs/at-intrinsics.md` — @ 内建原语完整规格
+
+### 5. arena bump 分配运行时死循环（2026-08-09 发现）
+- 症状：启用 arena（`arena_init` + `arena_new` 后调用 `alloc`）的程序运行时挂起（无输出、CPU 占用）
+- 已排除：ELF 后端 arena 相关编码全部 objdump 验证正确（`mov [r8],r10d` 的 44 89 00 错误已修复回 45 89 10）
+- 定位方向：`emit_alloc_body` 生成的运行时逻辑（g_current_arena 检查 / bump 推进 / .Lretry 循环 / OOM 链式扩展）
+- 复现：`arena_init(1<<20, 65536); arena_new(); alloc(64);`（/tmp/t_arena.cr）
