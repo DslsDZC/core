@@ -165,7 +165,32 @@ def test_node_region_mapping():
 Run: `nice -n 19 python3 tests/selfhost/test_region_cfg.py -v`
 Expected: FAIL（`cluster_for` 不存在）
 
-- [ ] **Step 3: 实现 g_cur_sg 与映射数组**
+- [ ] **Step 3: 修复 sg_pop close 语义（硬性要求）+ 实现 g_cur_sg 与映射数组**
+
+> **硬性要求（Task 1 审查发现，root cause 在既有代码）**：`sg_pop` 当前关闭 `g_sg_count-1` 且不递减 count——ir_gen 的 pop 正确关闭嵌套 region 后，`df_end_func`（dataflow.cr:321-327）再 pop 又落到同一条目，把最内层 region 的 EXIT 覆盖为全函数节点数（已用重建二进制验证：`Region: if nodes 4..18`，实际 if 在 ~12 结束）。SG_FOR 同样被腐蚀 → Task 3 的循环预扫会算错范围。**修复：`sg_pop` 改为弹出"最后 open 条目"（EXIT<0），并同步恢复 `g_cur_sg` 为其 parent。**
+
+```core
+// sg_pop：弹出最后一个 open（EXIT<0）的 region，而非 g_sg_count-1
+fn sg_pop() {
+    if g_sg_count <= 0 { return; }
+    idx : ., mut = -1;
+    pi := g_sg_count - 1;
+    loop {
+        if pi < 0 { break; }
+        if r64(g_sgs, pi * ESZ_SG + OFF_SG_EXIT) < 0 { idx = pi; break; }
+        pi = pi - 1;
+    }
+    if idx < 0 { return; }
+    w64(g_sgs, idx * ESZ_SG + OFF_SG_EXIT, g_df_node_count);
+    w64(g_sgs, idx * ESZ_SG + OFF_SG_NCOUNT,
+        g_df_node_count - r64(g_sgs, idx * ESZ_SG + OFF_SG_NSTART));
+    g_cur_sg = r64(g_sgs, idx * ESZ_SG + OFF_SG_PARENT);
+}
+```
+
+验证修复（dump 断言）：if 后跟尾代码的函数，`Region: if nodes A..B` 的 B 必须等于 merge label 处节点数（不吞尾代码）。测试：`tests/selfhost/test_region_cfg.py` 的 if/for 用例改为断言区域边界在函数指令跨度内（sanity 检查）。
+
+（`sg_alloc_push/sg_alloc_pop` 与 `g_sg_alloc_total/g_sg_arena_var` 并行表按 push/pop 配对索引，不受"弹出最后 open"影响——arena 用例 `tests/suite/arena_test.cr` 回归验证。）
 
 `src/compiler/globals.cr:123` 附近（g_sgs 声明处）追加：
 
@@ -189,15 +214,7 @@ fn df_create_node(opcode: int, dest: int, src1: int, src2: int, src3: int, type_
 
 （`grow_df_node_region` 照 `grow_df_nodes` 模式实现：cap 倍增、_dyncpy 复制。）
 
-`sg_push` 末尾与 `sg_pop` 中维护 g_cur_sg：
-
-```core
-// sg_push 的 parent 计算之后、g_sg_count = idx + 1 之前：
-    g_cur_sg = idx;
-
-// sg_pop 中、w64(...OFF_SG_EXIT...) 之前：
-    g_cur_sg = r64(g_sgs, idx * ESZ_SG + OFF_SG_PARENT);
-```
+`sg_push` 末尾追加 `g_cur_sg = idx;`（parent 计算之后、`g_sg_count = idx + 1` 之前）；`sg_pop` 的 g_cur_sg 恢复已包含在上方硬性要求的新实现中。
 
 `src/compiler/dataflow.cr` 的 init_df 中重置：`g_df_node_region_cap = 0;`（node region 数组随 grow 重建）。
 
