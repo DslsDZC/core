@@ -22,10 +22,13 @@ fn _chan_ensure_init() {
 //  56: closed     — 0 = open, 1 = closed
 //
 // Goroutine (G) struct fields used by wait queues:
-//   8: status     — 0=Grunnable, 1=Grunning, 2=Gwaiting
-//  40: chan_wait  — the channel this G is waiting on
+//   8: status     — 0=Grunnable, 1=Grunning, 2=Gwaiting, 3=Gdead
+//  40: result_ch  — result channel (set by sched_go; NOT used as chan_wait —
+//      the wait lists live on the channel itself, so writing offset 40 here
+//      would clobber result_ch and redirect the wrapper's chan_send)
 //  48: next       — next waiter in linked list (-1 = end)
-//  56: temp_val   — temporary value storage for handoff
+//  72: temp_val   — temporary value storage for handoff (offset 56 is
+//      saved_fn — never write it from channel code)
 
 fn chan_make(elemsize: int, cap: int) -> int {
     _chan_ensure_init();
@@ -55,7 +58,7 @@ fn chan_send(ch: int, val: int) {
     if recv_wait >= 0 {
         // Direct handoff: copy value to the waiting receiver's temp_val
         nxt := r64(recv_wait, 48);          // save next before overwriting
-        w64(recv_wait, 56, val);             // store value in receiver's temp_val
+        w64(recv_wait, 72, val);             // store value in receiver's temp_val
         w64(recv_wait, 8, 0);               // set to _Grunnable
         sched_enqueue(recv_wait);
         w64(ch, 48, nxt);                   // remove from recv_wait list
@@ -73,8 +76,7 @@ fn chan_send(ch: int, val: int) {
     // Buffer full: block on send_wait list
     g := sched_get_curg();
     if g >= 0 {
-        w64(g, 40, ch);          // chan_wait = ch
-        w64(g, 56, val);         // store value for later delivery
+        w64(g, 72, val);         // store value for later delivery (temp_val)
         w64(g, 8, 2);            // _Gwaiting
         w64(g, 48, -1);          // next = -1
 
@@ -108,7 +110,7 @@ fn chan_recv(ch: int) -> int {
     send_wait := r64(ch, 40);
     if send_wait >= 0 {
         // Direct handoff: take value from the waiting sender's temp_val
-        val := r64(send_wait, 56);           // read sender's stored value
+        val := r64(send_wait, 72);           // read sender's stored value
         nxt := r64(send_wait, 48);
         w64(send_wait, 8, 0);               // set to _Grunnable
         sched_enqueue(send_wait);
@@ -129,7 +131,6 @@ fn chan_recv(ch: int) -> int {
     // Buffer empty: block on recv_wait list
     g := sched_get_curg();
     if g >= 0 {
-        w64(g, 40, ch);          // chan_wait = ch
         w64(g, 8, 2);            // _Gwaiting
         w64(g, 48, -1);          // next = -1
 
@@ -148,7 +149,7 @@ fn chan_recv(ch: int) -> int {
     sched_yield();
 
     // After wakeup, value should be in this G's temp_val (delivered by sender)
-    val := r64(g, 56);
+    val := r64(g, 72);
     return val;
 }
 

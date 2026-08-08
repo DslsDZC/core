@@ -42,16 +42,17 @@ fn emit_alloc_body(buf: string, pos: int, bss_va: int, globals_size: int) -> int
     // ── Part 1: Save original size + check arena (53 bytes) ──
     // mov r9, rdi — 49 89 F9
     w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 249); cp = cp + 3;
-    // lea r10, [rip + g_current_arena] — rip_patch
+    // lea r10, [rip + g_current_arena] — 4C 8D 15 (dest r10, not r8!)
     rip_pos_ca := pos + cp + 3;
-    w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 5);
+    w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 21);
     e2_w32(buf, pos+cp+3, 0); cp = cp + 7;
     grow_rip_patch(g_x86_rip_patch_count + 1);
     w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, rip_pos_ca);
     w64(g_x86_rip_patch_globals, g_x86_rip_patch_count * 8, gv_current_arena);
     g_x86_rip_patch_count = g_x86_rip_patch_count + 1;
-    // mov r10, [r10] — 4D 8B 10 (r10 = current arena id)
-    w8(buf, pos+cp, 77); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 16); cp = cp + 3;
+    // mov r10, [r10] — 4D 8B 12 (modrm 0x12: reg=010+R -> r10, rm=010+B -> [r10];
+    // old 0x10 had rm=100 which consumed a SIB byte and desynced the stream)
+    w8(buf, pos+cp, 77); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 18); cp = cp + 3;
     // test r10, r10 — 4D 85 D2
     w8(buf, pos+cp, 77); w8(buf, pos+cp+1, 133); w8(buf, pos+cp+2, 210); cp = cp + 3;
     // jl .Lglobal (no active arena → global bump path) — 0F 8C rel32, patched at Part 8
@@ -168,8 +169,10 @@ fn emit_alloc_body(buf: string, pos: int, bss_va: int, globals_size: int) -> int
     w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, rip_pos5);
     w64(g_x86_rip_patch_globals, g_x86_rip_patch_count * 8, gv_current_arena);
     g_x86_rip_patch_count = g_x86_rip_patch_count + 1;
-    // mov [r8], -1 — 41 C7 00 FF FF FF FF (set g_current_arena = -1)
-    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 199); w8(buf, pos+cp+2, 0);
+    // mov qword [r8], -1 — 49 C7 00 FF FF FF FF (set g_current_arena = -1;
+    // REX.W+B — a 32-bit store would leave the slot = 0x00000000ffffffff,
+    // which is positive and re-enters the arena path with a garbage index)
+    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 199); w8(buf, pos+cp+2, 0);
     e2_w32(buf, pos+cp+3, -1); cp = cp + 7;
 
     // ── Bug 2 fix: Advance arena cursor to limit (mark full) ──
@@ -241,12 +244,14 @@ fn emit_alloc_body(buf: string, pos: int, bss_va: int, globals_size: int) -> int
     }
     // ── OOM bounds check: .Lretry block ──
     // Save original heap_ptr, check against heap_end, call heap_expand if OOM.
+    // retry_cp must start BEFORE mov r8, r11: heap_expand clobbers r8
+    // (r8d = fd = -1), so the retry has to re-save the (possibly new) heap_ptr.
     // mov r8, r11 -- 4D 89 D8 (save original heap_ptr)
-    w8(buf, pos+cp, 77); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 216); cp = cp + 3;
     retry_cp := cp;
-    // lea rdx, [r11 + rdi] -- 49 8D 14 1F (compute new end = r11 + rdi)
-    // REX 0x49 = W=1, X=1 (index r11), B=0 (base rdi); modrm reg=010 (rdx).
-    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 20); w8(buf, pos+cp+3, 31); cp = cp + 4;
+    w8(buf, pos+cp, 77); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 216); cp = cp + 3;
+    // lea rdx, [r11 + rdi] -- 4A 8D 14 1F (compute new end = r11 + rdi)
+    // REX 0x4A = W=1, X=1 (index 011 -> r11), B=0 (base 111 -> rdi); modrm reg=010 (rdx).
+    w8(buf, pos+cp, 74); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 20); w8(buf, pos+cp+3, 31); cp = cp + 4;
     // lea rcx, [rip + g_heap_end] — rip_patch for gv_heap_end
     if gv_heap_end >= 0 {
         rip_he := pos + cp + 3;
@@ -279,6 +284,10 @@ fn emit_alloc_body(buf: string, pos: int, bss_va: int, globals_size: int) -> int
         rel_hr := bss_va - (fva + cp + 7);
         w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 29); w8_signed(buf, pos+cp+3, rel_hr); cp = cp + 7;
     }
+    // mov rdi, r9 -- 49 8B F9 (restore the original size: heap_expand clobbers
+    // rdi with the mmap args; without this the retry bumps heap_ptr by 0 and
+    // every later alloc carves into the arena pool's 1MB region)
+    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 249); cp = cp + 3;
     // jmp .Lretry -- EB xx (short backwards jump to mov r8, r11)
     jmp_off_val := retry_cp - (cp + 2);
     w8(buf, pos+cp, 235); w8(buf, pos+cp+1, jmp_off_val % 256); cp = cp + 2;
@@ -325,8 +334,9 @@ fn emit_alloc_body(buf: string, pos: int, bss_va: int, globals_size: int) -> int
     w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, rip_pos6);
     w64(g_x86_rip_patch_globals, g_x86_rip_patch_count * 8, gv_current_arena);
     g_x86_rip_patch_count = g_x86_rip_patch_count + 1;
-    // mov [r8], r10d — 45 89 10 (restore arena index)
-    w8(buf, pos+cp, 69); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 16); cp = cp + 3;
+    // mov [r8], r10d — 44 89 00 (REX.R+B=0x44; modrm 00 000 000 -> [r8];
+    // old 45 89 10 had modrm rm=100 which consumed a SIB byte)
+    w8(buf, pos+cp, 68); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 0); cp = cp + 3;
     // ret
     w8(buf, pos+cp, 195); cp = cp + 1;
 
@@ -573,7 +583,9 @@ fn emit_goroutine_stubs(buf: string, pos: int) -> int {
     //   call g_get_curg; rdi = [rax+64] (saved_arg — first param, SysV rdi);
     //   rax = [rax+56] (saved_fn); call rax; push rax; call g_get_curg;
     //   rdi = [rax+40] (result_ch); pop rsi; call chan_send;
-    //   loop: call sched_yield; jmp loop
+    //   then exit: call g_get_curg; mov rdi, rax; call g_free (arena_reset +
+    //   mark _Gdead); call sched_schedule (switch to next, no re-enqueue);
+    //   ret (fiber dead if no work)
     call_pos0 := pos + cp;
     grow_call_patch(g_x86_call_patch_count + 1);
     w64(g_x86_call_patch_pos, g_x86_call_patch_count * 8, call_pos0);
@@ -598,14 +610,114 @@ fn emit_goroutine_stubs(buf: string, pos: int) -> int {
     w64(g_x86_call_patch_name, g_x86_call_patch_count * 8, str_intern("chan_send"));
     g_x86_call_patch_count = g_x86_call_patch_count + 1;
     e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;  // call chan_send
-    // yield loop (7 bytes): call sched_yield; jmp -7 back to the call
+    // exit: call g_get_curg; mov rdi, rax; call g_free; call sched_schedule; ret
     call_pos3 := pos + cp;
     grow_call_patch(g_x86_call_patch_count + 1);
     w64(g_x86_call_patch_pos, g_x86_call_patch_count * 8, call_pos3);
-    w64(g_x86_call_patch_name, g_x86_call_patch_count * 8, str_intern("sched_yield"));
+    w64(g_x86_call_patch_name, g_x86_call_patch_count * 8, str_intern("g_get_curg"));
     g_x86_call_patch_count = g_x86_call_patch_count + 1;
-    e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;  // call sched_yield
-    w8(buf, pos+cp, 235); w8(buf, pos+cp+1, 249); cp = cp + 2;  // jmp -7 (back to call sched_yield)
+    e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;  // call g_get_curg
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 248); cp = cp + 3;  // mov rdi, rax
+    call_pos4 := pos + cp;
+    grow_call_patch(g_x86_call_patch_count + 1);
+    w64(g_x86_call_patch_pos, g_x86_call_patch_count * 8, call_pos4);
+    w64(g_x86_call_patch_name, g_x86_call_patch_count * 8, str_intern("g_free"));
+    g_x86_call_patch_count = g_x86_call_patch_count + 1;
+    e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;  // call g_free
+    call_pos5 := pos + cp;
+    grow_call_patch(g_x86_call_patch_count + 1);
+    w64(g_x86_call_patch_pos, g_x86_call_patch_count * 8, call_pos5);
+    w64(g_x86_call_patch_name, g_x86_call_patch_count * 8, str_intern("sched_schedule"));
+    g_x86_call_patch_count = g_x86_call_patch_count + 1;
+    e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;  // call sched_schedule
+    w8(buf, pos+cp, 195); cp = cp + 1;  // ret
+
+    return cp;
+}
+
+// ── m_start_workers runtime stub (pure-static self-contained runtime) ──
+// rt.s equivalent: launches n-1 worker threads via clone; each worker runs
+// sched_worker_run(m_idx). worker_entry (15 bytes) precedes the public
+// entry so `lea r13, [rip + worker_entry]` has a backward displacement.
+// Layout (worker_entry at 0, m_start_workers at 15, 111 bytes):
+//   worker_entry: pop rdi; call sched_worker_run; mov eax,60; xor edi,edi; syscall
+//   m_start_workers: push rbx,r12,r13,r15; mov rbx,rdi; xor r12d,r12d
+//     .Lloop: inc r12; cmp r12,rbx; jge .Ldone; push r12; mov rdi,65536;
+//     call alloc; pop r12; test rax,rax; jz .Lnext; mov r15,rax; add r15,65536;
+//     lea r13,[rip+worker_entry]; mov [r15-16],r13; mov [r15-8],r12;
+//     mov edi,0x10F00; lea rsi,[r15-16]; xor edx,edx; xor r10d,r10d; xor r8d,r8d;
+//     mov eax,56; syscall; test rax,rax; jz .Lchild
+//     .Lnext: inc r12; jmp .Lloop
+//     .Lchild: xor ebp,ebp; ret
+//     .Ldone: pop r15,r13,r12,rbx; ret
+fn emit_m_start_workers(buf: string, pos: int) -> int {
+    cp : ., mut = 0;
+
+    // worker_entry (15 bytes):
+    w8(buf, pos+cp, 95); cp = cp + 1;  // pop rdi
+    call_pos_we := pos + cp;
+    grow_call_patch(g_x86_call_patch_count + 1);
+    w64(g_x86_call_patch_pos, g_x86_call_patch_count * 8, call_pos_we);
+    w64(g_x86_call_patch_name, g_x86_call_patch_count * 8, str_intern("sched_worker_run"));
+    g_x86_call_patch_count = g_x86_call_patch_count + 1;
+    e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;  // call sched_worker_run
+    w8(buf, pos+cp, 184); w8(buf, pos+cp+1, 60); w8(buf, pos+cp+2, 0); w8(buf, pos+cp+3, 0); w8(buf, pos+cp+4, 0); cp = cp + 5;  // mov eax, 60
+    w8(buf, pos+cp, 49); w8(buf, pos+cp+1, 255); cp = cp + 2;  // xor edi, edi
+    w8(buf, pos+cp, 15); w8(buf, pos+cp+1, 5); cp = cp + 2;  // syscall
+
+    // m_start_workers (111 bytes, starts at pos+15)
+    w8(buf, pos+cp, 83); cp = cp + 1;  // push rbx
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 84); cp = cp + 2;  // push r12
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 85); cp = cp + 2;  // push r13
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 87); cp = cp + 2;  // push r15
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 251); cp = cp + 3;  // mov rbx, rdi
+    w8(buf, pos+cp, 69); w8(buf, pos+cp+1, 49); w8(buf, pos+cp+2, 228); cp = cp + 3;  // xor r12d, r12d
+    // .Lworker_loop (offset 13)
+    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 255); w8(buf, pos+cp+2, 196); cp = cp + 3;  // inc r12
+    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 57); w8(buf, pos+cp+2, 220); cp = cp + 3;  // cmp r12, rbx
+    w8(buf, pos+cp, 125); w8(buf, pos+cp+1, 83); cp = cp + 2;  // jge .Ldone (+83)
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 84); cp = cp + 2;  // push r12
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 199); w8(buf, pos+cp+2, 199); cp = cp + 3;  // mov rdi, 65536
+    w8(buf, pos+cp, 0); w8(buf, pos+cp+1, 0); w8(buf, pos+cp+2, 1); w8(buf, pos+cp+3, 0); cp = cp + 4;
+    call_pos_al := pos + cp;
+    grow_call_patch(g_x86_call_patch_count + 1);
+    w64(g_x86_call_patch_pos, g_x86_call_patch_count * 8, call_pos_al);
+    w64(g_x86_call_patch_name, g_x86_call_patch_count * 8, str_intern("alloc"));
+    g_x86_call_patch_count = g_x86_call_patch_count + 1;
+    e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;  // call alloc
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 92); cp = cp + 2;  // pop r12
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 133); w8(buf, pos+cp+2, 192); cp = cp + 3;  // test rax, rax
+    w8(buf, pos+cp, 116); w8(buf, pos+cp+1, 54); cp = cp + 2;  // jz .Lnext_worker (+54)
+    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 199); cp = cp + 3;  // mov r15, rax
+    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 129); w8(buf, pos+cp+2, 199); cp = cp + 3;  // add r15, 65536
+    w8(buf, pos+cp, 0); w8(buf, pos+cp+1, 0); w8(buf, pos+cp+2, 1); w8(buf, pos+cp+3, 0); cp = cp + 4;
+    // lea r13, [rip + worker_entry] — worker_entry at stub base (pos+0), this lea
+    // is 7 bytes ending at (pos+58): disp = (pos+0) - (pos+58) = -58
+    w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 45); cp = cp + 3;
+    e2_w32(buf, pos+cp, -58); cp = cp + 4;
+    w8(buf, pos+cp, 77); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 111); w8(buf, pos+cp+3, 240); cp = cp + 4;  // mov [r15-16], r13
+    w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 71); w8(buf, pos+cp+3, 248); cp = cp + 4;  // mov [r15-8], r12
+    w8(buf, pos+cp, 191); w8(buf, pos+cp+1, 0); w8(buf, pos+cp+2, 15); w8(buf, pos+cp+3, 1); w8(buf, pos+cp+4, 0); cp = cp + 5;  // mov edi, 0x10F00
+    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 119); w8(buf, pos+cp+3, 240); cp = cp + 4;  // lea rsi, [r15-16]
+    w8(buf, pos+cp, 49); w8(buf, pos+cp+1, 210); cp = cp + 2;  // xor edx, edx
+    w8(buf, pos+cp, 69); w8(buf, pos+cp+1, 49); w8(buf, pos+cp+2, 210); cp = cp + 3;  // xor r10d, r10d
+    w8(buf, pos+cp, 69); w8(buf, pos+cp+1, 49); w8(buf, pos+cp+2, 192); cp = cp + 3;  // xor r8d, r8d
+    w8(buf, pos+cp, 184); w8(buf, pos+cp+1, 56); w8(buf, pos+cp+2, 0); w8(buf, pos+cp+3, 0); w8(buf, pos+cp+4, 0); cp = cp + 5;  // mov eax, 56
+    w8(buf, pos+cp, 15); w8(buf, pos+cp+1, 5); cp = cp + 2;  // syscall
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 133); w8(buf, pos+cp+2, 192); cp = cp + 3;  // test rax, rax
+    w8(buf, pos+cp, 116); w8(buf, pos+cp+1, 5); cp = cp + 2;  // jz .Lchild (+5)
+    // .Lnext_worker (offset 95)
+    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 255); w8(buf, pos+cp+2, 196); cp = cp + 3;  // inc r12
+    w8(buf, pos+cp, 235); w8(buf, pos+cp+1, 169); cp = cp + 2;  // jmp .Lworker_loop (-87)
+    // .Lchild (offset 100)
+    w8(buf, pos+cp, 49); w8(buf, pos+cp+1, 237); cp = cp + 2;  // xor ebp, ebp
+    w8(buf, pos+cp, 195); cp = cp + 1;  // ret
+    // .Ldone (offset 103)
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 95); cp = cp + 2;  // pop r15
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 93); cp = cp + 2;  // pop r13
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 92); cp = cp + 2;  // pop r12
+    w8(buf, pos+cp, 91); cp = cp + 1;  // pop rbx
+    w8(buf, pos+cp, 195); cp = cp + 1;  // ret
 
     return cp;
 }
@@ -1303,6 +1415,11 @@ fi = 0; loop { if fi >= g_ir_func_count { break; }
         sched_reg_one("fiber_switch", 0, cp + 20);
         sched_reg_one("goroutine_entry_wrapper", 0, cp + 47);
         cp = cp + emit_goroutine_stubs(buf, cp);
+        // m_start_workers — worker thread launcher (clone). worker_entry
+        // (15 bytes) precedes the public entry so its RIP-relative LEA stays
+        // backward; register the public symbol at cp + 15.
+        sched_reg_one("m_start_workers", 0, cp + 15);
+        cp = cp + emit_m_start_workers(buf, cp);
     }
 
     // ── Patch forward calls using actual cp positions ──
