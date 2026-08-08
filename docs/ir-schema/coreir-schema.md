@@ -35,16 +35,19 @@ Core 编译器使用两种中间表示：
 
 `.csr` 是规约约束的二进制序列化格式——将内存中的 TagNode（约束元数据）数组序列化为文件，与 `.cir`（DFNode 数据流图）配套。
 
+**`.ccr` 序列化 v2（2026-08）：** 版本号 5；文件尾部追加 SG region 段（sg_count × 24B：kind/enter/exit/parent/nstart/ncount 六个 i32）与 DFEdge kind 字段（内存 32B/条：from/to/next/kind，0=data, 1=state），v4 文件兼容加载。
+
 ### 整体布局
 
 ```
 [文件头：36 字节]
 [DFNode 数组：dataflow_node_count × 64 字节]
 [约束节点数组（可选）：tag_node_count × 40 字节]
-[DFEdge 数组：edge_count × 24 字节]
+[DFEdge 数组：edge_count × 24 字节（.csr 落盘；内存 32B，含 kind 字段）]
 [字符串表：变长]
 [函数元信息数组：func_count × 28 字节]
 [符号引用表：变长]
+[SG region 段（.ccr v5）：sg_count × 24B：kind/enter/exit/parent/nstart/ncount]
 ```
 
 ### 文件头（36 字节）
@@ -103,13 +106,14 @@ DFNode 覆盖两种节点：普通指令节点（opcode ≤ IR_AWAIT）和规约
 | 6 | TAG_SPEC_FN | 检查函数引用 |
 | 7 | TAG_USER_TAG | 自定义标签 |
 
-### DFEdge（24 字节，同现有内存格式）
+### DFEdge（内存 32 字节；`.csr` 落盘 24 字节）
 
 | 偏移 | 大小 | 字段 | 说明 |
 |------|------|------|------|
 | 0 | 8 | from_node | 源节点 ID |
 | 8 | 8 | to_node | 目标节点 ID |
 | 16 | 8 | next_out | 同一源节点的下一条出边索引（-1 = 结尾） |
+| 24 | 8 | kind | 边类型：0=data, 1=state（VSDG state edge；`.cir` 缓存 v5 按 4×8B 序列化） |
 
 边使用邻接列表结构：每个节点通过 `first_edge` → `next_out` 链表遍历其出边。
 
