@@ -210,7 +210,13 @@ unsafe {
 
 ## 当前状态
 
-Core 编译器已有数据流图（`src/compiler/dataflow.cr`）和线性扫描寄存器分配器（`src/compiler/opt.cr`）。三个 pass 均未实现。图的子节点结构已包含 opcode、dest、src1、src2、src3 字段，可以承载 pointer analysis 需要的元数据（points-to 集、偏移量等）。
+Core 编译器已有数据流图（`src/compiler/dataflow.cr`）和线性扫描寄存器分配器（`src/compiler/opt.cr`）。
+
+**更新（2026-07-28）**：三个 pass 已全部实现——
+`src/compiler/ptr_analysis.cr`（PointerAnalysis）、`src/compiler/region_check.cr`（RegionCheck）、
+`src/compiler/provenance_verify.cr`（ProvenanceVerify）。DEREF 后端发射 cmp+jae+ud2
+边界检查序列（s3 编码 alloc_size），运行时 prov_table 维护堆边界并 patch DEREF 检查点，
+配合 2026-07-28 的 Arena 内存模型（`src/stdlib/arena.cr`）。细节见 `TODO.md`。
 
 ## 参考
 

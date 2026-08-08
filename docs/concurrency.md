@@ -128,4 +128,8 @@ step @("n")  → 序列化当前上下文，传输到目标节点，恢复
 
 ## 当前状态
 
-词法和解析器已支持 `flow`、`go`、`yield`、`await` 关键字。`walker` 和 `step` 尚未实现。图上的子图实例化、节点暂停/恢复、跨节点状态传输尚未完全实现。
+**更新（2026-07-31）**：`go f(args)` 端到端可用——`sched_go(@addr(f), arg)` →
+g_new 存 saved_fn/saved_arg → ELF 后端内联发射 fiber_init/fiber_switch/goroutine_entry_wrapper →
+wrapper 调用 saved_fn(saved_arg) → 结果经 result_ch 回传。主线程注册为 G 0，
+可经 channel 阻塞/唤醒；sched_yield 不再重排 Gwaiting。
+`walker` / `step` 尚未实现；多 M worker 线程的完整验证待补（见 `TODO.md` 预存 bug 第 2 条）。

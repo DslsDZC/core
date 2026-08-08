@@ -1,5 +1,16 @@
 # 更新日志
 
+> 说明：本文档记录里程碑级变更。近期每日开发流水、预存 bug 与架构规划以 `TODO.md` 为准。
+> 2026-06-21 至 2026-07-23 之间曾存在文档缺失期，以下条目按提交历史与 TODO.md 补齐。
+
+## 2026-07-31
+### [feat] concurrency end-to-end — goroutine spawn, function address, result channels
+- `go f(args)` 端到端打通：`sched_go(@addr(f), arg)` → g_new 存 saved_fn/saved_arg → ELF 后端内联发射 fiber_init/fiber_switch/goroutine_entry_wrapper → wrapper 调用 saved_fn(saved_arg) → 结果经 result_ch 回传。
+- 函数地址支持：IR_FNADDR + `@addr` 内建（checker/ir_gen/ELF 后端全链路）。
+- 并发集成：g_set_curg/g_get_curg 桥接 + M worker 线程池接线。
+- 主线程注册为 G 0，可经 channel 阻塞/唤醒；sched_yield 不再重排 Gwaiting。
+- 多 M 线程完整验证仍待补（见 TODO.md 预存 bug 第 2 条）。
+
 ## 2026-07-30
 ### [fix] restore directory builds
 - Use the `Core.toml` project name for default ELF, CCR, and CIR outputs, with a safe directory-name fallback for unnamed projects.
@@ -7,6 +18,54 @@
 - Resolve the static runtime relative to the running compiler when building outside the compiler source directory.
 - Include the hotpatch runtime in clean self-hosted `corec` and `corearch` builds so `hp_load_config` resolves.
 - Add native regressions for named, unnamed, and missing directory inputs.
+### [fix] self-host bootstrap dependency & value-semantics fixes
+- 自举依赖补全：bootstrap 构建纳入并发运行时依赖、共享 arena 全局和 fiber 声明。
+- 增量缓存修复：缓存指纹纳入完整解析源，导入文件变化不再复用过期 `.cir`；快照改为内存组包后单次写入（完整自举不再产生数百万次微小系统调用）。
+- 调用返回值修复：普通调用不再因局部 `dest` 遮蔽写入变量 0，实际返回类型传播到 IR。
+- lazy 值传递修复：ELF 后端和解释器中的 thunk/force 保留已计算值及其类型。
+- 原生字符串长度修复：整数局部变量不再误判为指针，`str_len("hello") == 5`、`str_len(@fields(Point)) == 3`。
+- Python bootstrap 词法修复：`old` 不再被错误保留，可作为普通标识符。
+
+## 2026-07-28
+### [feat] arena memory model, @ builtins, incremental cache, hotpatch, pointer-model passes
+- Arena 内存模型完整实现（`src/stdlib/arena.cr`）：init/new/reset 生命周期、动态元数据、free list、嵌套；IR 子图绑定（函数/loop/for/unsafe 自动 arena）；ELF 双路径 alloc（arena 感知 + 全局 bump 回退）；IR_ARENA_NEW(32)/IR_ARENA_RESET(33) 编码；mmap 堆扩展（BSS 打满自动 mmap 1GB）。
+- `@` 内建原语 12 个全部完整：`@sizeOf/@alignOf/@fields/@hasField/@field/@typeInfo/@comptime/@inline/@no_bounds_check/@fast/@unroll/@section`（后增 `@addr`、`@hotpatch`，见 07-31/07-30）。
+- 增量缓存（函数级 .cir，默认开启）：`cir_cache.cr` save/load 每函数快照，`clean-cache` 子命令。
+- `@hotpatch` 滚动更新：IR_HOTPATCH_ROUTE(39) + parser `@hotpatch(ver=N)` + checker 多版本签名校验 + ELF 编码 + SIGHUP 信号处理。
+- 指针模型三 pass 实现（PointerAnalysis/RegionCheck/ProvenanceVerify）：DEREF 后端 cmp+jae+ud2 边界检查（s3 编码 alloc_size）、运行时 prov_table 堆边界检查 patch、arena BSS 全局。
+
+## 2026-07-27
+### [fix] complete self-hosted corearch backend
+- Remove out-of-range 2^31/2^32 literals from backend encoding and use signed-safe 32/64-bit byte writers.
+- Fix signed CCR operand decoding so sentinel values remain negative across bootstrap stages.
+- Include v3 optimization metadata in CCR size calculation and validate metadata bounds while loading.
+- Give optimization metadata independent 64-byte slots with capacity tracking and copy-on-grow.
+- Add a three-stage corearch bootstrap regression with byte-identical output, O0/O2 CCR loading, and native ELF execution.
+
+## 2026-07-23
+### [fix] complete P0 native aggregate and self-host regressions
+- Fix disp32 emission to use the current instruction base for struct fields, constant array indices, enum tags, and enum construction.
+- Fix REX/ModRM/SIB encoding for variable array index loads and stores.
+- Add native ELF regression coverage for aggregate access at O0/O1.
+- Verify clean corec -> corec2 -> corec3 bootstrap at O0 and O1.
+- **corec2 自举阻塞解除**：corec2 --help、tokenizer/check 和 corec2→corec3 均正常；O0/O1 自举均成功。
+
+## 2026-07-26
+### [fix] global variable registration fixes
+- `g_global_lets` 注册全局变量，不再扫描局部 EXPR_LET（修复全局变量丢失导致的静默赋值丢弃）。
+
+## 2026-07-21
+### [fix] local lets out of global IR
+- 局部 EXPR_LET 不再泄漏到全局 IR（配合 07-26 的 g_global_lets 修复，消除全局/局部变量混淆）。
+
+## 2026-07-09
+### [fix] tokenizer parameterization + local-variable rewrite for self-hosted ELF compat
+- tokenizer 参数化（`tokenize(_src: string)`），规避 `g_source` 全局变量依赖（PR #9）。
+- local-variable rewrite：自举 ELF 兼容的局部变量重写。
+
+## 2026-07-05
+### [fix] get_arg inline path
+- `get_arg` 内联路径带 gv_argv >= 0，防止未 patch 的 LEA displacement 触发 GPF。
 
 ## 2026-07-27
 ### [fix] complete self-hosted corearch backend

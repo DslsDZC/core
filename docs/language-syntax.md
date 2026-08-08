@@ -20,11 +20,16 @@ Core 语言语法
 ```
 
 ## 关键字
-fn struct enum interface impl type mut move go await flow auto
-if else match for loop return break continue
-pub mod import as unsafe comptime
-requires ensures old result self Self
-true false unit None Some
+
+（以 `src/compiler/lexer.cr lookup_keyword()` 的实现为准，共 35 个）
+
+fn mut return if else loop while for break continue
+true false struct enum extern impl match import pub
+go await unsafe flow yield interface type mod as
+auto fileid move in None Some unit
+
+注：`comptime` 不是关键字（`@comptime` 是 @ 内建原语）；`requires/ensures/old/result/self/Self`
+亦非词法关键字（规约语法见 `docs/spec-design.md` 与 `corespec.ebnf`，`self` 按标识符解析）。
 
 注意：* 用于解引用指针，-> 仅用于返回类型，& 取地址。指针安全由数据流图自动验证，详见 `docs/pointer-model.md`。
 

@@ -2,6 +2,12 @@
 
 > 日期: 2026-07-06
 > PR: https://github.com/dslsdzc/core/compare/main...RhineIris:core:main
+>
+> **⚠️ 历史存档**：本报告描述的问题均已在后续修复中解决——
+> 文中 3 个已修复 Bug 已合并（PR #9/#16 时期）；"仍未解决的根本性 Bug"
+> （rip_patch 位置错位）已由 2026-07-23 P0 全量修复（`emit_instr()` disp32
+> 写入补上当前指令基址）解决，corec2 → corec3 自举现已全程通过。
+> 本文档仅作调试过程记录保留。
 
 ## 目标
 

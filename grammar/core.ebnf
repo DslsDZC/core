@@ -23,6 +23,8 @@ FlowDecl = 'flow' IDENT [ GenericParams ] '(' [ ParamList ] ')' '->' Type
 
 (*** 类型 ***)
 Type = BaseType | PathType | RefType | OptionalType | TupleType | ArrayType | SliceType ;
+(* 注：'Self' 非词法关键字——lexer.cr lookup_keyword() 无 Self，按标识符解析；
+   接口方法签名中的 Self 由 checker 按上下文处理，以源码实现为准 *)
 BaseType = 'int' | 'float' | 'bool' | 'string' | 'char' | 'unit' | 'never' | 'Self' ;
 PathType = Path ;
 RefType = '&' [ 'mut' ] Type ;

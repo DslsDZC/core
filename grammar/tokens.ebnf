@@ -8,12 +8,15 @@ IDENT = LETTER { LETTER | DIGIT | '_' | '\'' } ;
 LETTER = 'a'..'z' | 'A'..'Z' | '_' ;
 DIGIT = '0'..'9' ;
 
+(* 关键字：以 src/compiler/lexer.cr lookup_keyword() 的实现为准（35 个）。
+   2026-08-08 同步：删除未实现的规约关键字 requires/ensures/old/result/self/Self
+   （其中 self 在词法中按标识符处理），新增已实现的 while/extern/in。
+   注意：self 关键字未实现——T_SELF 是 parser 死分支，实际为 T_IDENT。 *)
 KEYWORD =
-    'fn' | 'struct' | 'enum' | 'interface' | 'impl' | 'type' | 'mut' | 'move' | 'go' | 'await' | 'flow' | 'yield' | 'auto' | 'fileid' |
-    'if' | 'else' | 'match' | 'for' | 'loop' | 'return' | 'break' | 'continue' |
-    'pub' | 'mod' | 'import' | 'as' | 'unsafe' |
-    'requires' | 'ensures' | 'old' | 'result' | 'self' | 'Self' |
-    'true' | 'false' | 'unit' | 'None' | 'Some' ;
+    'fn' | 'mut' | 'return' | 'if' | 'else' | 'loop' | 'while' | 'for' | 'break' | 'continue' |
+    'true' | 'false' | 'struct' | 'enum' | 'extern' | 'impl' | 'match' | 'import' | 'pub' |
+    'go' | 'await' | 'unsafe' | 'flow' | 'yield' | 'interface' | 'type' | 'mod' | 'as' |
+    'auto' | 'fileid' | 'move' | 'in' | 'None' | 'Some' | 'unit' ;
 
 (* 字面量 *)
 INT_LIT = DIGIT { DIGIT | '_' } [ INT_SUFFIX ] ;
