@@ -31,7 +31,7 @@
 | 调度器初始化 | sched_init | 内部：确保通道初始化（_chan_ensure_init） |
 | 调度让出 | sched_yield | 通道发送（chan_send） |
 | 调度入队 | sched_enqueue | 通道发送（chan_send） |
-| 调度获取当前 G | sched_get_curg | 通道发送（chan_send） |
+| 调度获取当前协程 | sched_get_curg | 通道发送（chan_send） |
 | 通道已初始化标记 | g_chan_inited | 内部：确保通道初始化（_chan_ensure_init） |
 | 协程结构 | G | 通道发送（chan_send） |
 | 取得的值 | val | 通道接收（chan_recv） |
@@ -90,7 +90,7 @@
 
 ### 逻辑
 
-函数 创建通道（chan_make）（元素大小 elemsize：整数，通道容量 容量（cap）：整数）-> 整数
+函数 创建通道（chan_make）（元素大小 elemsize：整数，通道容量（cap）：整数）-> 整数
     内部：确保通道初始化（）
     令 通道句柄（ch）= 分配（64）  // 64 字节通道结构体
     令 环形缓冲区（buf）= 分配（通道容量 乘以 元素大小）

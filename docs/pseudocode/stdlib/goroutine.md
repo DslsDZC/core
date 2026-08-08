@@ -7,19 +7,19 @@
 
 | 中文名 | 原名 | 首次出现函数 |
 |--------|------|-------------|
-| 分配函数 __builtin_new 索引 | g_new | 分配函数索引（g_new） |
-| 释放函数 __builtin_free 索引 | g_free | 释放函数索引（g_free） |
+| 分配函数 __builtin_new 索引 | g_new | 协程分配（g_new） |
+| 释放函数 __builtin_free 索引 | g_free | 协程释放（g_free） |
 | 协程包装函数地址 | goroutine_wrapper_addr | 协程包装函数地址（goroutine_wrapper_addr） |
-| 入口函数指针 | entry_fn | 分配函数索引（g_new） |
-| 协程参数 | arg | 分配函数索引（g_new） |
-| 参数类型 | arg_type | 分配函数索引（g_new） |
-| 竞技场编号 | aid | 分配函数索引（g_new） |
-| 栈底地址 | stack | 分配函数索引（g_new） |
-| 栈顶地址 | stack_top | 分配函数索引（g_new） |
-| 包装函数地址 | wrap_addr | 分配函数索引（g_new） |
-| 栈指针 | sp | 分配函数索引（g_new） |
-| 协程句柄 | g | 分配函数索引（g_new） |
-| 协程编号 | id | 分配函数索引（g_new） |
+| 入口函数指针 | entry_fn | 协程分配（g_new） |
+| 协程参数 | arg | 协程分配（g_new） |
+| 参数类型 | arg_type | 协程分配（g_new） |
+| 竞技场编号 | aid | 协程分配（g_new） |
+| 栈底地址 | stack | 协程分配（g_new） |
+| 栈顶地址 | stack_top | 协程分配（g_new） |
+| 包装函数地址 | wrap_addr | 协程分配（g_new） |
+| 栈指针 | sp | 协程分配（g_new） |
+| 协程句柄 | g | 协程分配（g_new） |
+| 协程编号 | id | 协程分配（g_new） |
 
 ## 全局状态
 
@@ -57,7 +57,7 @@
 1. 在没有 ELF 后端的解释器模式下返回 0（无效地址）
 2. 在 ELF 后端编译时被替换为实际包装器地址
 
-## 函数 分配函数索引（g_new）
+## 函数 协程分配（g_new）
 
 ### 作用
 
@@ -99,7 +99,7 @@
 4. 纤程入口为协程包装函数地址
 5. 状态初始为可运行（0）
 
-## 函数 释放函数索引（g_free）
+## 函数 协程释放（g_free）
 
 ### 作用
 

@@ -12,7 +12,6 @@
 | 追踪调试字符串 | trace_dbg_str | 追踪调试字符串（trace_dbg_str） |
 | 条件 | cond | 追踪断言（trace_assert） |
 | 诊断消息 | msg | 追踪断言（trace_assert） |
-| 名称 | name | 追踪调试输出（trace_dbg） |
 | 值 | val | 追踪调试输出（trace_dbg） |
 
 ## 全局状态

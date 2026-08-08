@@ -1,6 +1,6 @@
 # 调度（sched）.cr 伪代码
 
-> 源文件：src/stdlib/调度（sched）.cr（205 行）
+> 源文件：src/stdlib/sched.cr（205 行）
 > 功能概要：M:次数（N） 调度器——M 个操作系统线程，次数 个协程。通道为单生产者/单消费者边，因此运行时无需锁：每个工作机器（M）拥有自己的本地运行队列，只有其所属线程操作该队列。
 
 ## 标识符对照表
@@ -11,7 +11,7 @@
 | 调度当前 M 索引 | sched_current_m_idx | 调度当前 M 索引（sched_current_m_idx） |
 | 调度入队 | sched_enqueue | 调度入队（sched_enqueue） |
 | 调度出队 | sched_dequeue | 调度出队（sched_dequeue） |
-| 调度获取当前 G | sched_get_curg | 调度获取当前 G（sched_get_curg） |
+| 调度获取当前协程 | sched_get_curg | 调度获取当前协程（sched_get_curg） |
 | 调度让出 | sched_yield | 调度让出（sched_yield） |
 | 调度调度 | sched_schedule | 调度调度（sched_schedule） |
 | 调度工作线程运行 | sched_worker_run | 调度工作线程运行（sched_worker_run） |
@@ -101,7 +101,7 @@
     写 64 位（主协程句柄，64，0）
     写 64 位（主协程句柄，72，0）
     写 64 位（机器指针，8，主协程句柄）
-    设置当前协程（主协程句柄）
+    设置当前协程函数索引（g_set_curg）（主协程句柄）
     令 调度器已初始化标记 = 1
 
 ### 测试要点
@@ -185,7 +185,7 @@
 ### 逻辑
 
 函数 调度获取当前协程（sched_get_curg）-> 整数
-    返回 获取当前协程（）
+    返回 获取当前协程函数索引（g_get_curg）（）
 
 ## 函数 调度让出（sched_yield）
 
@@ -249,7 +249,7 @@
 
 函数 调度工作线程运行（sched_worker_run）（当前 M 索引（m_idx）：整数）-> 无返回
     写 64 位（机器数组，当前 M 索引 乘以 32，当前 M 索引）
-    令 当前 M 索引 = 当前 M 索引（参数值）
+    令 当前 M 索引（全局） = 参数 当前 M 索引
     循环：
         令 下一个协程（next_g）= 调度出队（当前 M 索引）
         如果 下一个协程 大于等于 0，那么：

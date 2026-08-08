@@ -1,6 +1,6 @@
 # collections.cr 伪代码
 
-> 源文件：源数组（src）/stdlib/collections.cr（127 行）
+> 源文件：src/stdlib/collections.cr（126 行）
 > 功能概要：Core 标准库基础集合操作。提供数组的交换、反转、查找、统计、最值、填充、求和、求积、拷贝、比较等功能。当前仅支持整数数组，尚未实现 HashMap/HashSet。
 
 ## 标识符对照表

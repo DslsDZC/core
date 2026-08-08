@@ -1,6 +1,6 @@
 # 断言（assert）.cr 伪代码
 
-> 源文件：src/stdlib/断言（assert）.cr（125 行）
+> 源文件：src/stdlib/assert.cr（125 行）
 > 功能概要：运行时检查系统，参考 Rust 的 断言（assert）!/调试断言（debug_assert）!/不可达（unreachable）!/未实现标记（todo）! 设计。提供断言、调试断言、不可达标记、未实现标记和边界检查。
 
 ## 标识符对照表
