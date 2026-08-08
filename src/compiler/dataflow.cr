@@ -85,9 +85,17 @@ fn sg_pop() {
     if kind == SG_LOOP || kind == SG_FOR {
         last_node := g_df_node_count - 1;
         if last_node >= r64(g_sgs, idx * ESZ_SG + OFF_SG_NSTART) {
-            if g_last_state_node >= 0 {
+            // The termination-edge source must be inside the region. When the
+            // loop body is pure, g_last_state_node is a pre-loop store
+            // (created before the region) — linking it would claim the loop
+            // exit follows a side effect the region does not contain.
+            if g_last_state_node >= r64(g_sgs, idx * ESZ_SG + OFF_SG_NSTART) {
                 df_add_edge_kind(g_last_state_node, last_node, 1);  // termination dependency
             }
+            // Advance the state-chain head to the region exit node: side
+            // effects after the loop must depend on loop termination (spec
+            // §4.2: a loop that never terminates must terminate the graph).
+            g_last_state_node = last_node;
         }
     }
     g_cur_sg = r64(g_sgs, idx * ESZ_SG + OFF_SG_PARENT);

@@ -51,7 +51,7 @@
 | 4 | SG_UNSAFE | 现有 |
 | 5 | SG_IF | **新增** |
 
-`SG_IF`：if/else 在条件求值后、then 分支前 `sg_push(SG_IF)`，merge label 处 `sg_pop()`。区间覆盖 `[条件, 汇合)`。match 不单独建 region（展开为 if 链/跳转表）。
+`SG_IF`：if/else 在条件求值前、if 节点开头 `sg_push(SG_IF)`（ir_gen.cr:1138，push 先于 `gen_expr(cond)`），merge label 处 `sg_pop()`。区间覆盖 `[条件, 汇合)`。match 不单独建 region（展开为 if 链/跳转表）。
 
 ### 2.2 显式映射
 
@@ -96,7 +96,7 @@
 ## 5. 序列化 v2（P4）
 
 - 文件头版本号 v1→v2（.cir 文本 + .ccr 二进制）
-- 新增 SG 段：`sg_count × 48B`（kind/enter/exit/parent/nstart/ncount 直写）
+- 新增 SG 段：`sg_count × 24B`（6×i32：kind/enter/exit/parent/nstart/ncount，内存格式 48B 与线格式 24B 区分——`ESZ_SG_DISK`）
 - DFEdge 序列化带 kind
 - v1 兼容：加载 v1 文件按旧格式解析，region 树退化为单 FUNC region
 - 影响面：ccr_io.cr（save/load）、ir-schema 文档

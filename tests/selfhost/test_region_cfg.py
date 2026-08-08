@@ -89,6 +89,59 @@ def test_loop_termination_edge():
     out = cir_dump("fn main() -> int {\n    s : ., mut = 0;\n    for i in 0..3 { s = s + i; }\n    return s;\n}\n")
     assert re.search(r'state: n\d+ -> n\d+', out), f"loop termination state edge missing in cir dump:\n{out}"
 
+def _state_edges(out: str):
+    return [(int(m.group(1)), int(m.group(2)))
+            for m in re.finditer(r'state: n(\d+) -> n(\d+)', out)]
+
+def test_termination_edge_source_guard():
+    """终止边源边界 + 链头推进（final review Important #1）：
+    SG_LOOP 循环体纯（无副作用）时，g_last_state_node 是循环前的 STORE——
+    源在 region 外，不得连终止边；且链头必须推进到 region exit 节点，
+    使循环后的 STORE 依赖循环终止（规格 §4.2：循环不终止则图不终止）。"""
+    out = cir_dump("fn main() -> int {\n"
+                   "    s : ., mut = 0;\n"
+                   "    s = s + 1;\n"
+                   "    loop { break; }\n"
+                   "    s = s + 2;\n"
+                   "    return s;\n"
+                   "}\n")
+    regs = parse_regions(out)
+    assert 'loop' in regs, f"loop region missing in cir dump:\n{out}"
+    a, b = regs['loop'][0]
+    exit_node = b - 1  # exit label is the last node created in the region
+    states = _state_edges(out)
+    assert states, f"no state edges in cir dump:\n{out}"
+    # 1) No termination edge whose source lies outside the region (old bug:
+    #    pre-loop store linked straight to the loop exit).
+    outside = [f for f, t in states if t == exit_node and f < a]
+    assert not outside, \
+        f"termination edge source {outside} outside loop region {a}..{b}:\n{out}"
+    # 2) Chain head advanced: the post-loop store must chain from the exit
+    #    node, so it depends on loop termination.
+    from_exit = [t for f, t in states if f == exit_node]
+    assert from_exit, \
+        f"post-loop side effect does not depend on loop termination (no state edge from exit node {exit_node}):\n{out}"
+
+def test_termination_edge_source_in_region():
+    """终止边源边界（正例）：循环体有副作用时，终止边源必须在 region 内
+    （last side-effect node ∈ [NSTART, EXIT)），不能是 region 外的旧副作用。"""
+    out = cir_dump("fn main() -> int {\n"
+                   "    s : ., mut = 0;\n"
+                   "    s = s + 1;\n"
+                   "    for i in 0..3 { s = s + i; }\n"
+                   "    return s;\n"
+                   "}\n")
+    regs = parse_regions(out)
+    assert 'for' in regs, f"for region missing in cir dump:\n{out}"
+    a, b = regs['for'][0]
+    exit_node = b - 1
+    states = _state_edges(out)
+    term = [(f, t) for f, t in states if t == exit_node]
+    assert term, f"termination edge into exit node {exit_node} missing:\n{out}"
+    for f, t in term:
+        assert a <= f < b, \
+            f"termination edge source {f} outside for region {a}..{b} (exit {t}):\n{out}"
+
 # --- Interpreter loop execution (TODO#3) ---
 # `corec run` compiles and interprets inline code; main()'s return value
 # becomes the process exit code.
@@ -270,6 +323,7 @@ if __name__ == '__main__':
     import sys
     tests = [test_if_region, test_loop_region, test_node_region_mapping,
              test_state_edges, test_loop_termination_edge,
+             test_termination_edge_source_guard, test_termination_edge_source_in_region,
              test_for_loop_run, test_while_loop_run, test_break_continue_run,
              test_nested_loop_run,
              test_ccr_v2_sg_section, test_ccr_roundtrip_v2,
