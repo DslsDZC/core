@@ -100,10 +100,19 @@ def test_break_continue_run():
                        capture_output=True, text=True, cwd=BASE, timeout=30)
     assert r.returncode == 13, f"break/continue expected 13 (0+1+3+4+5), got exit={r.returncode} stdout={r.stdout!r} stderr={r.stderr!r}"
 
+def test_nested_loop_run():
+    """嵌套 for 循环：覆盖 innermost region 选择分支（e2 > cur_enter 路径）——
+    内层回跳必须命中内层 region enter，外层回跳必须命中外层 region enter。"""
+    r = subprocess.run(['./build/corec', 'run',
+                        'fn main() -> int { s : ., mut = 0; for i in 0..3 { for j in 0..3 { s = s + 1; } } return s; }'],
+                       capture_output=True, text=True, cwd=BASE, timeout=30)
+    assert r.returncode == 9, f"nested loop expected 9 (3x3), got exit={r.returncode} stdout={r.stdout!r} stderr={r.stderr!r}"
+
 if __name__ == '__main__':
     import sys
     tests = [test_if_region, test_loop_region, test_node_region_mapping,
-             test_for_loop_run, test_while_loop_run, test_break_continue_run]
+             test_for_loop_run, test_while_loop_run, test_break_continue_run,
+             test_nested_loop_run]
     failed = 0
     for t in tests:
         try:

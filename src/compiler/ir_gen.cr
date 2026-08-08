@@ -1179,12 +1179,16 @@ fn gen_expr(node: int) -> int {
         emit(IR_ARENA_NEW, arena_var, 0, 0, 0, 0);
         arena_instr := g_ir_instr_count - 1;
         push_ir_scope();
-        push_loop_labels(header_lbl, exit_lbl);
+        // `continue` must jump to the post label (not the header) so the
+        // arena reset runs on the continue path too — symmetric with `for`.
+        post_lbl := new_label();
+        push_loop_labels(post_lbl, exit_lbl);
         gen_expr(ast_a(node));
         pop_loop_labels();
         pop_ir_scope();
         total := r64(g_sg_alloc_total, g_sg_count - 1);
         if total > 0 { iri_set_s1(arena_instr, total); }
+        emit(IR_LABEL, -1, post_lbl, 0, 0, 0);
         emit(IR_ARENA_RESET, -1, arena_var, 0, 0, 0);  // arena reused per iteration
         emit(IR_JUMP, -1, header_lbl, 0, 0, 0);
         emit(IR_LABEL, -1, exit_lbl, 0, 0, 0);

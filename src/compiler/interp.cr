@@ -218,26 +218,37 @@ fn ir_interpret() -> int {
             if ip < node_count { continue; } else { break; }
         }
         if op == 20 {  // IR_JUMP
-            // Region iteration: a jump back to the innermost enclosing loop
-            // region's enter restarts the iteration; everything else is a
-            // plain label jump.  Loop execution is driven by region
-            // boundaries (the back-edge jump lands on the region enter), not
-            // by label-table lookups.
+            // Region iteration: a jump whose target is the innermost
+            // enclosing loop region's enter is a back-edge — loop iteration
+            // is driven by the region (SG) table: ip is taken from
+            // g_loop_region_enter, NOT from the label table.  Every other
+            // jump is a plain label jump resolved via g_label_poses.
+            // (The region enter from the SG table equals the label pose of
+            // the same node; the point is the code path: back-edges never
+            // read g_label_poses.)
+            // Innermost loop region enclosing the current ip (if any):
+            // among regions containing ip, the one with the largest enter
+            // offset is the innermost (e2 > cur_enter selection).
+            cur_enter : ., mut = -1;
+            cur_ri : ., mut = -1;
+            ri2 : ., mut = 0;
+            loop {
+                if ri2 >= g_loop_region_count { break; }
+                e2 := r64(g_loop_region_enter, ri2 * 8);
+                x2 := r64(g_loop_region_exit,  ri2 * 8);
+                if ip >= e2 && ip < x2 && e2 > cur_enter { cur_enter = e2; cur_ri = ri2; }
+                ri2 = ri2 + 1;
+            }
             if s1 >= 0 && s1 < g_label_count {
                 target := r64(g_label_poses, s1 * 8);
                 if target >= 0 {
-                    // Innermost loop region enclosing the current ip (if any)
-                    cur_enter : ., mut = -1;
-                    ri2 : ., mut = 0;
-                    loop {
-                        if ri2 >= g_loop_region_count { break; }
-                        e2 := r64(g_loop_region_enter, ri2 * 8);
-                        x2 := r64(g_loop_region_exit,  ri2 * 8);
-                        if ip >= e2 && ip < x2 && e2 > cur_enter { cur_enter = e2; }
-                        ri2 = ri2 + 1;
+                    if cur_ri >= 0 && target == cur_enter {
+                        // Back-edge to the innermost loop region's enter:
+                        // ip comes from the region table, not label poses.
+                        ip = r64(g_loop_region_enter, cur_ri * 8);  // == cur_enter
+                    } else {
+                        ip = target;  // plain jump, resolved via label poses
                     }
-                    if cur_enter >= 0 && target == cur_enter { ip = cur_enter; }  // iterate
-                    else { ip = target; }                                          // plain jump
                 } else { ip = ip + 1; }
             } else { ip = ip + 1; }
             if ip < node_count { continue; } else { break; }
