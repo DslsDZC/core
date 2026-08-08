@@ -120,3 +120,14 @@ RVSDG 式嵌套 region 已落地（规格 docs/superpowers/specs/2026-08-08-regi
 - 已排除：ELF 后端 arena 相关编码全部 objdump 验证正确（`mov [r8],r10d` 的 44 89 00 错误已修复回 45 89 10）
 - 定位方向：`emit_alloc_body` 生成的运行时逻辑（g_current_arena 检查 / bump 推进 / .Lretry 循环 / OOM 链式扩展）
 - 复现：`arena_init(1<<20, 65536); arena_new(); alloc(64);`（/tmp/t_arena.cr）
+
+### 6. 同步源码修改到伪代码文档（2026-08-09 记）
+- 背景：伪代码（docs/pseudocode/）基于源码快照翻译；以下源码变更后对应文档未同步
+- 待同步清单：
+  - `elf.cr` 编码修复（mov [r8],r10d → 45 89 10、BAD rip 检查白名单 0x48）→ elf-1.md / elf-4.md
+  - `parser.cr` local_stmts 动态扩容 + parse_all 防死循环 → parser-1/2/3/4.md
+  - `instr.cr` get_arg r10 push/pop 保护 → instr-2/3.md
+  - `main.cr` 静态桥接桩发射逻辑 → arch main.md
+  - `ptr_analysis.cr` 注释修正 → ptr_analysis.md
+  - `lexer.cr` 浮点/`..` 范围修复（main 已有）→ 核对 lexer.md 是否已反映
+- 完成后需重跑 `python3 tools/pseudocode_check.py` 并更新相应文档的源行数标注
