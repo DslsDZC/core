@@ -27,7 +27,7 @@
 | 调用指令大小 | sz_call | emit_start_size |
 | 系统调用大小 | sz_syscall | emit_start_size |
 | 调用 main 位置 | g_call_main_pos | emit_start |
-| argv 全局变量索引 | gv_argc | emit_start |
+| argc 全局变量索引 | gv_argc | emit_start |
 | argv 指针索引 | gv_argv | emit_start |
 | 当前竞技场全局变量索引 | gv_current_arena | emit_start |
 | 竞技场游标全局变量索引 | gv_arena_cursors | emit_start |
@@ -46,7 +46,7 @@
 | 中文名 | 原名 | 含义 |
 |--------|------|------|
 | 调用 main 位置 | g_call_main_pos | _start 内 call main 指令在缓冲区中的位置偏移量（set by emit_start, used for patching Phase 3） |
-| argv 全局变量索引 | gv_argc | IR 变量索引，对应 g_rt_argc 全局变量。值为 -1 表示该全局变量未被用户代码引用、无需发射保存代码 |
+| argc 全局变量索引 | gv_argc | IR 变量索引，对应 g_rt_argc 全局变量。值为 -1 表示该全局变量未被用户代码引用、无需发射保存代码 |
 | argv 指针索引 | gv_argv | IR 变量索引，对应 g_rt_argv_ptr 全局变量。值为 -1 表示未注册 |
 | 当前竞技场全局变量索引 | gv_current_arena | IR 变量索引，对应 g_current_arena 全局变量。初始值 -1。由 elf_gen Phase 1 设置 |
 | 竞技场游标全局变量索引 | gv_arena_cursors | IR 变量索引，对应 g_arena_cursors。由 elf_gen Phase 1 设置 |
@@ -98,7 +98,7 @@
 —— 至此 lea rsi, [rsp+8] 指令完成，共 1+1+1+1+1=5 字节
 
 —— 第三步：若 argc 全局变量已注册（gv_argc >= 0），将 rdi 中的 argc 值写入该全局变量的内存槽位
-如果 argv 全局变量索引（gv_argc）大于等于 0，那么：
+如果 argc 全局变量索引（gv_argc）大于等于 0，那么：
     —— 子步骤 3a：将全局变量 命令行参数个数（g_rt_argc） 的地址加载到 r10 寄存器
     —— 指令为 lea r10, [rip + 0]。立即数 0 是占位符，生成 ELF（elf_gen） Phase 3 末尾的 RIP 修补（rip_patch） 修补阶段会将此处替换为 BSS 段中 命令行参数个数（g_rt_argc） 槽位相对于该指令末尾的真实偏移量。
     —— r10 编号为 10，10/8=1 即 REX.B=1，10%8=2 即 ModRM.rm=2。
@@ -255,7 +255,7 @@
 令 预估大小（sz）= 调用 _start 函数体基础大小（sz_start_body（））
 —— 起始函数体大小（sz_start_body）（） 返回值为 4 + 5 + 调用大小（sz_call）（） + 2 + 5 + 系统调用大小（sz_syscall）（） = 4 + 5 + 5 + 2 + 5 + 2 = 23 字节。该值涵盖了 发射起始函数（emit_start） 的第一步（mov rdi,[rsp] 4 字节）、第二步（lea rsi,[rsp+8] 5 字节）、第七步（call main 5 字节）、第八步（mov edi,eax 2 字节）、第九步（mov eax,60 5 字节）、第十步（syscall 2 字节）。不包含可选的 argc/argv 保存和全局变量初始化。
 
-如果 argv 全局变量索引（gv_argc）大于等于 0，那么：令 预估大小 = 预估大小 + 调用 _start argv 保存大小（sz_start_argv_save（））
+如果 argc 全局变量索引（gv_argc）大于等于 0，那么：令 预估大小 = 预估大小 + 调用 _start argv 保存大小（sz_start_argv_save（））
 —— 起始参数保存大小（sz_start_argv_save）（） 返回 发射加载寄存器大小（sz_lr）（） + 3 = 7 + 3 = 10 字节。其中 发射加载寄存器大小（）=7 是 lea r10,[rip+0] 的大小（REX.WR + 0x8D + ModRM + 4 字节 rel32），+3 是 REX.WB（1） + 0x89（1） + ModRM（1） 即 mov [r10], rdi/rsi 的大小。
 
 如果 argv 指针索引（gv_argv）大于等于 0，那么：令 预估大小 = 预估大小 + 调用 _start argv 保存大小（sz_start_argv_save（））= 10 字节

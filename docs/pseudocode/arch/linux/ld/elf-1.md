@@ -38,6 +38,13 @@
 | x86 RIP 全局变量修补数组 | g_x86_rip_patch_globals | emit_alloc_body |
 | 读取无符号字节 | bu8 | r16 |
 
+| 程序头填充字段偏移 | P_PADDR | 写程序头（write_phdr） |
+| ELF 头填充字段偏移 | E_PAD | 生成 ELF（elf_gen） |
+| ELF 标志字段偏移 | E_FLAGS | 生成 ELF（elf_gen） |
+| 节头表条目大小偏移 | E_SHENTSIZE | 生成 ELF（elf_gen） |
+| 节头表数量偏移 | E_SHNUM | 生成 ELF（elf_gen） |
+| 节名字符串表索引偏移 | E_SHSTRNDX | 生成 ELF（elf_gen） |
+
 ## 全局状态
 
 | 中文名 | 原名 | 含义 | 初始值 |
@@ -49,6 +56,8 @@
 | 可读可执行权限 | PF_RX | 段访问权限 | 5 |
 | 可读可写权限 | PF_RW | 段访问权限 | 6 |
 | 当前竞技场全局变量索引 | gv_current_arena | IR 变量索引 | -1 |
+| 热补丁配置索引 | gv_hp_config | IR 变量索引 | -1 |
+| 热补丁进行中计数索引 | gv_hp_inflight | IR 变量索引 | -1 |
 | 竞技场游标全局变量索引 | gv_arena_cursors | IR 变量索引 | -1 |
 | 竞技场大小全局变量索引 | gv_arena_sizes | IR 变量索引 | -1 |
 | 竞技场内存池数据索引 | gv_arena_pool_data | IR 变量索引 | -1 |

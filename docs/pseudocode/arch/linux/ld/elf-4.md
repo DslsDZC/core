@@ -52,7 +52,7 @@
 | 扩展函数地址修补数组 | grow_fnaddr_patch | Phase 3 |
 | 扩展分配修补数组 | grow_alloc_patch | Phase 3 |
 | 扩展返回修补数组 | grow_ret_patch | Phase 3 |
-| 扩展.rodata 引用 | grow_rodataref | Phase 1/3 |
+| 扩展只读数据引用数组 | grow_rodataref | Phase 1/3 |
 | 扩展函数偏移数组 | grow_func_offsets | Phase 2 |
 | 扩展函数代码大小数组 | grow_func_code_sz | Phase 2 |
 | 扩展函数当前指针数组 | grow_func_cp | Phase 3 |
@@ -146,7 +146,7 @@
 | 当前函数变量起始（x86 后端） | g_current_func_var_start | Phase 3 发射函数时设置的当前函数第一个局部变量的 IR 索引 |
 | x86 函数帧起始 | g_x86_func_frame_start | Phase 3 设置的当前函数体的缓冲区绝对位置（emit_instr 可能需要） |
 | 调用 main 位置 | g_call_main_pos | emit_start 写入 call main 的缓冲区位置，Phase 3 末尾修补 |
-| argv 全局变量索引 | gv_argc | Phase 1 通过名称匹配设置的 g_rt_argc 的 IR 变量索引 |
+| argc 全局变量索引 | gv_argc | Phase 1 通过名称匹配设置的 g_rt_argc 的 IR 变量索引 |
 | argv 指针索引 | gv_argv | Phase 1 设置的 g_rt_argv_ptr 的 IR 变量索引 |
 | 当前竞技场全局变量索引 | gv_current_arena | Phase 1 设置的 g_current_arena 的 IR 变量索引 |
 | 竞技场游标全局变量索引 | gv_arena_cursors | Phase 1 设置 |
@@ -260,7 +260,7 @@ Phase 0 负责全局变量标记和内建函数名称索引匹配；Phase 1 负�
 
 —— 第三步：查找 argc/argv 及竞技场/堆相关的 11 个全局变量 IR 索引
 —— 通过字符串驻留（str_intern）获取目标名称的驻留索引，然后遍历 IR 全局变量数组（g_ir_globals） 将名称匹配的条目的 IR 变量索引（+8 字段）保存到 全局索引（gv_）* 系列变量中
-令 argv 全局变量索引（gv_argc）= -1
+令 argc 全局变量索引（gv_argc）= -1
 令 argv 指针索引（gv_argv）= -1
 调用 字符串驻留（str_intern），参数 "命令行参数个数（g_rt_argc）"，获取其驻留索引，存入 临时变量 argc 名称索引（argc_ni）
 调用 字符串驻留（str_intern），参数 "argv 指针（g_rt_argv_ptr）"，获取其驻留索引，存入 临时变量 argv 名称索引（argv_ni）

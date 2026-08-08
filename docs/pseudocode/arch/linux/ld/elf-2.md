@@ -66,7 +66,7 @@
 | 汇编代码大小 | g_asm_code_size | 最终输出总字节数 |
 | ELF 输出缓冲区 | g_elf_buf | ELF 二进制输出缓冲区 |
 | 调用 main 位置 | g_call_main_pos | _start 中 call main 的缓冲区位置 |
-| argv 全局变量索引 | gv_argc | g_rt_argc 的 IR 变量索引（或 -1） |
+| argc 全局变量索引 | gv_argc | g_rt_argc 的 IR 变量索引（或 -1） |
 | argv 指针索引 | gv_argv | g_rt_argv_ptr 的 IR 变量索引（或 -1） |
 | 当前竞技场全局变量索引 | gv_current_arena | g_current_arena 的 IR 变量索引 |
 | 堆扩展调用位置 | g_heap_expand_call_pos | alloc 内 call heap_expand 的修补位置 |
@@ -887,7 +887,7 @@
 
 —— e_ident 字段（16 字节的 ELF 标识）
 调用 写单字节（w8）向缓冲区偏移量 E_EHDR_MAGIC（值 0）处写入字节值 127（\x7f，ELF 魔数首字节）
-调用 写单字节（w8）向缓冲区偏移量 E_EHDR_MAGIC+1 处写入字节值 69（'错误（E）'，ASCII 0x45）
+调用 写单字节（w8）向缓冲区偏移量 E_EHDR_MAGIC+1 处写入字节值 69（'E'，ASCII 0x45）
 调用 写单字节（w8）向缓冲区偏移量 E_EHDR_MAGIC+2 处写入字节值 76（'L'，ASCII 0x4C）
 调用 写单字节（w8）向缓冲区偏移量 E_EHDR_MAGIC+3 处写入字节值 70（'F'，ASCII 0x46）
 —— 写入 \x7fELF 魔数
