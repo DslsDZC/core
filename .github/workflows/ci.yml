@@ -1,0 +1,65 @@
+# Core 主 CI——结构与 rust-lang/rust 的 ci.yml 同构（模板源 ~/rust），
+# 按 Core 裁剪：citool 砍掉（无动态矩阵需求）→ 静态矩阵直接内联；
+# 触发分两层：
+#   - pull_request（PR 快速层）：check / bootstrap-tests / selfhost-tests
+#   - merge_group（完整层，merge queue 在最新 main 上跑）：suite / full-bootstrap
+# PR 层 job 在 merge_group 下也运行（Rust 语义：PR CI jobs 自动注册为 auto jobs）。
+# job 命令定义在 src/ci/run.sh（case CI_JOB_NAME 分发），本地用 run.sh 可复现。
+
+name: CI
+on:
+  pull_request:
+    branches:
+      - "**"
+  merge_group:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  # merge_group 下不取消在跑的任务（队列已串行）；PR 下同分支新推送取消旧任务
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
+
+jobs:
+  job:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    # run_type: pr = PR 快速层；full = 完整层（仅 merge_group 触发）。
+    # PR 层 job 在 merge_group 下也执行（合入门槛 = 两层全绿）。
+    if: ${{ matrix.run_type == 'pr' || github.event_name == 'merge_group' }}
+    env:
+      CI_JOB_NAME: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: check
+            run_type: pr
+          - name: bootstrap-tests
+            run_type: pr
+          - name: selfhost-tests
+            run_type: pr
+          - name: suite
+            run_type: full
+          - name: full-bootstrap
+            run_type: full
+          # opt-regress（O0/O1 自举回归）留位，按 TODO 逐步点亮：
+          # - name: opt-regress
+          #   run_type: full
+    steps:
+      - name: checkout the source code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+
+      - name: add extra environment variables
+        run: src/ci/scripts/setup-environment.sh
+
+      - name: run the build
+        run: src/ci/scripts/run-build-from-ci.sh
