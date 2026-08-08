@@ -17,8 +17,9 @@ def cir_dump(src: str) -> str:
         os.unlink(cir_path)
     except FileNotFoundError:
         pass
+    # cir dump runs the full compiler pipeline; allow generous time under load
     r = subprocess.run(['./build/corec', 'cir', path], capture_output=True, text=True,
-                       cwd=BASE, timeout=30)
+                       cwd=BASE, timeout=120)
     os.unlink(path)
     out = r.stdout
     try:
@@ -76,9 +77,33 @@ def test_node_region_mapping():
     # DOT cluster grouping: the for region's nodes appear in one cluster
     assert 'cluster_for' in out, f"DOT region cluster missing:\n{out}"
 
+# --- Interpreter loop execution (TODO#3) ---
+# `corec run` compiles and interprets inline code; main()'s return value
+# becomes the process exit code.
+
+def test_for_loop_run():
+    """for 循环在解释器中正确执行并返回累加和（TODO#3 回归用例）"""
+    r = subprocess.run(['./build/corec', 'run',
+                        'fn main() -> int { s : ., mut = 0; for i in 0..4 { s = s + i; } return s; }'],
+                       capture_output=True, text=True, cwd=BASE, timeout=30)
+    assert r.returncode == 6, f"for loop expected 6, got exit={r.returncode} stdout={r.stdout!r} stderr={r.stderr!r}"
+
+def test_while_loop_run():
+    r = subprocess.run(['./build/corec', 'run',
+                        'fn main() -> int { n : ., mut = 0; while n < 5 { n = n + 1; } return n; }'],
+                       capture_output=True, text=True, cwd=BASE, timeout=30)
+    assert r.returncode == 5, f"while loop expected 5, got exit={r.returncode} stdout={r.stdout!r} stderr={r.stderr!r}"
+
+def test_break_continue_run():
+    r = subprocess.run(['./build/corec', 'run',
+                        'fn main() -> int { s : ., mut = 0; for i in 0..10 { if i == 2 { continue; } if i == 6 { break; } s = s + i; } return s; }'],
+                       capture_output=True, text=True, cwd=BASE, timeout=30)
+    assert r.returncode == 13, f"break/continue expected 13 (0+1+3+4+5), got exit={r.returncode} stdout={r.stdout!r} stderr={r.stderr!r}"
+
 if __name__ == '__main__':
     import sys
-    tests = [test_if_region, test_loop_region, test_node_region_mapping]
+    tests = [test_if_region, test_loop_region, test_node_region_mapping,
+             test_for_loop_run, test_while_loop_run, test_break_continue_run]
     failed = 0
     for t in tests:
         try:

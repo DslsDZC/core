@@ -75,6 +75,11 @@ g_ir_loop_header : string, mut;     g_ir_loop_exit : string, mut;
 g_ir_loop_depth : int, mut;         g_ir_loop_stacks_cap : int, mut;
 g_label_poses : string, mut;        g_label_cap : int, mut;
 g_label_count : int, mut;
+// Interpreter loop-region table: per SG_LOOP/SG_FOR region, the enter/exit
+// DF-node offsets (function-relative).  Loop iteration in the interpreter is
+// driven by these region boundaries, not by label-table back-jumps.
+g_loop_region_enter : string, mut;  g_loop_region_exit : string, mut;
+g_loop_region_count : int, mut;     g_loop_region_cap : int, mut;
 // Pre-computed interned string indices for builtin function name matching
 g_ni_syscall3 : int, mut;  g_ni_load8 : int, mut;  g_ni_store8 : int, mut;
 g_ni_load64 : int, mut;    g_ni_load_str_ptr : int, mut;

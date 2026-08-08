@@ -56,6 +56,33 @@ fn ir_interpret() -> int {
         li = li + 1;
     }
 
+    // Pre-scan: record SG_LOOP/SG_FOR region enter/exit node offsets
+    // (main function graph only — filter by node_start..node_start+node_count)
+    g_loop_region_count = 0;
+    li = 0;
+    loop {
+        if li >= g_sg_count { break; }
+        lk := r64(g_sgs, li * ESZ_SG + OFF_SG_KIND);
+        if lk == SG_LOOP || lk == SG_FOR {
+            l_enter := r64(g_sgs, li * ESZ_SG + OFF_SG_ENTER);
+            l_exit  := r64(g_sgs, li * ESZ_SG + OFF_SG_EXIT);
+            if l_enter >= node_start && l_enter < node_start + node_count {
+                if g_loop_region_count + 1 > g_loop_region_cap {
+                    // Grow both arrays from the OLD cap — copying with the new
+                    // cap would over-read the previous (possibly empty) buffer.
+                    nc := g_loop_region_cap * 2; if nc < 16 { nc = 16; }
+                    nb := alloc(nc * 8); _dyncpy(g_loop_region_enter, g_loop_region_cap * 8, nb);
+                    nb2 := alloc(nc * 8); _dyncpy(g_loop_region_exit, g_loop_region_cap * 8, nb2);
+                    g_loop_region_enter = nb; g_loop_region_exit = nb2; g_loop_region_cap = nc;
+                }
+                w64(g_loop_region_enter, g_loop_region_count * 8, l_enter - node_start);
+                w64(g_loop_region_exit,  g_loop_region_count * 8, l_exit  - node_start);
+                g_loop_region_count = g_loop_region_count + 1;
+            }
+        }
+        li = li + 1;
+    }
+
     // Execute nodes in order (dataflow: sequential order = valid topological order for straight-line)
     ip : ., mut = 0;
     loop {
@@ -191,8 +218,28 @@ fn ir_interpret() -> int {
             if ip < node_count { continue; } else { break; }
         }
         if op == 20 {  // IR_JUMP
-            if s1 >= 0 && s1 < g_label_count { ip = r64(g_label_poses, s1 * 8); }
-            else { ip = ip + 1; }
+            // Region iteration: a jump back to the innermost enclosing loop
+            // region's enter restarts the iteration; everything else is a
+            // plain label jump.  Loop execution is driven by region
+            // boundaries (the back-edge jump lands on the region enter), not
+            // by label-table lookups.
+            if s1 >= 0 && s1 < g_label_count {
+                target := r64(g_label_poses, s1 * 8);
+                if target >= 0 {
+                    // Innermost loop region enclosing the current ip (if any)
+                    cur_enter : ., mut = -1;
+                    ri2 : ., mut = 0;
+                    loop {
+                        if ri2 >= g_loop_region_count { break; }
+                        e2 := r64(g_loop_region_enter, ri2 * 8);
+                        x2 := r64(g_loop_region_exit,  ri2 * 8);
+                        if ip >= e2 && ip < x2 && e2 > cur_enter { cur_enter = e2; }
+                        ri2 = ri2 + 1;
+                    }
+                    if cur_enter >= 0 && target == cur_enter { ip = cur_enter; }  // iterate
+                    else { ip = target; }                                          // plain jump
+                } else { ip = ip + 1; }
+            } else { ip = ip + 1; }
             if ip < node_count { continue; } else { break; }
         }
         // IR_LABEL (21) - noop

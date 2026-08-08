@@ -233,8 +233,10 @@ fn tokenize(_src: string) {
                 else if nx == 111 || nx == 79 { _pos = _pos + 1; loop { oc := cur_char_at(_src, _pos, _slen); if oc >= 48 && oc <= 55 { _pos = _pos + 1; } else { break; } } }
                 else if nx == 98 || nx == 66 { _pos = _pos + 1; loop { bc := cur_char_at(_src, _pos, _slen); if bc == 48 || bc == 49 { _pos = _pos + 1; } else { break; } } }
             }
-            // Float
-            if cur_char_at(_src, _pos, _slen) == 46 {
+            // Float: only consume the '.' when it does not start a '..'
+            // range operator (otherwise `0..4` lexes as `0.` `.4` and the
+            // range is silently lost — the for-loop body never executes).
+            if cur_char_at(_src, _pos, _slen) == 46 && peek_at(_src, _pos, _slen) != 46 {
                 _pos = _pos + 1;
                 loop { if is_digit(cur_char_at(_src, _pos, _slen)) != 0 { _pos = _pos + 1; } else { break; } }
             }
