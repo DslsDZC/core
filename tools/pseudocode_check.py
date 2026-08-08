@@ -15,7 +15,7 @@ GLOSSARY = ROOT / "标识符对照表.md"
 RE_TOKEN = re.compile(r"(?<![A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*")  # 词边界：中文"5b"的 b 不算标识符
 RE_PARA = re.compile(r"（[^（）]*）|\([^()]*\)")  # 首次对照括号（全角+半角）
 RE_TABLE_ROW = re.compile(r"^\s*\|")
-RE_FN_SEC = re.compile(r"^### 函数[^\n]*\n(.*?)(?=^### |^## )", re.M | re.S)
+RE_FN_SEC = re.compile(r"^### 函数[^\n]*\n(.*?)(?=^### 函数|^## )", re.M | re.S)
 
 # 允许的领域专名（翻译约定 2/10 允许保留英文）：标题行/引用行整体跳过；
 # 含 x86 寄存器名、指令助记符、编码字段位名、ELF 常量、哈希算法名（按符号处理，可裸写）
@@ -47,7 +47,8 @@ ALLOWED = {"IR", "AST", "ELF", "PLT", "GOT", "RIP", "REX", "ModRM", "SIB", "VA",
            "IR_ALLOC_STRUCT", "MAKE_ENUM", "WR", "movabs", "WSL2",
            "ALU", "JMP", "JE", "JAE", "WRXB", "PHDR_SIZE", "RW", "RX", "e_entry",
            "SETcc", "ABI", "System", "V", "AMD64", "JNE", "C", "cr",
-           "DJB2", "FNV",
+           "DJB2", "FNV", "rodata", "TOML", "FFI", "N",
+           "O_WRONLY", "O_CREAT", "O_TRUNC", "O_RDONLY",
            # SIB 字段名（arch 文档）
            "scale", "index", "base",
            # x86-64 寄存器
@@ -102,6 +103,7 @@ for md in targets:
         clean = re.sub(r"`[^`]*`", "", clean)  # 反引号代码片段是记号不是正文
         clean = re.sub(r"0x[0-9a-fA-F]+", "", clean)  # 十六进制字面量是符号不是标识符
         clean = re.sub(r"r/m(8|16|32|64)?", "", clean)  # 汇编操作数记法 r/m64、r/m 等
+        clean = re.sub(r"//[^\n]*", "", clean)     # 注释内容允许源码字符引用（如 a、i）
         if any(ch in clean for ch in "{};"):
             errors.append(f"{md}:{ln}: 禁止符号 {[c for c in '{};' if c in clean]}")
         for tok in RE_TOKEN.findall(clean):
