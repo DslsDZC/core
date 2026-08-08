@@ -14,6 +14,8 @@ fn init_df() {
     g_df_cap = 0;
     g_df_node_cap = 0;
     g_df_edge_cap = 0;
+    g_df_node_region_cap = 0;   // node region array rebuilt on grow
+    g_cur_sg = -1;              // no region open yet
     fi : ., mut = 0;
     loop {
         if fi >= g_func_count { break; }
@@ -52,15 +54,30 @@ fn sg_push(kind: int) {
         pi = pi - 1;
     }
     w64(g_sgs, idx * ESZ_SG + OFF_SG_PARENT, parent);
+    g_cur_sg = idx;  // new innermost open region
     g_sg_count = idx + 1;
 }
 
+// sg_pop: close the last OPEN (EXIT<0) region, not g_sg_count-1.
+// With the old code the count is never decremented, so df_end_func's pop
+// would land on the same entry the ir_gen pop just closed, overwriting the
+// innermost region's EXIT with the whole-function node count. Search back
+// from the top for the entry whose EXIT is still -1, close exactly that one,
+// and restore g_cur_sg to its parent.
 fn sg_pop() {
     if g_sg_count <= 0 { return; }
-    idx := g_sg_count - 1;
+    idx : ., mut = -1;
+    pi := g_sg_count - 1;
+    loop {
+        if pi < 0 { break; }
+        if r64(g_sgs, pi * ESZ_SG + OFF_SG_EXIT) < 0 { idx = pi; break; }
+        pi = pi - 1;
+    }
+    if idx < 0 { return; }
     w64(g_sgs, idx * ESZ_SG + OFF_SG_EXIT, g_df_node_count);
     w64(g_sgs, idx * ESZ_SG + OFF_SG_NCOUNT,
         g_df_node_count - r64(g_sgs, idx * ESZ_SG + OFF_SG_NSTART));
+    g_cur_sg = r64(g_sgs, idx * ESZ_SG + OFF_SG_PARENT);
 }
 
 // --- Node creation ---
@@ -68,6 +85,8 @@ fn sg_pop() {
 fn df_create_node(opcode: int, dest: int, src1: int, src2: int, src3: int, type_kind: int) -> int {
     nid := g_df_node_count;
     grow_df_nodes(nid + 1);
+    grow_df_node_region(nid + 1);
+    w64(g_df_node_region, nid * 8, g_cur_sg);  // owning region (-1 = none)
     w64(g_df_nodes, nid * ESZ_DFNODE + OFF_DF_OPCODE, opcode);
     w64(g_df_nodes, nid * ESZ_DFNODE + OFF_DF_DEST, dest);
     w64(g_df_nodes, nid * ESZ_DFNODE + OFF_DF_S1, src1);
@@ -331,6 +350,31 @@ fn df_end_func(func_idx: int) {
 fn df_graph_to_dot() -> string {
     dot : ., mut = "digraph G {\n";
     dot = dot + "    rankdir=TB;\n";
+
+    // Region clusters: group each subgraph's nodes into a DOT cluster
+    si : ., mut = 0;
+    loop {
+        if si >= g_sg_count { break; }
+        skind := r64(g_sgs, si * ESZ_SG + OFF_SG_KIND);
+        sname : ., mut = "region";
+        if skind == SG_IF     { sname = "if"; }
+        if skind == SG_LOOP   { sname = "loop"; }
+        if skind == SG_FOR    { sname = "for"; }
+        if skind == SG_FLOW   { sname = "flow"; }
+        if skind == SG_UNSAFE { sname = "unsafe"; }
+        dot = dot + "  subgraph cluster_" + sname + int_str(si) + " { label=\"" + sname + "\";\n";
+        // Nodes in this region:
+        n0 := r64(g_sgs, si * ESZ_SG + OFF_SG_NSTART);
+        n1 := r64(g_sgs, si * ESZ_SG + OFF_SG_EXIT);
+        if n1 >= 0 {  // skip unclosed (EXIT<0) entries
+            ni : ., mut = n0;
+            loop { if ni >= n1 { break; }
+                dot = dot + "    n" + int_str(ni) + ";\n";
+                ni = ni + 1; }
+        }
+        dot = dot + "  }\n";
+        si = si + 1;
+    }
 
     // Node definitions
     ni : ., mut = 0;

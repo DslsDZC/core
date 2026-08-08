@@ -478,6 +478,11 @@ fn grow_df_nodes(needed: int) {
     nc : ., mut = g_df_node_cap * 2; if nc < 128 { nc = 128; } if nc < needed { nc = needed + 128; }
     nb := alloc(nc * ESZ_DFNODE); _dyncpy(g_df_nodes, g_df_node_cap * ESZ_DFNODE, nb);
     g_df_nodes = nb; g_df_node_cap = nc; }
+fn grow_df_node_region(needed: int) {
+    if needed < g_df_node_region_cap { return; }
+    nc : ., mut = g_df_node_region_cap * 2; if nc < 128 { nc = 128; } if nc < needed { nc = needed + 128; }
+    nb := alloc(nc * 8); _dyncpy(g_df_node_region, g_df_node_region_cap * 8, nb);
+    g_df_node_region = nb; g_df_node_region_cap = nc; }
 fn grow_df_edges(needed: int) {
     if needed < g_df_edge_cap { return; }
     nc : ., mut = g_df_edge_cap * 2; if nc < 128 { nc = 128; } if nc < needed { nc = needed + 128; }

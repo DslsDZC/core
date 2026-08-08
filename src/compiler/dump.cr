@@ -243,13 +243,17 @@ fn cir_text_dump() -> string {
             rstart := r64(g_sgs, ri * ESZ_SG + OFF_SG_NSTART);
             rend := r64(g_sgs, ri * ESZ_SG + OFF_SG_EXIT);
             if rstart >= start && rstart < start + count {
-                rname : ., mut = "?";
-                if rkind == SG_IF     { rname = "if"; }
-                if rkind == SG_LOOP   { rname = "loop"; }
-                if rkind == SG_FOR    { rname = "for"; }
-                if rkind == SG_FLOW   { rname = "flow"; }
-                if rkind == SG_UNSAFE { rname = "unsafe"; }
-                ccr = ccr + "  Region: " + rname + " nodes " + int_str(rstart) + ".." + int_str(rend) + "\n";
+                rend := r64(g_sgs, ri * ESZ_SG + OFF_SG_EXIT);
+                if rend >= 0 {  // skip unclosed (EXIT<0) regions
+                    rname : ., mut = "?";
+                    if rkind == SG_FUNC   { rname = "func"; }
+                    if rkind == SG_IF     { rname = "if"; }
+                    if rkind == SG_LOOP   { rname = "loop"; }
+                    if rkind == SG_FOR    { rname = "for"; }
+                    if rkind == SG_FLOW   { rname = "flow"; }
+                    if rkind == SG_UNSAFE { rname = "unsafe"; }
+                    ccr = ccr + "  Region: " + rname + " nodes " + int_str(rstart) + ".." + int_str(rend) + "\n";
+                }
             }
             ri = ri + 1;
         }
