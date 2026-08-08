@@ -131,3 +131,14 @@ RVSDG 式嵌套 region 已落地（规格 docs/superpowers/specs/2026-08-08-regi
   - `ptr_analysis.cr` 注释修正 → ptr_analysis.md
   - `lexer.cr` 浮点/`..` 范围修复（main 已有）→ 核对 lexer.md 是否已反映
 - 完成后需重跑 `python3 tools/pseudocode_check.py` 并更新相应文档的源行数标注
+
+## 待实现特性
+
+### 控制流自动惰性（2026-08-09 记）
+- 目标：控制流结构（if / while / for 等）的分支表达式自动惰性求值——未被执行的路径不产生求值开销
+- 现状：lazy 基础已实现（IR_LAZY_THUNK/IR_LAZY_FORCE、纯函数追踪、force 发射），但控制流默认仍是急切求值
+- 方向：
+  - 分析控制流分支中可延迟的表达式（引用已有 lazy thunk/force 机制）
+  - 数据流图层面标记惰性分支（DFNode 标签），interp / ELF 后端对应处理
+  - 与现有 lazy 内建（lazy() 显式惰性）共存策略——自动 vs 显式
+- 参考：`docs/lazy.md`（lazy evaluation implementation status）、`src/compiler/ir_gen.cr`（IR_LAZY_THUNK 发射）
