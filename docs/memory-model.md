@@ -245,6 +245,8 @@ go f()  →  新 Arena G  →  函数 f 内所有分配在 G
 （init/new/reset）、动态元数据、free list、嵌套；IR 子图绑定（函数/loop/for/unsafe 自动
 arena lifecycle + 大小预计算）；ELF 后端双路径 alloc（arena 感知 + 全局 bump 回退）；
 mmap 堆扩展（BSS 打满自动 mmap 1GB）；emit_alloc_body 零初始化 + 链式扩容。
+
+**更新（2026-08-09）**：发现 arena bump 分配运行时死循环（`arena_init` + `arena_new` 后调用 `alloc` 运行时挂起、无输出、CPU 占用）。ELF 后端 arena 相关编码已全部 objdump 验证正确（`mov [r8],r10d` 的 44 89 00 错误已修复回 45 89 10），定位方向为 `emit_alloc_body` 生成的运行时逻辑（g_current_arena 检查 / bump 推进 / .Lretry 循环 / OOM 链式扩展）。详见 TODO.md 预存 bug 5。
 以下"待解决问题"为后续改进方向。
 
 ## 待解决问题
