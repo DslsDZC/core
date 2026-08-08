@@ -81,13 +81,13 @@ def test_state_edges():
     """State edges (VSDG): side-effect chain + loop termination dependencies
     must appear in the cir dump as 'state: nA -> nB' lines."""
     out = cir_dump("fn main() -> int {\n    s : ., mut = 0;\n    s = s + 1;\n    s = s + 2;\n    return s;\n}\n")
-    assert 'state' in out, f"state edges not shown in cir dump:\n{out}"
+    assert re.search(r'state: n\d+ -> n\d+', out), f"state edges not shown in cir dump:\n{out}"
 
 def test_loop_termination_edge():
     """A loop whose body has side effects must carry a termination dependency
     from the last side-effect node to the loop exit node."""
     out = cir_dump("fn main() -> int {\n    s : ., mut = 0;\n    for i in 0..3 { s = s + i; }\n    return s;\n}\n")
-    assert 'state' in out, f"loop termination state edge missing in cir dump:\n{out}"
+    assert re.search(r'state: n\d+ -> n\d+', out), f"loop termination state edge missing in cir dump:\n{out}"
 
 # --- Interpreter loop execution (TODO#3) ---
 # `corec run` compiles and interprets inline code; main()'s return value
@@ -164,7 +164,7 @@ def ccr_walk(path: str):
             pos += dl
     if ver >= 5:
         sg_count = u32()
-        pos += sg_count * 48
+        pos += sg_count * 24
     return ver, sg_count, len(d), pos
 
 def test_ccr_v2_sg_section():
@@ -230,8 +230,8 @@ def test_state_edges_cache_persist():
                 pass
     finally:
         os.unlink(path)
-    assert 'state' in outs[0], f"first run missing state edges:\n{outs[0]}"
-    assert 'state' in outs[1], f"cache-hit run lost state edges:\n{outs[1]}"
+    assert re.search(r'state: n\d+ -> n\d+', outs[0]), f"first run missing state edges:\n{outs[0]}"
+    assert re.search(r'state: n\d+ -> n\d+', outs[1]), f"cache-hit run lost state edges:\n{outs[1]}"
 
 if __name__ == '__main__':
     import sys

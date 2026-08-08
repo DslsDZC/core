@@ -13,7 +13,7 @@
 //   [str_consts: str_const_count × [str_idx: u32]]
 //   [structs: struct_count × [name_idx: u32] [field_count: u32] fields[field_count]×[name_idx, type: u32 ×2]]
 //   [enums: enum_count × [name_idx: u32] [variant_count: u32] variants[variant_count]×[name_idx: u32] [field_count: u32] fields[field_count]×[type: u32]]
-//   [globals: global_count × [name_idx: u32] [var_idx: u32]]
+//   [globals: global_count × [name_idx: u32] [var_idx: u32] [init_val: i64]]  (16B each; init_val added in v4)
 //   [opt_meta: opt_count × [key: u32] [len: u32] [data: len bytes]]   (v3+)
 //   [sgs: sg_count × [kind, enter, exit, parent, nstart, ncount: i32 ×6]]  (v5+)
 
@@ -21,6 +21,11 @@
 // No bitwise ops in Core — use arithmetic instead.
 
 CCR_MAGIC : int = 827474755;  // "CCR1" (0x31524343)
+
+// On-disk SG record size: 6 × i32 = 24 bytes (kind/enter/exit/parent/nstart/ncount).
+// NOTE: the in-memory SG entry is ESZ_SG (48 bytes, u64 fields) — that is NOT
+// the wire format. Always use ESZ_SG_DISK for .ccr size math, never ESZ_SG.
+ESZ_SG_DISK : int = 24;
 
 fn bw_byte(val: int, shift: int) -> int {
     if shift == 0 { return val % 256; }
@@ -131,8 +136,8 @@ fn calc_ccr_size() -> int {
         mi = mi + 1;
     }
 
-    // v5: SG (region) section — count + sg_count × 48B records
-    sz = sz + 4 + g_sg_count * ESZ_SG;
+    // v5: SG (region) section — count + sg_count × 24B records (6×i32)
+    sz = sz + 4 + g_sg_count * ESZ_SG_DISK;
 
     return sz;
 }
@@ -290,7 +295,7 @@ fn save_ccr(path: string) -> int {
         mi = mi + 1;
     }
 
-    // v5: SG (region) section — sg_count × 48B (kind/enter/exit/parent/nstart/ncount)
+    // v5: SG (region) section — sg_count × 24B (6×i32: kind/enter/exit/parent/nstart/ncount)
     buf_write_u32(buf, pos, g_sg_count); pos = pos + 4;
     si2 : ., mut = 0;
     loop {
@@ -562,13 +567,13 @@ fn load_ccr(data: string, fsize: int) -> int {
         }
     }
 
-    // SG (region) section (version >= 5): count + sg_count × 48B records.
+    // SG (region) section (version >= 5): count + sg_count × 24B records (6×i32).
     // Restores g_sgs/g_sg_count for frontend passes; the backend ignores
     // regions, but the bytes must still be skipped correctly.
     if ver >= 5 {
         if pos + 4 > fsize { return -1; }
         sg_n := buf_read_u32(data, pos); pos = pos + 4;
-        if pos + sg_n * 48 > fsize { return -1; }
+        if pos + sg_n * ESZ_SG_DISK > fsize { return -1; }
         sg_i : ., mut = 0;
         loop {
             if sg_i >= sg_n { break; }
