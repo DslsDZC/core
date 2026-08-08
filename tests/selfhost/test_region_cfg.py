@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Region-based control flow tests — dump .cir text and assert region structure."""
-import os, re, subprocess, tempfile
+import os, re, struct, subprocess, tempfile
 
 BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 COREC = os.path.join(BASE, 'build/corec')
@@ -120,12 +120,127 @@ def test_nested_loop_run():
                        capture_output=True, text=True, cwd=BASE, timeout=30)
     assert r.returncode == 9, f"nested loop expected 9 (3x3), got exit={r.returncode} stdout={r.stdout!r} stderr={r.stderr!r}"
 
+# --- Serialization v2 (.ccr SG section + edge kind) ---
+
+def ccr_walk(path: str):
+    """Walk the .ccr binary layout (mirrors load_ccr reading order) and return
+    (version, sg_count, file_size, end_pos). Raises if the layout is invalid."""
+    with open(path, 'rb') as fh:
+        d = fh.read()
+    pos = 0
+    def u32():
+        nonlocal pos
+        v = struct.unpack_from('<I', d, pos)[0]
+        pos += 4
+        return v
+    assert struct.unpack_from('<I', d, pos)[0] == 0x31524343, "bad magic"  # "CCR1"
+    pos += 4
+    ver = u32()
+    func_cnt, instr_cnt, var_cnt, str_cnt, str_const_cnt, struct_cnt, enum_cnt = \
+        [u32() for _ in range(7)]
+    for _ in range(str_cnt):
+        sl = u32()
+        pos += sl
+    pos += func_cnt * 28
+    pos += instr_cnt * 24
+    pos += var_cnt * 12
+    pos += str_const_cnt * 4
+    for _ in range(struct_cnt):
+        u32(); fc = u32()
+        pos += fc * 8
+    for _ in range(enum_cnt):
+        u32(); vc = u32()
+        for _ in range(vc):
+            u32(); tc = u32()
+            pos += tc * 4
+    sg_count = None
+    if ver >= 2:
+        gc = u32()
+        pos += gc * 16
+    if ver >= 3:
+        mc = u32()
+        for _ in range(mc):
+            u32(); dl = u32()
+            pos += dl
+    if ver >= 5:
+        sg_count = u32()
+        pos += sg_count * 48
+    return ver, sg_count, len(d), pos
+
+def test_ccr_v2_sg_section():
+    """.ccr 序列化 v2：version==5，文件尾追加 SG 段（func+for 两个 region）"""
+    src = "fn main() -> int {\n    s : ., mut = 0;\n    for i in 0..3 { s = s + i; }\n    return s;\n}\n"
+    with tempfile.NamedTemporaryFile('w', suffix='.cr', delete=False) as f:
+        f.write(src)
+        path = f.name
+    ccr_path = os.path.join(BASE, 'build/test_ccr_v2.ccr')
+    try:
+        os.unlink(ccr_path)
+    except FileNotFoundError:
+        pass
+    r = subprocess.run(['./build/corec', 'ccr', path, '-o', ccr_path],
+                       capture_output=True, text=True, cwd=BASE, timeout=120)
+    os.unlink(path)
+    assert r.returncode == 0, f"ccr failed: {r.stderr}"
+    ver, sg_count, fsize, end = ccr_walk(ccr_path)
+    assert ver == 5, f"expected .ccr version 5, got {ver}"
+    assert sg_count is not None and sg_count >= 2, \
+        f"expected SG section with >=2 regions (func+for), got {sg_count}"
+    assert end == fsize, f"format walk ended at {end} of {fsize} bytes"
+
+def test_ccr_roundtrip_v2():
+    """save→load 往返守卫：v2 文件经 corearch 加载后 ELF 输出行为不变。
+    程序计算 0+1+2+3=6，ELF 运行时以 main 返回值为退出码。"""
+    src = "fn main() -> int {\n    s : ., mut = 0;\n    for i in 0..4 { s = s + i; }\n    return s;\n}\n"
+    with tempfile.NamedTemporaryFile('w', suffix='.cr', delete=False) as f:
+        f.write(src)
+        path = f.name
+    out = os.path.join(BASE, 'build/core_region_v2')
+    try:
+        os.unlink(out)
+    except FileNotFoundError:
+        pass
+    r = subprocess.run(['./build/corec', 'build', path, '-o', out, '--static'],
+                       capture_output=True, text=True, cwd=BASE, timeout=120)
+    os.unlink(path)
+    assert r.returncode == 0, f"build failed: {r.stderr}"
+    os.chmod(out, 0o755)
+    run = subprocess.run([out], capture_output=True, text=True, timeout=10)
+    assert run.returncode == 6, \
+        f"expected exit 6 (sum of 0..4), got {run.returncode} stdout={run.stdout!r}"
+
+def test_state_edges_cache_persist():
+    """缓存命中路径不丢 state 边：同路径第二次 cir dump（cache hit）必须仍显示
+    state 边（cir_cache v2 边序列化带 kind 的回归守卫）"""
+    src = "fn main() -> int {\n    s : ., mut = 0;\n    s = s + 1;\n    s = s + 2;\n    return s;\n}\n"
+    with tempfile.NamedTemporaryFile('w', suffix='.cr', delete=False) as f:
+        f.write(src)
+        path = f.name
+    cir_path = os.path.splitext(path)[0] + '.cir'
+    outs = []
+    try:
+        for _ in range(2):
+            r = subprocess.run(['./build/corec', 'cir', path],
+                               capture_output=True, text=True, cwd=BASE, timeout=120)
+            assert r.returncode == 0, f"cir failed: {r.stderr}"
+            outs.append(r.stdout)
+            try:
+                os.unlink(cir_path)
+            except FileNotFoundError:
+                pass
+    finally:
+        os.unlink(path)
+    assert 'state' in outs[0], f"first run missing state edges:\n{outs[0]}"
+    assert 'state' in outs[1], f"cache-hit run lost state edges:\n{outs[1]}"
+
 if __name__ == '__main__':
     import sys
     tests = [test_if_region, test_loop_region, test_node_region_mapping,
              test_state_edges, test_loop_termination_edge,
              test_for_loop_run, test_while_loop_run, test_break_continue_run,
-             test_nested_loop_run]
+             test_nested_loop_run,
+             test_ccr_v2_sg_section, test_ccr_roundtrip_v2,
+             test_state_edges_cache_persist]
     failed = 0
     for t in tests:
         try:

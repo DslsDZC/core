@@ -5,8 +5,10 @@
 // compiler's global arrays.
 
 // Magic header for .cir cache files
+// v5: edges serialized as 4×8B (from/to/next/kind) so cache hits restore
+// state edges; v4 cache files are rejected by the version check.
 CIR_CACHE_MAGIC : int = 0xC1C1C1C1C1C1C1C1;
-CIR_CACHE_VER   : int = 4;
+CIR_CACHE_VER   : int = 5;
 
 g_cir_write_buf : string, mut;
 g_cir_write_pos : int, mut;
@@ -40,7 +42,7 @@ fn save_cir_cache(path: string, func_idx: int) -> int {
     total_size : ., mut = 40 + name_len;
     total_size = total_size + 8 + var_count * 24;
     total_size = total_size + 8 + node_count * 64;
-    total_size = total_size + 8 + g_df_edge_count * 24;
+    total_size = total_size + 8 + g_df_edge_count * 32;  // v5: 4 fields incl. kind
     total_size = total_size + 8 + instr_count * 48;
     total_size = total_size + 8;
     size_si : ., mut = 0;
@@ -98,6 +100,7 @@ fn save_cir_cache(path: string, func_idx: int) -> int {
 
     // Write edges (all edges for this function's nodes)
     // For simplicity, write ALL edges (they're few compared to nodes)
+    // v5: 4×8B per edge — from/to/next + kind (state edges survive cache hits)
     w64_cir(fd, g_df_edge_count);
     ei : ., mut = 0;
     loop {
@@ -105,6 +108,7 @@ fn save_cir_cache(path: string, func_idx: int) -> int {
         w64_cir(fd, r64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_FROM));
         w64_cir(fd, r64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_TO));
         w64_cir(fd, r64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_NEXT));
+        w64_cir(fd, r64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_KIND));
         ei = ei + 1;
     }
 
@@ -241,7 +245,7 @@ fn load_cir_cache(path: string, func_idx: int) -> int {
     }
     g_df_node_count = base_node + node_count;
 
-    // Restore edges
+    // Restore edges (v5: 4×8B per edge — from/to/next/kind)
     edge_count := r64(data, pos); pos = pos + 8;
     grow_df_edges(edge_count);
     g_df_edge_count = edge_count;
@@ -251,13 +255,11 @@ fn load_cir_cache(path: string, func_idx: int) -> int {
         e_from := r64(data, pos); pos = pos + 8;
         e_to := r64(data, pos); pos = pos + 8;
         e_next := r64(data, pos); pos = pos + 8;
+        e_kind := r64(data, pos); pos = pos + 8;
         w64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_FROM, e_from);
         w64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_TO, e_to);
         w64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_NEXT, e_next);
-        // The on-disk cache format predates edge kinds (v2 serialization is a
-        // later task); restored edges default to data edges. This only
-        // initializes the in-memory field — the format is unchanged.
-        w64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_KIND, 0);
+        w64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_KIND, e_kind);
         ei = ei + 1;
     }
 
