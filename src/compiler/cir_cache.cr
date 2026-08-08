@@ -223,10 +223,17 @@ fn load_cir_cache(path: string, func_idx: int) -> int {
     node_count := r64(data, pos); pos = pos + 8;
     base_node := g_df_node_count;
     grow_df_nodes(g_df_node_count + node_count);
+    // RegionCheck 显式映射：恢复的节点没有经过 df_create_node，须在此同步写入
+    // node→region 映射，否则 subgraph_containing 在缓存命中路径读到未初始化
+    // 的 g_df_node_region（null → SIGSEGV）。缓存不保存内层 region（Minor #4），
+    // 以当前 open 的 func region（df_begin_func 已 sg_push）为归属——与旧的
+    // 线性扫 g_sgs 在缓存命中路径得到的结果一致。
+    grow_df_node_region(base_node + node_count);
     ni : ., mut = 0;
     loop {
         if ni >= node_count { break; }
         n := base_node + ni;
+        w64(g_df_node_region, n * 8, g_cur_sg);
         w64(g_df_nodes, n * ESZ_DFNODE + OFF_DF_OPCODE, r64(data, pos)); pos = pos + 8;
         w64(g_df_nodes, n * ESZ_DFNODE + OFF_DF_DEST, r64(data, pos)); pos = pos + 8;
         w64(g_df_nodes, n * ESZ_DFNODE + OFF_DF_S1, r64(data, pos)); pos = pos + 8;

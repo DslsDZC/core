@@ -209,6 +209,39 @@ def test_ccr_roundtrip_v2():
     assert run.returncode == 6, \
         f"expected exit 6 (sum of 0..4), got {run.returncode} stdout={run.stdout!r}"
 
+def test_region_check_pointer_escape():
+    """嵌套 region 下的指针逃逸检测（RegionCheck 走显式映射后仍正确）"""
+    src = "fn bad() -> &int {\n    x := 42;\n    return &x;\n}\nfn main() -> int { return 0; }\n"
+    with tempfile.NamedTemporaryFile('w', suffix='.cr', delete=False) as f:
+        f.write(src); path = f.name
+    r = subprocess.run(['./build/corec', 'check', path], capture_output=True, text=True,
+                       cwd=BASE, timeout=30)
+    os.unlink(path)
+    assert 'B010' in r.stdout or 'error' in r.stdout, f"expected escape error, got {r.stdout!r}"
+
+def test_region_check_cache_hit():
+    """RegionCheck 在缓存命中路径不回归：同路径第二次 build（全函数 cache hit）
+    不得因 g_df_node_region 未恢复而崩溃/误报。显式映射改造的回归守卫：
+    load_cir_cache 恢复节点时需同步写入 node→region 映射。"""
+    src = "fn main() -> int {\n    s : ., mut = 0;\n    for i in 0..3 { s = s + i; }\n    return s;\n}\n"
+    with tempfile.NamedTemporaryFile('w', suffix='.cr', delete=False) as f:
+        f.write(src)
+        path = f.name
+    out = os.path.join(BASE, 'build/test_region_cache_hit')
+    try:
+        for run in (1, 2):
+            r = subprocess.run(['./build/corec', 'build', path, '-o', out, '--static'],
+                               capture_output=True, text=True, cwd=BASE, timeout=120)
+            assert r.returncode == 0, \
+                f"build failed on run {run} (cache {'hit' if run == 2 else 'miss'}): " \
+                f"stdout={r.stdout!r} stderr={r.stderr!r}"
+    finally:
+        os.unlink(path)
+        try:
+            os.unlink(out)
+        except FileNotFoundError:
+            pass
+
 def test_state_edges_cache_persist():
     """缓存命中路径不丢 state 边：同路径第二次 cir dump（cache hit）必须仍显示
     state 边（cir_cache v2 边序列化带 kind 的回归守卫）"""
@@ -240,6 +273,7 @@ if __name__ == '__main__':
              test_for_loop_run, test_while_loop_run, test_break_continue_run,
              test_nested_loop_run,
              test_ccr_v2_sg_section, test_ccr_roundtrip_v2,
+             test_region_check_pointer_escape, test_region_check_cache_hit,
              test_state_edges_cache_persist]
     failed = 0
     for t in tests:
