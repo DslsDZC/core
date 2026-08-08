@@ -334,9 +334,9 @@ fn emit_alloc_body(buf: string, pos: int, bss_va: int, globals_size: int) -> int
     w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, rip_pos6);
     w64(g_x86_rip_patch_globals, g_x86_rip_patch_count * 8, gv_current_arena);
     g_x86_rip_patch_count = g_x86_rip_patch_count + 1;
-    // mov [r8], r10d — 44 89 00 (REX.R+B=0x44; modrm 00 000 000 -> [r8];
-    // old 45 89 10 had modrm rm=100 which consumed a SIB byte)
-    w8(buf, pos+cp, 68); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 0); cp = cp + 3;
+    // mov [r8], r10d — 45 89 10 (restore arena index: r8 = g_current_arena addr)
+    // objdump 验证：45 89 10 = mov %r10d,(%r8) ✓；44 89 00 = mov %r8d,(%rax) ✗
+    w8(buf, pos+cp, 69); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 16); cp = cp + 3;
     // ret
     w8(buf, pos+cp, 195); cp = cp + 1;
 
@@ -1557,7 +1557,7 @@ fi = 0; loop { if fi >= g_ir_func_count { break; }
         gvi := r64(g_x86_rip_patch_globals, rpi2 * 8);
         // Verify: buffer at ppos-3 should contain LEA prefix (0x4C or 0x4D for REX.WR/WRB)
         lea_check := bu8(buf, ppos - 3);
-        if lea_check != 76 && lea_check != 77 && lea_check != 73 && lea_check != 79 {
+        if lea_check != 72 && lea_check != 73 && lea_check != 76 && lea_check != 77 && lea_check != 74 && lea_check != 78 && lea_check != 79 && lea_check != 75 {
             print("  BAD rip["); print(int_str(rpi2)); print("] ppos="); print(int_str(ppos));
             print(" gvi="); print(int_str(gvi));
             print(" byte="); println(int_str(lea_check));
