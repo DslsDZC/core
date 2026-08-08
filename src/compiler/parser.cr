@@ -749,7 +749,10 @@ fn parse_stmt() -> int {
     }
     if tok_k(t) == T_YIELD {
         advance_tok();
-        val := parse_expr();
+        val : ., mut = -1;
+        // Bare `yield;` is a pure suspension (no value); only parse an
+        // expression when one is actually present.
+        if !check(T_SEMI) && !check(T_RBRACE) { val = parse_expr(); }
         if check(T_SEMI) { advance_tok(); }
         return alloc_node(EXPR_YIELD, val, 0, 0, 0, 0, 0, tok_ln(t), tok_cl(t));
     }

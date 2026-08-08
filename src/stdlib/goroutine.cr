@@ -15,7 +15,7 @@ g_next_id : int, mut = 1;
 
 // G struct layout (80 bytes):
 //   0: id
-//   8: status (0=runnable, 1=running, 2=waiting)
+//   8: status (0=runnable, 1=running, 2=waiting, 3=dead)
 //  16: sp (stack pointer for fiber)
 //  24: stack_lo (lowest address of stack)
 //  32: arena_id
@@ -26,12 +26,15 @@ g_next_id : int, mut = 1;
 //  72: temp_val (temp value for wait queue handoff)
 
 fn g_new(entry_fn: int, arg: int, arg_type: int) -> int {
-    // Allocate stack (16KB)
+    // Create the goroutine's arena FIRST: the fiber stack and G struct must
+    // live in the G's own arena (not a transient one), so they survive until
+    // g_free reclaims them at goroutine exit. With the subgraph arena model,
+    // alloc() routes to g_current_arena when it is >= 0 — arena_new() sets it.
+    aid := arena_new();
+
+    // Allocate stack (16KB) — from the G's arena
     stack := alloc(16384);
     stack_top := stack + 16384 - 8;
-
-    // Create new arena for this goroutine
-    aid := arena_new();
 
     // Initialize fiber. The entry is ALWAYS goroutine_entry_wrapper
     // (rt.s / emitted by the ELF backend): it reads saved_fn/saved_arg
@@ -59,7 +62,9 @@ fn g_new(entry_fn: int, arg: int, arg_type: int) -> int {
 }
 
 fn g_free(g: int) {
-    // Reset arena
+    // Reset arena (reclaims the fiber stack + G struct, which live in it)
     aid := r64(g, 32);
     arena_reset(aid);
+    // Mark G dead so it is never re-enqueued (status 3 = _Gdead)
+    w64(g, 8, 3);
 }

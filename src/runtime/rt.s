@@ -289,7 +289,7 @@ m_start_workers:
 .Lworker_loop:
     inc r12              # increment to next worker index (start at 1)
     cmp r12, rbx
-    jg .Ldone            # if r12 > n, done
+    jge .Ldone           # if r12 >= n, done (workers are 1..n-1; n-1 total)
 
     # Allocate 64KB stack for worker
     push r12
@@ -354,7 +354,8 @@ worker_entry:
 # Called via fiber_init as the fiber entry.
 # Reads the current G via g_get_curg(),
 # loads saved_fn and saved_arg from G, calls saved_fn(saved_arg),
-# sends rax to result_ch, then yields forever.
+# sends rax to result_ch, then reclaims the goroutine:
+# g_free (arena_reset + mark _Gdead) and sched_schedule to the next G.
 .globl goroutine_entry_wrapper
 .type goroutine_entry_wrapper, @function
 goroutine_entry_wrapper:
@@ -368,6 +369,12 @@ goroutine_entry_wrapper:
     mov rdi, [rax + 40]   # rdi = result_ch
     pop rsi               # rsi = return value
     call chan_send        # chan_send(result_ch, return_value)
-.Lyield_loop:
-    call sched_yield
-    jmp .Lyield_loop
+.Lexit:
+    # Get current G and reclaim it: arena_reset + mark _Gdead
+    call g_get_curg
+    mov rdi, rax
+    call g_free
+    # Exit goroutine: switch to next without re-enqueueing
+    call sched_schedule
+    # If schedule returns (no more work), just return (fiber dead)
+    ret
