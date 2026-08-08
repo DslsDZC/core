@@ -160,4 +160,6 @@ make_array<int, user_input>();  // ❌ 编译错误：泛型参数 N 需要编�
 
 ## 当前状态
 
-泛型函数和泛型 struct 已在 checker 和 ir_gen 中部分实现（`infer_gen_call`、`fi_generic_count`）。设计文档此前缺失。跨模块泛型序列化尚未实现。
+泛型函数和泛型 struct 已在 checker 和 ir_gen 中实现（`infer_gen_call`、`fi_generic_count`）。
+跨模块泛型实例化由 `src/compiler/monomorph.cr` 承担（已纳入自举构建）。
+具体实现进度以 `TODO.md` 与源码为准。

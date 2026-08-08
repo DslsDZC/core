@@ -35,23 +35,27 @@ Core 编译器使用两种中间表示：
 
 `.csr` 是规约约束的二进制序列化格式——将内存中的 TagNode（约束元数据）数组序列化为文件，与 `.cir`（DFNode 数据流图）配套。
 
+> 注：本节描述 `.csr`（规约约束元数据）格式。`.ccr` 二进制格式（CCR1 文件）的 v5 变更见「六、线性化」中的 `.ccr` 二进制序列化小节。
+
 ### 整体布局
 
 ```
 [文件头：36 字节]
 [DFNode 数组：dataflow_node_count × 64 字节]
 [约束节点数组（可选）：tag_node_count × 40 字节]
-[DFEdge 数组：edge_count × 24 字节]
 [字符串表：变长]
 [函数元信息数组：func_count × 28 字节]
 [符号引用表：变长]
+[SG region 段（.ccr v5）：sg_count × 24B：kind/enter/exit/parent/nstart/ncount]
 ```
+
+> 注：DFEdge 仅在内存与 `.cir` 缓存中（v5 按 4×8B 带 kind 序列化），**不落盘 `.ccr`**——CCR1 writer（`save_ccr`，ccr_io.cr）只写指令/变量/字符串等数组。布局中的 SG region 段即 `.ccr` v5 追加段（详见「六、线性化」）。
 
 ### 文件头（36 字节）
 
 | 偏移 | 大小 | 字段 | 说明 |
 |------|------|------|------|
-| 0 | 4 | magic | `0x31524343`（ASCII `CSR1`） |
+| 0 | 4 | magic | `0x31524343`（ASCII `CCR1`） |
 | 4 | 4 | version | 版本号，当前为 1 |
 | 8 | 4 | dataflow_node_count | 数据流节点数量 |
 | 12 | 4 | tag_node_count | 规约约束节点数量 |
@@ -103,13 +107,14 @@ DFNode 覆盖两种节点：普通指令节点（opcode ≤ IR_AWAIT）和规约
 | 6 | TAG_SPEC_FN | 检查函数引用 |
 | 7 | TAG_USER_TAG | 自定义标签 |
 
-### DFEdge（24 字节，同现有内存格式）
+### DFEdge（内存 32 字节；不落盘 `.ccr`——仅 `.cir` 缓存 v5 序列化）
 
 | 偏移 | 大小 | 字段 | 说明 |
 |------|------|------|------|
 | 0 | 8 | from_node | 源节点 ID |
 | 8 | 8 | to_node | 目标节点 ID |
 | 16 | 8 | next_out | 同一源节点的下一条出边索引（-1 = 结尾） |
+| 24 | 8 | kind | 边类型：0=data, 1=state（VSDG state edge；`.cir` 缓存 v5 按 4×8B 序列化） |
 
 边使用邻接列表结构：每个节点通过 `first_edge` → `next_out` 链表遍历其出边。
 
@@ -216,6 +221,10 @@ DFNode 覆盖两种节点：普通指令节点（opcode ≤ IR_AWAIT）和规约
 ## 六、线性化（数据流图 → `.ccr`）
 
 `lower_to_ccr()` 将数据流图线性化为线性 IR 指令数组供后端消费。规约约束节点（opcode ≥ 30）照常线性化，但 `corearch` 后端在代码生成时跳过它们。
+
+### `.ccr` 二进制序列化（v5，2026-08）
+
+`.ccr` 文件头 magic 为 `0x31524343`（ASCII `CCR1`）。序列化 v2（版本号 5）：文件尾部追加 SG region 段（`sg_count × 24B`：kind/enter/exit/parent/nstart/ncount 六个 i32，即 `ESZ_SG_DISK`），v4 文件兼容加载。**DFEdge 不落盘 `.ccr`**——CCR1 writer（`save_ccr`，ccr_io.cr）只序列化指令/变量/字符串等数组；边仅在内存与 `.cir` 缓存中（v5 按 4×8B：from/to/next/kind，0=data, 1=state）。
 
 ---
 

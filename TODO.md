@@ -62,6 +62,20 @@
 - **Python bootstrap 词法修复**：`old` 不再被错误保留，可作为普通标识符
 - **自举依赖补全**：bootstrap 构建纳入并发运行时依赖、共享 arena 全局和 fiber 声明
 
+## Region 化控制流（2026-08-08 完成）
+
+RVSDG 式嵌套 region 已落地（规格 docs/superpowers/specs/2026-08-08-region-cfg-design.md）：
+- SG_IF + g_df_node_region 显式映射 + sg_pop close 语义修复
+- 解释器 region 迭代（回跳经 SG 表）+ lexer float/`..` 修复（`0..4` 的 `..` 被 float 扫描吃掉——for 循环 bug 真根因）
+- state edges（副作用链 + 循环终止依赖）+ .ccr v5（SG 段 24B + edge kind + v4 兼容）
+
+### 已知缺口（region 化相关，待修）
+- 缓存命中路径 SG 段不完整（load_cir_cache 不恢复嵌套 region——仅函数级 region）
+- while 循环无终止依赖（while 不生成 region）
+- 终止边源边界与链头推进（已修复，2026-08-08——final review Important #1：sg_pop 终止边源须在 region 内 + 链头推进到 exit 节点，test_termination_edge_source_guard 覆盖）
+- callee inline 执行中的循环崩溃（解释器限制，预存）
+- P5 验收"自举 O0/O1 全绿"未达成——被预存 SIGSEGV 阻塞（TODO.md bug 1：corec build src/compiler 崩溃），归属自举修复分支
+
 ## 预存 Bug（不阻塞开发，待修复）
 
 ### 1. 完整编译器自举内存峰值

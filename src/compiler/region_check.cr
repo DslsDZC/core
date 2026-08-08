@@ -3,18 +3,11 @@
 // Runs after PointerAnalysis (ptr_analysis.cr) which builds g_pts table.
 
 fn subgraph_containing(node_seq: int) -> int {
-    // Search subgraph table for innermost subgraph containing node_seq
-    best := -1;
-    si : ., mut = 0;
-    loop { if si >= g_sg_count { break; }
-        nstart := r64(g_sgs, si * ESZ_SG + OFF_SG_NSTART);
-        ncount := r64(g_sgs, si * ESZ_SG + OFF_SG_NCOUNT);
-        if node_seq >= nstart && node_seq < nstart + ncount {
-            best = si;
-        }
-        si = si + 1;
+    // 显式映射：O(1) 归属查询（g_df_node_region 由 df_create_node 写入）
+    if node_seq >= 0 && node_seq < g_df_node_count {
+        return r64(g_df_node_region, node_seq * 8);
     }
-    return best;
+    return -1;
 }
 
 fn is_in_unsafe(node_seq: int) -> int {

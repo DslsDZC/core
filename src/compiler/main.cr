@@ -470,6 +470,9 @@ fn corec_main() -> int {
             println(out);
             return 1;
         }
+        // Text dump with region annotations (g_sgs fully populated by the
+        // df_begin_func/df_end_func + sg_push/sg_pop calls in the IR gen loop above)
+        print(cir_text_dump());
         print(" -> ");
         println(out);
         return 0;

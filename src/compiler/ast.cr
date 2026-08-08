@@ -609,6 +609,7 @@ struct DFEdge {
     from_node: int,
     to_node: int,
     next_out: int,   // next edge from same source (-1 = none)
+    kind: int,       // 0=data (def-use), 1=state (ordering/termination)
 }
 
 // Dataflow graph arrays

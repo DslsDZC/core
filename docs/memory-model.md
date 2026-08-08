@@ -239,6 +239,14 @@ go f()  →  新 Arena G  →  函数 f 内所有分配在 G
 
 ---
 
+## 当前实现状态
+
+**更新（2026-07-28）**：Arena 内存模型已完整实现（`src/stdlib/arena.cr`）——完整生命周期
+（init/new/reset）、动态元数据、free list、嵌套；IR 子图绑定（函数/loop/for/unsafe 自动
+arena lifecycle + 大小预计算）；ELF 后端双路径 alloc（arena 感知 + 全局 bump 回退）；
+mmap 堆扩展（BSS 打满自动 mmap 1GB）；emit_alloc_body 零初始化 + 链式扩容。
+以下"待解决问题"为后续改进方向。
+
 ## 待解决问题
 
 ### Arena 碎片化

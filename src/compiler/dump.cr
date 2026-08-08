@@ -222,6 +222,73 @@ fn cmd_ir(src_path: string) -> int {
     return 0;
 }
 
+// Text dump of the linear CFG: "Function: name" + per-function region list
+// (SG_IF/SG_LOOP/SG_FOR/SG_FLOW/SG_UNSAFE) + "Block: labelN" blocks.
+// Shared by cmd_cir (writes to file) and main.cr's `cir` command (stdout).
+fn cir_text_dump() -> string {
+    ccr : ., mut = "";
+    fi : ., mut = 0;
+    loop {
+        if fi >= g_ir_func_count { break; }
+        name_ni := r64(g_ir_func_name_idx, fi * 8);
+        ccr = ccr + "Function: " + istr_get(name_ni) + "\n";
+        start := r64(g_ir_func_instr_start, fi * 8);
+        count := r64(g_ir_func_instr_count, fi * 8);
+        // Region list for this function (regions whose DFNode start falls in
+        // this function's instruction range)
+        ri : ., mut = 0;
+        loop {
+            if ri >= g_sg_count { break; }
+            rkind := r64(g_sgs, ri * ESZ_SG + OFF_SG_KIND);
+            rstart := r64(g_sgs, ri * ESZ_SG + OFF_SG_NSTART);
+            rend := r64(g_sgs, ri * ESZ_SG + OFF_SG_EXIT);
+            if rstart >= start && rstart < start + count {
+                rend := r64(g_sgs, ri * ESZ_SG + OFF_SG_EXIT);
+                if rend >= 0 {  // skip unclosed (EXIT<0) regions
+                    rname : ., mut = "?";
+                    if rkind == SG_FUNC   { rname = "func"; }
+                    if rkind == SG_IF     { rname = "if"; }
+                    if rkind == SG_LOOP   { rname = "loop"; }
+                    if rkind == SG_FOR    { rname = "for"; }
+                    if rkind == SG_FLOW   { rname = "flow"; }
+                    if rkind == SG_UNSAFE { rname = "unsafe"; }
+                    ccr = ccr + "  Region: " + rname + " nodes " + int_str(rstart) + ".." + int_str(rend) + "\n";
+                }
+            }
+            ri = ri + 1;
+        }
+        in_block : ., mut = 0;
+        ii : ., mut = 0;
+        loop {
+            if ii >= count { break; }
+            if iri_op(start + ii) == IR_LABEL {
+                if in_block != 0 { ccr = ccr + "\n"; }
+                ccr = ccr + "  Block: label" + int_str(iri_s1(start + ii)) + "\n";
+                in_block = 1;
+            } else {
+                ccr = ccr + "    " + ir_instr_str(start + ii) + "\n";
+            }
+            ii = ii + 1;
+        }
+        ccr = ccr + "\n";
+        fi = fi + 1;
+    }
+
+    // VSDG state edges: side-effect chain + loop termination dependencies
+    ccr = ccr + "State edges:\n";
+    ei : ., mut = 0;
+    loop {
+        if ei >= g_df_edge_count { break; }
+        if r64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_KIND) != 0 {
+            e_from := r64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_FROM);
+            e_to := r64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_TO);
+            ccr = ccr + "  state: n" + int_str(e_from) + " -> n" + int_str(e_to) + "\n";
+        }
+        ei = ei + 1;
+    }
+    return ccr;
+}
+
 fn cmd_cir(src_path: string) -> int {
     g_source = read_file(src_path);
     if str_len(g_source) == 0 {
@@ -239,30 +306,7 @@ fn cmd_cir(src_path: string) -> int {
     ir_gen_all();
     lower_to_ccr();
 
-    ccr : ., mut = "";
-    fi : ., mut = 0;
-    loop {
-        if fi >= g_ir_func_count { break; }
-        name_ni := r64(g_ir_func_name_idx, fi * 8);
-        ccr = ccr + "Function: " + istr_get(name_ni) + "\n";
-        start := r64(g_ir_func_instr_start, fi * 8);
-        count := r64(g_ir_func_instr_count, fi * 8);
-        in_block : ., mut = 0;
-        ii : ., mut = 0;
-        loop {
-            if ii >= count { break; }
-            if iri_op(start + ii) == IR_LABEL {
-                if in_block != 0 { ccr = ccr + "\n"; }
-                ccr = ccr + "  Block: label" + int_str(iri_s1(start + ii) + "\n");
-                in_block = 1;
-            } else {
-                ccr = ccr + "    " + ir_instr_str(start + ii) + "\n";
-            }
-            ii = ii + 1;
-        }
-        ccr = ccr + "\n";
-        fi = fi + 1;
-    }
+    ccr : ., mut = cir_text_dump();
 
     ccr_path : ., mut = src_path;
     slen := str_len(src_path);

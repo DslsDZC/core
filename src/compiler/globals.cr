@@ -75,6 +75,11 @@ g_ir_loop_header : string, mut;     g_ir_loop_exit : string, mut;
 g_ir_loop_depth : int, mut;         g_ir_loop_stacks_cap : int, mut;
 g_label_poses : string, mut;        g_label_cap : int, mut;
 g_label_count : int, mut;
+// Interpreter loop-region table: per SG_LOOP/SG_FOR region, the enter/exit
+// DF-node offsets (function-relative).  Loop iteration in the interpreter is
+// driven by these region boundaries, not by label-table back-jumps.
+g_loop_region_enter : string, mut;  g_loop_region_exit : string, mut;
+g_loop_region_count : int, mut;     g_loop_region_cap : int, mut;
 // Pre-computed interned string indices for builtin function name matching
 g_ni_syscall3 : int, mut;  g_ni_load8 : int, mut;  g_ni_store8 : int, mut;
 g_ni_load64 : int, mut;    g_ni_load_str_ptr : int, mut;
@@ -121,6 +126,9 @@ g_opt_meta_count : int, mut; g_opt_meta_cap : int, mut;
 
 // Subgraph table (for RegionCheck pass lifetime tracking)
 g_sgs : string, mut;             g_sg_count : int, mut;     g_sg_cap : int, mut;
+g_df_node_region : string, mut;   g_df_node_region_cap : int, mut;  // per DFNode: owning region id (-1 = none)
+g_cur_sg : int, mut;              // currently open region id (-1 = none)
+g_last_state_node : int, mut;     // last side-effect DFNode id (VSDG state chain; -1 = none)
 
 // Plugin extension registry: tags and return types from .so/stdlib plugins
 // Each entry: 24 bytes = [ns_ni, name_ni, data_ni]

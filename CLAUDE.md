@@ -111,7 +111,7 @@ src/compiler/
 ├── parser.cr       → Recursive-descent parser → flat AST
 ├── checker.cr      → Type checker, borrow checker, declaration collector
 ├── ir_gen.cr       → AST → IR instruction generation
-├── dataflow.cr     → Dataflow graph construction (.cir)
+├── dataflow.cr     → 数据流图构建：DFNode/DFEdge（含 state edges）+ 嵌套 region（SG_IF/LOOP/FOR/FLOW/UNSAFE）+ g_df_node_region 显式映射 + DOT
 ├── ccr_io.cr       → .ccr binary serialization/deserialization
 ├── opt.cr          → Optimization passes (CSE, register allocation, stack sharing)
 ├── pass.cr         → AST-level optimization (constant folding)

@@ -1135,6 +1135,7 @@ fn gen_expr(node: int) -> int {
 
     // If expression
     if ast_kind(node) == EXPR_IF {
+        sg_push(SG_IF);  // conditional region: covers [condition, merge)
         cond := ast_a(node);
         then_node := ast_b(node);
         else_node := ast_c(node);
@@ -1157,6 +1158,7 @@ fn gen_expr(node: int) -> int {
             emit(IR_JUMP, -1, merge_lbl, 0, 0, 0);
         }
         emit(IR_LABEL, -1, merge_lbl, 0, 0, 0);
+        sg_pop();
         return -1;
     }
 
@@ -1166,24 +1168,31 @@ fn gen_expr(node: int) -> int {
         body_lbl := new_label();
         exit_lbl := new_label();
         emit(IR_JUMP, -1, header_lbl, 0, 0, 0);
-        emit(IR_LABEL, -1, header_lbl, 0, 0, 0);
-        emit(IR_JUMP, -1, body_lbl, 0, 0, 0);
-        emit(IR_LABEL, -1, body_lbl, 0, 0, 0);
+        // SG_LOOP region covers [header, exit) — the back-edge jump to the
+        // header lands on the region enter (region iteration in interp.cr).
         sg_alloc_push(SG_LOOP);
         arena_var := new_ir_var("_arena", TI_INT);
         w64(g_sg_arena_var, (g_sg_count - 1) * 8, arena_var);
+        emit(IR_LABEL, -1, header_lbl, 0, 0, 0);
+        emit(IR_JUMP, -1, body_lbl, 0, 0, 0);
+        emit(IR_LABEL, -1, body_lbl, 0, 0, 0);
         emit(IR_ARENA_NEW, arena_var, 0, 0, 0, 0);
         arena_instr := g_ir_instr_count - 1;
         push_ir_scope();
-        push_loop_labels(header_lbl, exit_lbl);
+        // `continue` must jump to the post label (not the header) so the
+        // arena reset runs on the continue path too — symmetric with `for`.
+        post_lbl := new_label();
+        push_loop_labels(post_lbl, exit_lbl);
         gen_expr(ast_a(node));
         pop_loop_labels();
         pop_ir_scope();
         total := r64(g_sg_alloc_total, g_sg_count - 1);
         if total > 0 { iri_set_s1(arena_instr, total); }
-        sg_alloc_pop();
+        emit(IR_LABEL, -1, post_lbl, 0, 0, 0);
+        emit(IR_ARENA_RESET, -1, arena_var, 0, 0, 0);  // arena reused per iteration
         emit(IR_JUMP, -1, header_lbl, 0, 0, 0);
         emit(IR_LABEL, -1, exit_lbl, 0, 0, 0);
+        sg_pop();  // close loop region (arena already reset above)
         return -1;
     }
 
@@ -1237,6 +1246,12 @@ fn gen_expr(node: int) -> int {
         header_lbl := new_label();
         body_lbl := new_label();
         exit_lbl := new_label();
+        // The SG_FOR region covers [header, exit): the back-edge jump to the
+        // header is then a jump to the region enter, so the interpreter can
+        // drive loop iteration from region boundaries (region iteration).
+        sg_alloc_push(SG_FOR);
+        arena_var := new_ir_var("_arena", TI_INT);
+        w64(g_sg_arena_var, (g_sg_count - 1) * 8, arena_var);
         // Header: check ivar < end, branch to exit if false
         emit(IR_LABEL, -1, header_lbl, 0, 0, 0);
         cond_var := new_ir_var("for_cond", TI_INT);
@@ -1244,20 +1259,22 @@ fn gen_expr(node: int) -> int {
         emit(IR_BRANCH, -1, cond_var, body_lbl, exit_lbl, 0);
         // Body
         emit(IR_LABEL, -1, body_lbl, 0, 0, 0);
-        sg_alloc_push(SG_FOR);
-        arena_var := new_ir_var("_arena", TI_INT);
-        w64(g_sg_arena_var, (g_sg_count - 1) * 8, arena_var);
         emit(IR_ARENA_NEW, arena_var, 0, 0, 0, 0);
         arena_instr := g_ir_instr_count - 1;
         push_ir_scope();
-        push_loop_labels(header_lbl, exit_lbl);
+        // `continue` must jump to the post (increment) label, not the header —
+        // otherwise the loop variable never advances and the loop spins.
+        post_lbl := new_label();
+        push_loop_labels(post_lbl, exit_lbl);
         gen_expr(body);
         pop_loop_labels();
         pop_ir_scope();
         total := r64(g_sg_alloc_total, g_sg_count - 1);
         if total > 0 { iri_set_s1(arena_instr, total); }
-        sg_alloc_pop();
-        // Increment ivar and jump to header
+        // Increment ivar and jump to header (arena reset runs on every path,
+        // including the continue path, so per-iteration memory is reused)
+        emit(IR_LABEL, -1, post_lbl, 0, 0, 0);
+        emit(IR_ARENA_RESET, -1, arena_var, 0, 0, 0);
         one_var := new_ir_var("one", TI_INT);
         emit(IR_CONST, one_var, 1, 0, 0, TI_INT);
         inc_var := new_ir_var("inc", TI_INT);
@@ -1266,6 +1283,7 @@ fn gen_expr(node: int) -> int {
         emit(IR_JUMP, -1, header_lbl, 0, 0, 0);
         // Exit
         emit(IR_LABEL, -1, exit_lbl, 0, 0, 0);
+        sg_pop();  // close loop region (arena already reset above)
         return -1;
     }
 

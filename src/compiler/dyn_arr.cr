@@ -96,8 +96,9 @@ OFF_DF_S3 : int = 32;        OFF_DF_TK : int = 40;
 OFF_DF_FIRST_EDGE : int = 48; OFF_DF_EDGE_COUNT : int = 56;
 
 // DFEdge sizes and offsets
-ESZ_DFEDGE : int = 24;   // from_node,to_node,next_out = 3x8
+ESZ_DFEDGE : int = 32;   // from_node,to_node,next_out,kind = 4x8
 OFF_DFE_FROM : int = 0;  OFF_DFE_TO : int = 8;  OFF_DFE_NEXT : int = 16;
+OFF_DFE_KIND : int = 24; // 0=data (def-use), 1=state (ordering/termination)
 
 // Subgraph entry (48 bytes each)
 ESZ_SG   : int = 48;
@@ -113,6 +114,7 @@ SG_LOOP   : int = 1;
 SG_FOR    : int = 2;
 SG_FLOW   : int = 3;
 SG_UNSAFE : int = 4;
+SG_IF     : int = 5;  // conditional region: covers [condition, merge)
 
 // InterfaceInfo: fixed-size entry per interface
 // Header(24) + methods[16] * method_entry(88) = 1432 total
@@ -477,6 +479,11 @@ fn grow_df_nodes(needed: int) {
     nc : ., mut = g_df_node_cap * 2; if nc < 128 { nc = 128; } if nc < needed { nc = needed + 128; }
     nb := alloc(nc * ESZ_DFNODE); _dyncpy(g_df_nodes, g_df_node_cap * ESZ_DFNODE, nb);
     g_df_nodes = nb; g_df_node_cap = nc; }
+fn grow_df_node_region(needed: int) {
+    if needed < g_df_node_region_cap { return; }
+    nc : ., mut = g_df_node_region_cap * 2; if nc < 128 { nc = 128; } if nc < needed { nc = needed + 128; }
+    nb := alloc(nc * 8); _dyncpy(g_df_node_region, g_df_node_region_cap * 8, nb);
+    g_df_node_region = nb; g_df_node_region_cap = nc; }
 fn grow_df_edges(needed: int) {
     if needed < g_df_edge_cap { return; }
     nc : ., mut = g_df_edge_cap * 2; if nc < 128 { nc = 128; } if nc < needed { nc = needed + 128; }

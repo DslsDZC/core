@@ -4,7 +4,7 @@
 //
 // Format (all integers little-endian):
 //   [magic: "CCR1" = 4 bytes]
-//   [version: u32 = 1]
+//   [version: u32 = 5]
 //   [func_count, instr_count, var_count, str_count, str_const_count, struct_count, enum_count: u32 ×7]
 //   [strings: str_count × [len: u32] [data: len bytes]]
 //   [func_meta: func_count × [name_idx, param_count, ret_type, instr_start, instr_count, var_start, var_count: u32 ×7]]
@@ -13,12 +13,19 @@
 //   [str_consts: str_const_count × [str_idx: u32]]
 //   [structs: struct_count × [name_idx: u32] [field_count: u32] fields[field_count]×[name_idx, type: u32 ×2]]
 //   [enums: enum_count × [name_idx: u32] [variant_count: u32] variants[variant_count]×[name_idx: u32] [field_count: u32] fields[field_count]×[type: u32]]
-//   [globals: global_count × [name_idx: u32] [var_idx: u32]]
+//   [globals: global_count × [name_idx: u32] [var_idx: u32] [init_val: i64]]  (16B each; init_val added in v4)
+//   [opt_meta: opt_count × [key: u32] [len: u32] [data: len bytes]]   (v3+)
+//   [sgs: sg_count × [kind, enter, exit, parent, nstart, ncount: i32 ×6]]  (v5+)
 
 // --- Byte buffer helpers ---
 // No bitwise ops in Core — use arithmetic instead.
 
 CCR_MAGIC : int = 827474755;  // "CCR1" (0x31524343)
+
+// On-disk SG record size: 6 × i32 = 24 bytes (kind/enter/exit/parent/nstart/ncount).
+// NOTE: the in-memory SG entry is ESZ_SG (48 bytes, u64 fields) — that is NOT
+// the wire format. Always use ESZ_SG_DISK for .ccr size math, never ESZ_SG.
+ESZ_SG_DISK : int = 24;
 
 fn bw_byte(val: int, shift: int) -> int {
     if shift == 0 { return val % 256; }
@@ -129,6 +136,9 @@ fn calc_ccr_size() -> int {
         mi = mi + 1;
     }
 
+    // v5: SG (region) section — count + sg_count × 24B records (6×i32)
+    sz = sz + 4 + g_sg_count * ESZ_SG_DISK;
+
     return sz;
 }
 
@@ -139,9 +149,9 @@ fn save_ccr(path: string) -> int {
     buf := alloc(tsz);
     pos : ., mut = 0;
 
-    // Magic + version
+    // Magic + version (v5 = serialization v2: SG region section appended)
     buf_write_u32(buf, pos, CCR_MAGIC); pos = pos + 4;
-    buf_write_u32(buf, pos, 4); pos = pos + 4;
+    buf_write_u32(buf, pos, 5); pos = pos + 4;
 
     // Counts
     buf_write_u32(buf, pos, g_ir_func_count); pos = pos + 4;
@@ -285,6 +295,21 @@ fn save_ccr(path: string) -> int {
         mi = mi + 1;
     }
 
+    // v5: SG (region) section — sg_count × 24B (6×i32: kind/enter/exit/parent/nstart/ncount)
+    buf_write_u32(buf, pos, g_sg_count); pos = pos + 4;
+    si2 : ., mut = 0;
+    loop {
+        if si2 >= g_sg_count { break; }
+        f := si2 * ESZ_SG;
+        buf_write_i32(buf, pos, r64(g_sgs, f + OFF_SG_KIND)); pos = pos + 4;
+        buf_write_i32(buf, pos, r64(g_sgs, f + OFF_SG_ENTER)); pos = pos + 4;
+        buf_write_i32(buf, pos, r64(g_sgs, f + OFF_SG_EXIT)); pos = pos + 4;
+        buf_write_i32(buf, pos, r64(g_sgs, f + OFF_SG_PARENT)); pos = pos + 4;
+        buf_write_i32(buf, pos, r64(g_sgs, f + OFF_SG_NSTART)); pos = pos + 4;
+        buf_write_i32(buf, pos, r64(g_sgs, f + OFF_SG_NCOUNT)); pos = pos + 4;
+        si2 = si2 + 1;
+    }
+
     // Use syscall directly (write_file uses str_len which stops at null)
     fd := syscall3(2, path, 577, 420);  // open(O_WRONLY|O_CREAT|O_TRUNC, 0644)
     if fd < 0 { return -1; }
@@ -306,9 +331,9 @@ fn load_ccr(data: string, fsize: int) -> int {
     magic := buf_read_u32(data, pos); pos = pos + 4;
     if magic != CCR_MAGIC { return -1; }
 
-    // Version
+    // Version (5 = serialization v2 with SG region section)
     ver := buf_read_u32(data, pos); pos = pos + 4;
-    if ver != 1 && ver != 2 && ver != 3 && ver != 4 { return -1; }
+    if ver != 1 && ver != 2 && ver != 3 && ver != 4 && ver != 5 { return -1; }
 
     // Counts
     func_cnt := buf_read_u32(data, pos); pos = pos + 4;
@@ -335,6 +360,7 @@ fn load_ccr(data: string, fsize: int) -> int {
     g_ir_str_const_count = 0;
     g_struct_count = struct_cnt;
     g_enum_count = enum_cnt;
+    g_sg_count = 0;  // v4 files carry no SG section; v5 restores below
 
     // Strings
     si : ., mut = 0;
@@ -539,6 +565,29 @@ fn load_ccr(data: string, fsize: int) -> int {
             g_opt_meta_count = mi + 1;
             mi = mi + 1;
         }
+    }
+
+    // SG (region) section (version >= 5): count + sg_count × 24B records (6×i32).
+    // Restores g_sgs/g_sg_count for frontend passes; the backend ignores
+    // regions, but the bytes must still be skipped correctly.
+    if ver >= 5 {
+        if pos + 4 > fsize { return -1; }
+        sg_n := buf_read_u32(data, pos); pos = pos + 4;
+        if pos + sg_n * ESZ_SG_DISK > fsize { return -1; }
+        sg_i : ., mut = 0;
+        loop {
+            if sg_i >= sg_n { break; }
+            grow_sg(sg_i + 1);
+            f := sg_i * ESZ_SG;
+            w64(g_sgs, f + OFF_SG_KIND, buf_read_i32(data, pos)); pos = pos + 4;
+            w64(g_sgs, f + OFF_SG_ENTER, buf_read_i32(data, pos)); pos = pos + 4;
+            w64(g_sgs, f + OFF_SG_EXIT, buf_read_i32(data, pos)); pos = pos + 4;
+            w64(g_sgs, f + OFF_SG_PARENT, buf_read_i32(data, pos)); pos = pos + 4;
+            w64(g_sgs, f + OFF_SG_NSTART, buf_read_i32(data, pos)); pos = pos + 4;
+            w64(g_sgs, f + OFF_SG_NCOUNT, buf_read_i32(data, pos)); pos = pos + 4;
+            sg_i = sg_i + 1;
+        }
+        g_sg_count = sg_n;
     }
 
     return 0;

@@ -5,8 +5,10 @@
 // compiler's global arrays.
 
 // Magic header for .cir cache files
+// v5: edges serialized as 4×8B (from/to/next/kind) so cache hits restore
+// state edges; v4 cache files are rejected by the version check.
 CIR_CACHE_MAGIC : int = 0xC1C1C1C1C1C1C1C1;
-CIR_CACHE_VER   : int = 4;
+CIR_CACHE_VER   : int = 5;
 
 g_cir_write_buf : string, mut;
 g_cir_write_pos : int, mut;
@@ -40,7 +42,7 @@ fn save_cir_cache(path: string, func_idx: int) -> int {
     total_size : ., mut = 40 + name_len;
     total_size = total_size + 8 + var_count * 24;
     total_size = total_size + 8 + node_count * 64;
-    total_size = total_size + 8 + g_df_edge_count * 24;
+    total_size = total_size + 8 + g_df_edge_count * 32;  // v5: 4 fields incl. kind
     total_size = total_size + 8 + instr_count * 48;
     total_size = total_size + 8;
     size_si : ., mut = 0;
@@ -98,6 +100,7 @@ fn save_cir_cache(path: string, func_idx: int) -> int {
 
     // Write edges (all edges for this function's nodes)
     // For simplicity, write ALL edges (they're few compared to nodes)
+    // v5: 4×8B per edge — from/to/next + kind (state edges survive cache hits)
     w64_cir(fd, g_df_edge_count);
     ei : ., mut = 0;
     loop {
@@ -105,6 +108,7 @@ fn save_cir_cache(path: string, func_idx: int) -> int {
         w64_cir(fd, r64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_FROM));
         w64_cir(fd, r64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_TO));
         w64_cir(fd, r64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_NEXT));
+        w64_cir(fd, r64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_KIND));
         ei = ei + 1;
     }
 
@@ -219,10 +223,17 @@ fn load_cir_cache(path: string, func_idx: int) -> int {
     node_count := r64(data, pos); pos = pos + 8;
     base_node := g_df_node_count;
     grow_df_nodes(g_df_node_count + node_count);
+    // RegionCheck 显式映射：恢复的节点没有经过 df_create_node，须在此同步写入
+    // node→region 映射，否则 subgraph_containing 在缓存命中路径读到未初始化
+    // 的 g_df_node_region（null → SIGSEGV）。缓存不保存内层 region（Minor #4），
+    // 以当前 open 的 func region（df_begin_func 已 sg_push）为归属——与旧的
+    // 线性扫 g_sgs 在缓存命中路径得到的结果一致。
+    grow_df_node_region(base_node + node_count);
     ni : ., mut = 0;
     loop {
         if ni >= node_count { break; }
         n := base_node + ni;
+        w64(g_df_node_region, n * 8, g_cur_sg);
         w64(g_df_nodes, n * ESZ_DFNODE + OFF_DF_OPCODE, r64(data, pos)); pos = pos + 8;
         w64(g_df_nodes, n * ESZ_DFNODE + OFF_DF_DEST, r64(data, pos)); pos = pos + 8;
         w64(g_df_nodes, n * ESZ_DFNODE + OFF_DF_S1, r64(data, pos)); pos = pos + 8;
@@ -241,7 +252,7 @@ fn load_cir_cache(path: string, func_idx: int) -> int {
     }
     g_df_node_count = base_node + node_count;
 
-    // Restore edges
+    // Restore edges (v5: 4×8B per edge — from/to/next/kind)
     edge_count := r64(data, pos); pos = pos + 8;
     grow_df_edges(edge_count);
     g_df_edge_count = edge_count;
@@ -251,9 +262,11 @@ fn load_cir_cache(path: string, func_idx: int) -> int {
         e_from := r64(data, pos); pos = pos + 8;
         e_to := r64(data, pos); pos = pos + 8;
         e_next := r64(data, pos); pos = pos + 8;
+        e_kind := r64(data, pos); pos = pos + 8;
         w64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_FROM, e_from);
         w64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_TO, e_to);
         w64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_NEXT, e_next);
+        w64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_KIND, e_kind);
         ei = ei + 1;
     }
 
