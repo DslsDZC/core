@@ -6,12 +6,12 @@
 
 | 中文名 | 原名 | 首次出现函数 |
 |--------|------|-------------|
-| IR 循环头标签栈 | g_ir_loop_header | 压入looplabels（push_loop_labels） |
-| IR 循环出口标签栈 | g_ir_loop_exit | 压入looplabels（push_loop_labels） |
-| IR 循环嵌套深度 | g_ir_loop_depth | 压入looplabels（push_loop_labels） |
-| 扩展 IR 循环栈数组 | grow_ir_loop_stacks | 压入looplabels（push_loop_labels） |
-| 压入looplabels | push_loop_labels | 压入looplabels（push_loop_labels） |
-| 弹出looplabels | pop_loop_labels | 弹出looplabels（pop_loop_labels） |
+| IR 循环头标签栈 | g_ir_loop_header | 压入循环标签栈（push_loop_labels） |
+| IR 循环出口标签栈 | g_ir_loop_exit | 压入循环标签栈（push_loop_labels） |
+| IR 循环嵌套深度 | g_ir_loop_depth | 压入循环标签栈（push_loop_labels） |
+| 扩展 IR 循环栈数组 | grow_ir_loop_stacks | 压入循环标签栈（push_loop_labels） |
+| 压入循环标签栈 | push_loop_labels | 压入循环标签栈（push_loop_labels） |
+| 弹出循环标签栈 | pop_loop_labels | 弹出循环标签栈（pop_loop_labels） |
 | 获取变体名索引 | get_variant_name_idx | 获取变体名索引（get_variant_name_idx） |
 | 类型信息：从类型表达式创建 | ti_from_type_expr | 类型信息：从类型表达式创建（ti_from_type_expr） |
 | 类型大小 | type_size | 类型大小（type_size） |
@@ -20,7 +20,7 @@
 | 类型信息：是否有字段 | ti_has_field | 类型信息：是否有字段（ti_has_field） |
 | 类型信息：字段偏移 | ti_field_offset | 类型信息：字段偏移（ti_field_offset） |
 | 判断热补丁函数 | is_hotpatch_func | 判断热补丁函数（is_hotpatch_func） |
-| 强制 if-then 块 | force_if_thunk | 强制 if-then 块（force_if_thunk） |
+| 强制 如果-那么 块 | force_if_thunk | 强制 如果-那么 块（force_if_thunk） |
 | 生成表达式 | gen_expr | 生成表达式（gen_expr） |
 | 获取类型类别 | get_type_kind | 类型大小（type_size） |
 | 获取类型数据 | get_type_data | 类型大小（type_size） |
@@ -30,7 +30,7 @@
 | 结构体信息访问器：字段计数 | si_field_count | 类型信息：是否有字段（ti_has_field） |
 | 结构体信息访问器：字段名称 | si_field_name | 类型信息：是否有字段（ti_has_field） |
 | 函数信息访问器：名称 | fi_name | 判断热补丁函数（is_hotpatch_func） |
-| 函数信息访问器：ast节点 | fi_ast_node | 判断热补丁函数（is_hotpatch_func） |
+| 函数信息访问器：AST 节点 | fi_ast_node | 判断热补丁函数（is_hotpatch_func） |
 | 函数信息访问器：泛型计数 | fi_generic_count | 生成表达式（gen_expr） |
 | 函数信息访问器：是否纯净 | fi_ispure | 生成表达式（gen_expr） |
 | 函数计数 | g_func_count | 判断热补丁函数（is_hotpatch_func） |
@@ -48,7 +48,15 @@
 
 ## 全局状态
 
-本部分涉及的全局状态与第 1 部分共享（IR 循环头标签栈、IR 循环出口标签栈、IR 循环嵌套深度、下一标签号 等），均在第 1 部分全局状态节中已有说明。
+本部分使用的循环相关全局在此列出（第 1 部分全局状态节未覆盖）：
+
+| 变量名 | 说明 | 初始值 |
+|--------|------|--------|
+| IR 循环头标签栈（g_ir_loop_header） | 循环头标签号栈（8 字节/项） | 空字符串（动态分配） |
+| IR 循环出口标签栈（g_ir_loop_exit） | 循环出口标签号栈（8 字节/项） | 空字符串（动态分配） |
+| IR 循环嵌套深度（g_ir_loop_depth） | 当前循环嵌套层数 | 0 |
+| IR 循环栈容量（g_ir_loop_stacks_cap） | 循环标签栈容量（项数） | 0 |
+| 下一标签号（g_next_label） | 下一个可用的标签编号 | 无初始化器（运行前置 1） |
 
 ---
 
@@ -99,7 +107,7 @@
 循环：
     如果 扫描位置 大于等于 字符串字节长度，那么：
         跳出循环
-    令 当前字符 = 取字符串第 次数（N） 字符（get_char）（限定名字符串, 扫描位置）
+    令 当前字符 = 取字符串第 序号（N） 字符（get_char）（限定名字符串, 扫描位置）
     如果 字符串相等比较（str_eq）（当前字符, "."） 不等于 0，那么：
         令 点号位置 = 扫描位置
     令 扫描位置 = 扫描位置 + 1
@@ -141,12 +149,12 @@
 如果 AST 访问器：类别（ast_kind）（节点） 等于 标识符表达式（EXPR_IDENT），那么：
     令 名字索引 = AST 访问器：整数值（ast_int_val）（节点）
     令 名字字符串 = 驻留字符串获取（istr_get）（名字索引）
-    如果 字符串相等比较（str_eq）（名字字符串, "整数（int）"） 不等于 0，那么：返回 类型信息：整数（TI_INT）
-    如果 字符串相等比较（str_eq）（名字字符串, "浮点（float）"） 不等于 0，那么：返回 类型信息：浮点（TI_FLOAT）
-    如果 字符串相等比较（str_eq）（名字字符串, "布尔（bool）"） 不等于 0，那么：返回 类型信息：布尔（TI_BOOL）
-    如果 字符串相等比较（str_eq）（名字字符串, "字符串（string）"） 不等于 0，那么：返回 类型信息：字符串（TI_STR）
-    如果 字符串相等比较（str_eq）（名字字符串, "字符（char）"） 不等于 0，那么：返回 类型信息：字符（TI_CHAR）
-    如果 字符串相等比较（str_eq）（名字字符串, "单元类型（unit）"） 不等于 0，那么：返回 类型信息：单元（TI_UNIT）
+    如果 字符串相等比较（str_eq）（名字字符串, "int"） 不等于 0，那么：返回 类型信息：整数（TI_INT）
+    如果 字符串相等比较（str_eq）（名字字符串, "float"） 不等于 0，那么：返回 类型信息：浮点（TI_FLOAT）
+    如果 字符串相等比较（str_eq）（名字字符串, "bool"） 不等于 0，那么：返回 类型信息：布尔（TI_BOOL）
+    如果 字符串相等比较（str_eq）（名字字符串, "string"） 不等于 0，那么：返回 类型信息：字符串（TI_STR）
+    如果 字符串相等比较（str_eq）（名字字符串, "char"） 不等于 0，那么：返回 类型信息：字符（TI_CHAR）
+    如果 字符串相等比较（str_eq）（名字字符串, "unit"） 不等于 0，那么：返回 类型信息：单元（TI_UNIT）
     （命名类型——查符号表）
     令 符号索引 = 查找全局符号（find_gsym）（名字索引）
     如果 符号索引 大于等于 0 且 符号类别（sym_kind）（符号索引） 等于 符号：类型（SYM_TYPE），那么：
@@ -396,7 +404,7 @@
 
 （空值表达式（EXPR_NONE）：包装节点——转发到内部表达式，用于结构体字面量等场景）
 如果 AST 访问器：类别（ast_kind）（节点） 等于 空值表达式（EXPR_NONE），那么：
-    如果 AST 访问器：变量甲（a）（ast_a）（节点） 大于等于 0 且 AST 访问器：第一子节点（ast_a）（节点） 不等于 节点，那么：
+    如果 第一子节点访问器（ast_a）（ast_a）（节点） 大于等于 0 且 AST 访问器：第一子节点（ast_a）（节点） 不等于 节点，那么：
         返回 生成表达式（gen_expr）（第一子节点访问器（ast_a）（节点））
     返回 -1
 
@@ -404,25 +412,25 @@
 
 （整数）
 如果 AST 访问器：类别（ast_kind）（节点） 等于 整数字面量表达式（EXPR_INT），那么：
-    令 结果变量 = 新建 IR 变量（new_ir_var）（"整数（int）", 类型信息：整数（TI_INT））
+    令 结果变量 = 新建 IR 变量（new_ir_var）（"int", 类型信息：整数（TI_INT））
     发射指令（emit）（常量指令（IR_CONST）, 结果变量, AST 访问器：整数值（ast_int_val）（节点）, 0, 0, 类型信息：整数（TI_INT））
     返回 结果变量
 
 （浮点数）
 如果 AST 访问器：类别（ast_kind）（节点） 等于 浮点字面量表达式（EXPR_FLOAT），那么：
-    令 结果变量 = 新建 IR 变量（new_ir_var）（"浮点（float）", 类型信息：浮点（TI_FLOAT））
+    令 结果变量 = 新建 IR 变量（new_ir_var）（"float", 类型信息：浮点（TI_FLOAT））
     发射指令（emit）（常量指令（IR_CONST）, 结果变量, AST 访问器：整数值（ast_int_val）（节点）, 0, 0, 类型信息：浮点（TI_FLOAT））
     返回 结果变量
 
 （布尔值）
 如果 AST 访问器：类别（ast_kind）（节点） 等于 布尔字面量表达式（EXPR_BOOL），那么：
-    令 结果变量 = 新建 IR 变量（new_ir_var）（"布尔（bool）", 类型信息：布尔（TI_BOOL））
+    令 结果变量 = 新建 IR 变量（new_ir_var）（"bool", 类型信息：布尔（TI_BOOL））
     发射指令（emit）（常量指令（IR_CONST）, 结果变量, AST 访问器：整数值（ast_int_val）（节点）, 0, 0, 类型信息：布尔（TI_BOOL））
     返回 结果变量
 
 （字符串）
 如果 AST 访问器：类别（ast_kind）（节点） 等于 字符串字面量表达式（EXPR_STRING），那么：
-    令 结果变量 = 新建 IR 变量（new_ir_var）（TI_STR）
+    令 结果变量 = 新建 IR 变量（new_ir_var）（（"str"），TI_STR）
     令 驻留字符串索引 = AST 访问器：整数值（ast_int_val）（节点）
     跟踪字符串常量（track_str）（驻留字符串索引）
     发射指令（emit）（常量指令（IR_CONST）, 结果变量, 驻留字符串索引, 0, 0, 类型信息：字符串（TI_STR））
@@ -430,7 +438,7 @@
 
 （字符）
 如果 AST 访问器：类别（ast_kind）（节点） 等于 字符字面量表达式（EXPR_CHAR），那么：
-    令 结果变量 = 新建 IR 变量（new_ir_var）（"字符（char）", 类型信息：字符（TI_CHAR））
+    令 结果变量 = 新建 IR 变量（new_ir_var）（"char", 类型信息：字符（TI_CHAR））
     令 驻留字符串索引 = AST 访问器：整数值（ast_int_val）（节点）
     跟踪字符串常量（track_str）（驻留字符串索引）
     发射指令（emit）（常量指令（IR_CONST）, 结果变量, 驻留字符串索引, 0, 0, 类型信息：字符（TI_CHAR））
@@ -463,9 +471,9 @@
 （—— 二元运算 ——）
 
 如果 AST 访问器：类别（ast_kind）（节点） 等于 二元运算表达式（EXPR_BINARY），那么：
-    令 左操作数节点 = AST 访问器：变量甲（a）（ast_a）（节点）
-    令 右操作数节点 = AST 访问器：变量乙（b）（ast_b）（节点）
-    令 运算符 = AST 访问器：变量丙（c）（ast_c）（节点）
+    令 左操作数节点 = 第一子节点访问器（ast_a）（ast_a）（节点）
+    令 右操作数节点 = 第二子节点访问器（ast_b）（ast_b）（节点）
+    令 运算符 = 第三子节点访问器（ast_c）（ast_c）（节点）
 
     （赋值运算符：赋值运算（OP_ASSIGN）——内嵌于 二元运算表达式（EXPR_BINARY） 的处理）
     如果 运算符 等于 赋值运算（OP_ASSIGN），那么：
@@ -503,7 +511,7 @@
         如果 AST 访问器：类别（ast_kind）（左操作数节点） 等于 下标访问表达式（EXPR_INDEX），那么：
             令 数组变量 = 生成表达式（gen_expr）（第一子节点访问器（ast_a）（左操作数节点））
             令 数组变量 = 强制 如果（if）-那么（then） 块（force_if_thunk）（数组变量）
-            令 下标节点 = AST 访问器：变量乙（b）（ast_b）（左操作数节点）
+            令 下标节点 = 第二子节点访问器（ast_b）（ast_b）（左操作数节点）
             令 下标类别 = AST 访问器：类别（ast_kind）（下标节点）
             如果 下标类别 等于 整数字面量表达式（EXPR_INT），那么：
                 发射指令（emit）（存储索引指令（IR_STORE_INDEX）, -1, 数组变量, 值变量, AST 访问器：整数值（ast_int_val）（下标节点）, 0）
@@ -583,7 +591,7 @@
         如果 运算符 等于 相等运算（OP_EQ），那么：
             返回 相等结果变量
         （OP_NE：对 str_eq 的结果做"等于 0"判断来取反）
-        令 零值变量 = 新建 IR 变量（new_ir_var）（TI_INT）
+        令 零值变量 = 新建 IR 变量（new_ir_var）（（"zero"），TI_INT）
         发射指令（emit）（常量指令（IR_CONST）, 零值变量, 0, 0, 0, 类型信息：整数（TI_INT））
         令 不等结果变量 = 新建 IR 变量（new_ir_var）（"str_ne", 类型信息：布尔（TI_BOOL））
         发射指令（emit）（IR_BINARY, 不等结果变量, 相等结果变量, 零值变量, 相等运算（OP_EQ）, 类型信息：布尔（TI_BOOL））
@@ -598,7 +606,7 @@
             令 打包参数1 = 新建 IR 变量（new_ir_var）（"_cat1", 右类型）
             发射指令（emit）（存储指令（IR_STORE）, -1, 打包参数0, 左变量, 0, 0）
             发射指令（emit）（存储指令（IR_STORE）, -1, 打包参数1, 右变量, 0, 0）
-            令 拼接结果变量 = 新建 IR 变量（new_ir_var）（TI_STR）
+            令 拼接结果变量 = 新建 IR 变量（new_ir_var）（（"str"），TI_STR）
             发射指令（emit）（调用指令（IR_CALL）, 拼接结果变量, 打包参数0, 2, 拼接函数名索引, 类型信息：字符串（TI_STR））
             返回 拼接结果变量
 
@@ -617,7 +625,7 @@
                 否则：
                     令 运算符 = 指针减法（OP_PTR_SUB）
 
-    令 二元结果变量 = 新建 IR 变量（new_ir_var）（TI_INT）
+    令 二元结果变量 = 新建 IR 变量（new_ir_var）（（"bin"），TI_INT）
     发射指令（emit）（IR_BINARY, 二元结果变量, 左变量, 右变量, 运算符, 0）
     返回 二元结果变量
 
@@ -625,13 +633,13 @@
 
 ### 测试要点
 1. 无效节点（小于 0）返回 -1
-2. 空值表达式（EXPR_NONE） 包装节点正确转发到内部表达式，且排除自引用循环（变量甲（a） != 节点（node））
+2. 空值表达式（EXPR_NONE） 包装节点正确转发到内部表达式，且排除自引用循环（变量甲（a） 不等于 节点（node））
 3. 整数/浮点/布尔/字符串/字符字面量生成 常量指令（IR_CONST） 指令
-4. 标识符按局部变量 -> 编译时常量 -> 全局变量 -> 占位变量的优先级查找
+4. 标识符按 局部变量 → 编译时常量 → 全局变量 → 占位变量 的优先级查找
 5. 赋值操作对 类型信息：动态（TI_DYN） 类型的变量使用 动态打包指令（IR_DYN_PACK） 打包
 6. 与运算（OP_AND） 条件下左值为假时跳到短路标签（结果 0），跳过右值求值
 7. 或运算（OP_OR） 条件下左值为真时跳到短路标签（结果 1），跳过右值求值
-8. 字符串 ==/!= 调用 字符串相等比较（str_eq） 函数而非直接指针比较
+8. 字符串 相等/不相等 比较调用 字符串相等比较（str_eq） 函数而非直接指针比较
 9. 字符串 + 调用 字符串拼接（concat） 函数
 10. 指针变量的 加法指令（ADD）/减法指令（SUB） 自动转换为 指针加法（PTR_ADD）/指针减法（PTR_SUB）
 11. 两个指针变量相减转换为 指针差（PTR_DIFF），用以计算元素偏移量

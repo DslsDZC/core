@@ -1,6 +1,6 @@
 # cir_cache.cr 伪代码
 > 源文件：src/compiler/cir_cache.cr（314 行）
-> 功能概要：增量编译缓存系统——按函数粒度将数据流图（DFG）状态（节点、边、IR 指令、IR 变量、字符串常量）序列化到 .数据流图（cir） 缓存文件中，并在后续编译中通过指纹（函数体哈希 + 签名字哈希）验证后直接恢复，跳过重复的类型检查和 IR 生成。v5 格式中边以 4 变量甲（x） 8 字节（kind）存储，使状态边（种类）在缓存命中后完整恢复。
+> 功能概要：增量编译缓存系统——按函数粒度将数据流图（DFG）状态（节点、边、IR 指令、IR 变量、字符串常量）序列化到 .数据流图（cir） 缓存文件中，并在后续编译中通过指纹（函数体哈希 + 签名指纹哈希）验证后直接恢复，跳过重复的类型检查和 IR 生成。v5 格式中边以 4 个 8 字节（kind）存储，使状态边（种类）在缓存命中后完整恢复。
 
 ## 标识符对照表
 | 中文名 | 原名 | 首次出现函数 |
@@ -17,7 +17,7 @@
 | 字符串长度 | str_len | 保存 CIR 缓存 |
 | 字符串切片 | str_sub | 加载 CIR 缓存 |
 | 字符串驻留 | str_intern | 加载 CIR 缓存 |
-| 函数信息访问器：ast节点 | fi_ast_node | 保存 CIR 缓存 |
+| 函数信息访问器：AST 节点 | fi_ast_node | 保存 CIR 缓存 |
 | IR 变量访问器：名称 | irv_name | 保存 CIR 缓存 |
 | IR 变量访问器：ID | irv_id | 保存 CIR 缓存 |
 | IR 变量访问器：类型 | irv_type | 保存 CIR 缓存 |
@@ -75,22 +75,22 @@
 | CIR 缓存版本 | CIR_CACHE_VER | （常量） |
 | ESZ 数据流节点大小 | ESZ_DFNODE | （结构体常量） |
 | ESZ 数据流边大小 | ESZ_DFEDGE | （结构体常量） |
-| 偏移\_DF\_操作码 | OFF_DF_OPCODE | （结构体字段偏移） |
-| 偏移\_DF\_目标 | OFF_DF_DEST | （结构体字段偏移） |
-| 偏移\_DF\_源1 | OFF_DF_S1 | （结构体字段偏移） |
-| 偏移\_DF\_源2 | OFF_DF_S2 | （结构体字段偏移） |
-| 偏移\_DF\_源3 | OFF_DF_S3 | （结构体字段偏移） |
-| 偏移\_DF\_类型类别 | OFF_DF_TK | （结构体字段偏移） |
-| 偏移\_DF\_首边索引 | OFF_DF_FIRST_EDGE | （结构体字段偏移） |
-| 偏移\_DF\_边计数 | OFF_DF_EDGE_COUNT | （结构体字段偏移） |
-| 偏移\_DFE\_源节点 | OFF_DFE_FROM | （结构体字段偏移） |
-| 偏移\_DFE\_目标节点 | OFF_DFE_TO | （结构体字段偏移） |
-| 偏移\_DFE\_下一边 | OFF_DFE_NEXT | （结构体字段偏移） |
-| 偏移\_DFE\_类别 | OFF_DFE_KIND | （结构体字段偏移） |
+| 数据流节点操作码偏移 | OFF_DF_OPCODE | （结构体字段偏移） |
+| 数据流节点目标偏移 | OFF_DF_DEST | （结构体字段偏移） |
+| 数据流节点源1偏移 | OFF_DF_S1 | （结构体字段偏移） |
+| 数据流节点源2偏移 | OFF_DF_S2 | （结构体字段偏移） |
+| 数据流节点源3偏移 | OFF_DF_S3 | （结构体字段偏移） |
+| 数据流节点类型类别偏移 | OFF_DF_TK | （结构体字段偏移） |
+| 数据流节点首边索引偏移 | OFF_DF_FIRST_EDGE | （结构体字段偏移） |
+| 数据流节点边计数偏移 | OFF_DF_EDGE_COUNT | （结构体字段偏移） |
+| 数据流边起点偏移 | OFF_DFE_FROM | （结构体字段偏移） |
+| 数据流边终点偏移 | OFF_DFE_TO | （结构体字段偏移） |
+| 数据流边下一边偏移 | OFF_DFE_NEXT | （结构体字段偏移） |
+| 数据流边类别偏移 | OFF_DFE_KIND | （结构体字段偏移） |
 
 ## 全局状态
 - **数据流图（CIR） 缓存魔数（CIR_CACHE_MAGIC）**：.数据流图（cir） 缓存文件标识 = 0xC1C1C1C1C1C1C1C1
-- **数据流图（CIR） 缓存版本（CIR_CACHE_VER）**：当前缓存格式版本 = 5（v5：边序列化为 4 变量甲（x） 8 字节，含 from/to/next/种类（kind））
+- **数据流图（CIR） 缓存版本（CIR_CACHE_VER）**：当前缓存格式版本 = 5（v5：边序列化为 4 个 8 字节，含 from/to/next/种类（kind））
 - **数据流图（CIR） 写缓冲区（g_cir_write_buf）**：序列化时使用的内存缓冲区（字符串，可变），延迟分配
 - **数据流图（CIR） 写缓冲区位置（g_cir_write_pos）**：当前写入偏移量（可变）
 - **数据流图（CIR） 写缓冲区容量（g_cir_write_cap）**：缓冲区当前分配的字节数（可变）
@@ -101,7 +101,7 @@
 ### 逻辑
     令 文件描述符（fd） = 系统调用3（syscall3）（2，路径（path），577，420）
     如果 文件描述符（fd） 小于 0，那么：返回 -1
-    令 函数 AST 节点（fn_node） = 函数信息访问器：AST 数组（ast）节点（fi_ast_node）（func_idx）
+    令 函数 AST 节点（fn_node） = 函数信息访问器：AST 节点（fi_ast_node）（func_idx）
     令 函数体指纹（fp） = 函数指纹（func_fingerprint）（fn_node）
     令 签名指纹（sig） = 签名指纹（sig_fingerprint）（fn_node）
     令 名称索引（name_ni） = 读 64 位（r64）（IR 函数名索引数组（g_ir_func_name_idx），函数索引 * 8）
@@ -149,22 +149,22 @@
     令 节点遍历索引（ni2） = 0（可变）
     循环（当 节点遍历索引 小于 节点计数（node_count） 时）：
         令 节点全局索引（n） = 节点起始（node_start） + 节点遍历索引
-        写 64 位（数据流图（CIR） 缓存）（w64_cir）（文件描述符（fd），读 64 位（r64）（数据流节点数组（g_df_nodes），节点全局索引 * 数据流节点条目大小（ESZ_DFNODE） + 偏移\_DF\下划线（_）操作码（OFF_DF_OPCODE）））
-        写 64 位（数据流图（CIR） 缓存）（w64_cir）（文件描述符（fd），读 64 位（r64）（数据流节点数组（g_df_nodes），节点全局索引 * 数据流节点条目大小（ESZ_DFNODE） + 偏移\_DF\下划线（_）目标（OFF_DF_DEST）））
-        写 64 位（数据流图（CIR） 缓存）（w64_cir）（文件描述符（fd），读 64 位（r64）（数据流节点数组（g_df_nodes），节点全局索引 * 数据流节点条目大小（ESZ_DFNODE） + 偏移\_DF\下划线（_）源1（OFF_DF_S1）））
-        写 64 位（数据流图（CIR） 缓存）（w64_cir）（文件描述符（fd），读 64 位（r64）（数据流节点数组（g_df_nodes），节点全局索引 * 数据流节点条目大小（ESZ_DFNODE） + 偏移\_DF\下划线（_）源2（OFF_DF_S2）））
-        写 64 位（数据流图（CIR） 缓存）（w64_cir）（文件描述符（fd），读 64 位（r64）（数据流节点数组（g_df_nodes），节点全局索引 * 数据流节点条目大小（ESZ_DFNODE） + 偏移\_DF\下划线（_）源3（OFF_DF_S3）））
-        写 64 位（数据流图（CIR） 缓存）（w64_cir）（文件描述符（fd），读 64 位（r64）（数据流节点数组（g_df_nodes），节点全局索引 * 数据流节点条目大小（ESZ_DFNODE） + 偏移\_DF\下划线（_）类型类别（OFF_DF_TK）））
-        写 64 位（数据流图（CIR） 缓存）（w64_cir）（文件描述符（fd），读 64 位（r64）（数据流节点数组（g_df_nodes），节点全局索引 * 数据流节点条目大小（ESZ_DFNODE） + 偏移\_DF\下划线（_）首边索引（OFF_DF_FIRST_EDGE）））
-        写 64 位（数据流图（CIR） 缓存）（w64_cir）（文件描述符（fd），读 64 位（r64）（数据流节点数组（g_df_nodes），节点全局索引 * 数据流节点条目大小（ESZ_DFNODE） + 偏移\_DF\下划线（_）边计数（OFF_DF_EDGE_COUNT）））
+        写 64 位（数据流图（CIR） 缓存）（w64_cir）（文件描述符（fd），读 64 位（r64）（数据流节点数组（g_df_nodes），节点全局索引 * 数据流节点条目大小（ESZ_DFNODE） + 数据流节点操作码偏移（OFF_DF_OPCODE）））
+        写 64 位（数据流图（CIR） 缓存）（w64_cir）（文件描述符（fd），读 64 位（r64）（数据流节点数组（g_df_nodes），节点全局索引 * 数据流节点条目大小（ESZ_DFNODE） + 数据流节点目标偏移（OFF_DF_DEST）））
+        写 64 位（数据流图（CIR） 缓存）（w64_cir）（文件描述符（fd），读 64 位（r64）（数据流节点数组（g_df_nodes），节点全局索引 * 数据流节点条目大小（ESZ_DFNODE） + 数据流节点源1偏移（OFF_DF_S1）））
+        写 64 位（数据流图（CIR） 缓存）（w64_cir）（文件描述符（fd），读 64 位（r64）（数据流节点数组（g_df_nodes），节点全局索引 * 数据流节点条目大小（ESZ_DFNODE） + 数据流节点源2偏移（OFF_DF_S2）））
+        写 64 位（数据流图（CIR） 缓存）（w64_cir）（文件描述符（fd），读 64 位（r64）（数据流节点数组（g_df_nodes），节点全局索引 * 数据流节点条目大小（ESZ_DFNODE） + 数据流节点源3偏移（OFF_DF_S3）））
+        写 64 位（数据流图（CIR） 缓存）（w64_cir）（文件描述符（fd），读 64 位（r64）（数据流节点数组（g_df_nodes），节点全局索引 * 数据流节点条目大小（ESZ_DFNODE） + 数据流节点类型类别偏移（OFF_DF_TK）））
+        写 64 位（数据流图（CIR） 缓存）（w64_cir）（文件描述符（fd），读 64 位（r64）（数据流节点数组（g_df_nodes），节点全局索引 * 数据流节点条目大小（ESZ_DFNODE） + 数据流节点首边索引偏移（OFF_DF_FIRST_EDGE）））
+        写 64 位（数据流图（CIR） 缓存）（w64_cir）（文件描述符（fd），读 64 位（r64）（数据流节点数组（g_df_nodes），节点全局索引 * 数据流节点条目大小（ESZ_DFNODE） + 数据流节点边计数偏移（OFF_DF_EDGE_COUNT）））
         令 节点遍历索引 = 节点遍历索引 + 1
     写 64 位（数据流图（CIR） 缓存）（w64_cir）（文件描述符（fd），数据流边计数（g_df_edge_count））
     令 边索引（ei） = 0（可变）
     循环（当 边索引 小于 数据流边计数（g_df_edge_count） 时）：
-        写 64 位（数据流图（CIR） 缓存）（w64_cir）（文件描述符（fd），读 64 位（r64）（数据流边数组（g_df_edges），边索引 * 数据流边条目大小（ESZ_DFEDGE） + 偏移\_DFE\下划线（_）源节点（OFF_DFE_FROM）））
-        写 64 位（数据流图（CIR） 缓存）（w64_cir）（文件描述符（fd），读 64 位（r64）（数据流边数组（g_df_edges），边索引 * 数据流边条目大小（ESZ_DFEDGE） + 偏移\_DFE\下划线（_）目标节点（OFF_DFE_TO）））
-        写 64 位（数据流图（CIR） 缓存）（w64_cir）（文件描述符（fd），读 64 位（r64）（数据流边数组（g_df_edges），边索引 * 数据流边条目大小（ESZ_DFEDGE） + 偏移\_DFE\下划线（_）下一边（OFF_DFE_NEXT）））
-        写 64 位（数据流图（CIR） 缓存）（w64_cir）（文件描述符（fd），读 64 位（r64）（数据流边数组（g_df_edges），边索引 * 数据流边条目大小（ESZ_DFEDGE） + 偏移\_DFE\下划线（_）类别（OFF_DFE_KIND）））
+        写 64 位（数据流图（CIR） 缓存）（w64_cir）（文件描述符（fd），读 64 位（r64）（数据流边数组（g_df_edges），边索引 * 数据流边条目大小（ESZ_DFEDGE） + 数据流边起点偏移（OFF_DFE_FROM）））
+        写 64 位（数据流图（CIR） 缓存）（w64_cir）（文件描述符（fd），读 64 位（r64）（数据流边数组（g_df_edges），边索引 * 数据流边条目大小（ESZ_DFEDGE） + 数据流边终点偏移（OFF_DFE_TO）））
+        写 64 位（数据流图（CIR） 缓存）（w64_cir）（文件描述符（fd），读 64 位（r64）（数据流边数组（g_df_edges），边索引 * 数据流边条目大小（ESZ_DFEDGE） + 数据流边下一边偏移（OFF_DFE_NEXT）））
+        写 64 位（数据流图（CIR） 缓存）（w64_cir）（文件描述符（fd），读 64 位（r64）（数据流边数组（g_df_edges），边索引 * 数据流边条目大小（ESZ_DFEDGE） + 数据流边类别偏移（OFF_DFE_KIND）））
         令 边索引 = 边索引 + 1
     写 64 位（数据流图（CIR） 缓存）（w64_cir）（文件描述符（fd），指令计数（instr_count））
     令 指令索引（ii） = 0（可变）
@@ -251,7 +251,7 @@
     令 位置（pos） = 位置（位置） + 8
     令 签名指纹（sig） = 读 64 位（r64）（文件数据（data），位置（pos））
     令 位置（pos） = 位置（位置） + 8
-    令 函数 AST 节点（fn_node） = 函数信息访问器：AST 数组（ast）节点（fi_ast_node）（func_idx）
+    令 函数 AST 节点（fn_node） = 函数信息访问器：AST 节点（fi_ast_node）（func_idx）
     令 当前函数体指纹（current_fp） = 函数指纹（func_fingerprint）（fn_node）
     如果 函数体指纹（fp） 不等于 当前函数体指纹（current_fp），那么：返回 -1
     令 当前签名指纹（current_sig） = 签名指纹（sig_fingerprint）（fn_node）
@@ -285,23 +285,23 @@
     循环（当 节点索引 小于 节点计数（node_count） 时）：
         令 当前节点全局位置（n） = 基础节点位置（base_node） + 节点索引
         写 64 位（w64）（数据流节点所属 region（g_df_node_region），当前节点全局位置（n） * 8，当前结构图索引（g_cur_sg））
-        写 64 位（w64）（数据流节点数组（g_df_nodes），当前节点全局位置（n） * 数据流节点条目大小（ESZ_DFNODE） + 偏移\_DF\下划线（_）操作码（OFF_DF_OPCODE），读 64 位（r64）（文件数据（data），位置（pos）））
+        写 64 位（w64）（数据流节点数组（g_df_nodes），当前节点全局位置（n） * 数据流节点条目大小（ESZ_DFNODE） + 数据流节点操作码偏移（OFF_DF_OPCODE），读 64 位（r64）（文件数据（data），位置（pos）））
         令 位置（pos） = 位置（位置） + 8
-        写 64 位（w64）（数据流节点数组（g_df_nodes），当前节点全局位置（n） * 数据流节点条目大小（ESZ_DFNODE） + 偏移\_DF\下划线（_）目标（OFF_DF_DEST），读 64 位（r64）（文件数据（data），位置（pos）））
+        写 64 位（w64）（数据流节点数组（g_df_nodes），当前节点全局位置（n） * 数据流节点条目大小（ESZ_DFNODE） + 数据流节点目标偏移（OFF_DF_DEST），读 64 位（r64）（文件数据（data），位置（pos）））
         令 位置（pos） = 位置（位置） + 8
-        写 64 位（w64）（数据流节点数组（g_df_nodes），当前节点全局位置（n） * 数据流节点条目大小（ESZ_DFNODE） + 偏移\_DF\下划线（_）源1（OFF_DF_S1），读 64 位（r64）（文件数据（data），位置（pos）））
+        写 64 位（w64）（数据流节点数组（g_df_nodes），当前节点全局位置（n） * 数据流节点条目大小（ESZ_DFNODE） + 数据流节点源1偏移（OFF_DF_S1），读 64 位（r64）（文件数据（data），位置（pos）））
         令 位置（pos） = 位置（位置） + 8
-        写 64 位（w64）（数据流节点数组（g_df_nodes），当前节点全局位置（n） * 数据流节点条目大小（ESZ_DFNODE） + 偏移\_DF\下划线（_）源2（OFF_DF_S2），读 64 位（r64）（文件数据（data），位置（pos）））
+        写 64 位（w64）（数据流节点数组（g_df_nodes），当前节点全局位置（n） * 数据流节点条目大小（ESZ_DFNODE） + 数据流节点源2偏移（OFF_DF_S2），读 64 位（r64）（文件数据（data），位置（pos）））
         令 位置（pos） = 位置（位置） + 8
-        写 64 位（w64）（数据流节点数组（g_df_nodes），当前节点全局位置（n） * 数据流节点条目大小（ESZ_DFNODE） + 偏移\_DF\下划线（_）源3（OFF_DF_S3），读 64 位（r64）（文件数据（data），位置（pos）））
+        写 64 位（w64）（数据流节点数组（g_df_nodes），当前节点全局位置（n） * 数据流节点条目大小（ESZ_DFNODE） + 数据流节点源3偏移（OFF_DF_S3），读 64 位（r64）（文件数据（data），位置（pos）））
         令 位置（pos） = 位置（位置） + 8
-        写 64 位（w64）（数据流节点数组（g_df_nodes），当前节点全局位置（n） * 数据流节点条目大小（ESZ_DFNODE） + 偏移\_DF\下划线（_）类型类别（OFF_DF_TK），读 64 位（r64）（文件数据（data），位置（pos）））
+        写 64 位（w64）（数据流节点数组（g_df_nodes），当前节点全局位置（n） * 数据流节点条目大小（ESZ_DFNODE） + 数据流节点类型类别偏移（OFF_DF_TK），读 64 位（r64）（文件数据（data），位置（pos）））
         令 位置（pos） = 位置（位置） + 8
-        写 64 位（w64）（数据流节点数组（g_df_nodes），当前节点全局位置（n） * 数据流节点条目大小（ESZ_DFNODE） + 偏移\_DF\下划线（_）首边索引（OFF_DF_FIRST_EDGE），读 64 位（r64）（文件数据（data），位置（pos）））
+        写 64 位（w64）（数据流节点数组（g_df_nodes），当前节点全局位置（n） * 数据流节点条目大小（ESZ_DFNODE） + 数据流节点首边索引偏移（OFF_DF_FIRST_EDGE），读 64 位（r64）（文件数据（data），位置（pos）））
         令 位置（pos） = 位置（位置） + 8
-        写 64 位（w64）（数据流节点数组（g_df_nodes），当前节点全局位置（n） * 数据流节点条目大小（ESZ_DFNODE） + 偏移\_DF\下划线（_）边计数（OFF_DF_EDGE_COUNT），读 64 位（r64）（文件数据（data），位置（pos）））
+        写 64 位（w64）（数据流节点数组（g_df_nodes），当前节点全局位置（n） * 数据流节点条目大小（ESZ_DFNODE） + 数据流节点边计数偏移（OFF_DF_EDGE_COUNT），读 64 位（r64）（文件数据（data），位置（pos）））
         令 位置（pos） = 位置（位置） + 8
-        令 节点目标变量（dest） = 读 64 位（r64）（数据流节点数组（g_df_nodes），当前节点全局位置（n） * 数据流节点条目大小（ESZ_DFNODE） + 偏移\_DF\下划线（_）目标（OFF_DF_DEST））
+        令 节点目标变量（dest） = 读 64 位（r64）（数据流节点数组（g_df_nodes），当前节点全局位置（n） * 数据流节点条目大小（ESZ_DFNODE） + 数据流节点目标偏移（OFF_DF_DEST））
         如果 节点目标变量（dest） 大于等于 0，那么：
             扩展数据流数组（grow_df_arrays）（节点目标变量（dest） + 1）
             写 64 位（w64）（变量生产者节点映射（g_df_var_producer），节点目标变量（dest） * 8，当前节点全局位置（n））
@@ -321,10 +321,10 @@
         令 位置（pos） = 位置（位置） + 8
         令 边类别（e_kind） = 读 64 位（r64）（文件数据（data），位置（pos））
         令 位置（pos） = 位置（位置） + 8
-        写 64 位（w64）（数据流边数组（g_df_edges），边索引 * 数据流边条目大小（ESZ_DFEDGE） + 偏移\_DFE\下划线（_）源节点（OFF_DFE_FROM），边源节点（e_from））
-        写 64 位（w64）（数据流边数组（g_df_edges），边索引 * 数据流边条目大小（ESZ_DFEDGE） + 偏移\_DFE\下划线（_）目标节点（OFF_DFE_TO），边目标节点（e_to））
-        写 64 位（w64）（数据流边数组（g_df_edges），边索引 * 数据流边条目大小（ESZ_DFEDGE） + 偏移\_DFE\下划线（_）下一边（OFF_DFE_NEXT），边链表下一项（e_next））
-        写 64 位（w64）（数据流边数组（g_df_edges），边索引 * 数据流边条目大小（ESZ_DFEDGE） + 偏移\_DFE\下划线（_）类别（OFF_DFE_KIND），边类别（e_kind））
+        写 64 位（w64）（数据流边数组（g_df_edges），边索引 * 数据流边条目大小（ESZ_DFEDGE） + 数据流边起点偏移（OFF_DFE_FROM），边源节点（e_from））
+        写 64 位（w64）（数据流边数组（g_df_edges），边索引 * 数据流边条目大小（ESZ_DFEDGE） + 数据流边终点偏移（OFF_DFE_TO），边目标节点（e_to））
+        写 64 位（w64）（数据流边数组（g_df_edges），边索引 * 数据流边条目大小（ESZ_DFEDGE） + 数据流边下一边偏移（OFF_DFE_NEXT），边链表下一项（e_next））
+        写 64 位（w64）（数据流边数组（g_df_edges），边索引 * 数据流边条目大小（ESZ_DFEDGE） + 数据流边类别偏移（OFF_DFE_KIND），边类别（e_kind））
         令 边索引 = 边索引 + 1
     令 指令计数（instr_count） = 读 64 位（r64）（文件数据（data），位置（pos））
     令 位置（pos） = 位置（位置） + 8

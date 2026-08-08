@@ -15,7 +15,7 @@
 | 添加枚举 | add_enum | 添加枚举（add_enum） |
 | 提取热补丁版本号 | extract_hotpatch_ver | 提取热补丁版本号（extract_hotpatch_ver） |
 | 解析函数体 | parse_body | 解析函数体（parse_body） |
-| 解析ffiannotation | parse_ffi_annotation | 解析ffiannotation（parse_ffi_annotation） |
+| 解析 FFI 注解 | parse_ffi_annotation | 解析 FFI 注解（parse_ffi_annotation） |
 | 检查（入口） | check | 解析泛型参数（parse_generics） |
 | 前进词法单元 | advance_tok | 解析泛型参数（parse_generics） |
 | 词法单元类别 | tok_k | 解析泛型参数到容器（parse_generics_into） |
@@ -51,7 +51,7 @@
 | 函数信息访问器：设置返回类型 | fi_set_return_type | 添加函数（add_func） |
 | 函数信息访问器：设置ast节点 | fi_set_ast_node | 添加函数（add_func） |
 | 函数信息访问器：设置参数类型 | fi_set_param_type | 解析函数体（parse_body） |
-| 添加错误 | add_error | 解析ffiannotation（parse_ffi_annotation） |
+| 添加错误 | add_error | 解析 FFI 注解（parse_ffi_annotation） |
 | 字符串长度 | str_len | （全局工具） |
 | 函数计数 | g_func_count | 全局 |
 | 结构体计数 | g_struct_count | 全局 |
@@ -65,7 +65,20 @@
 | MAX_GENERICS | MAX_GENERICS | 全局常量（=4） |
 
 ## 全局状态
-（本部分未单独列出全局变量；涉及的全局变量含义见「标识符对照表」）
+
+本部分使用的全局变量：
+
+| 中文名 | 原名 | 说明 |
+|--------|------|------|
+| 函数计数 | g_func_count | 见第 1 部分/标识符对照表 |
+| 结构体计数 | g_struct_count | 见第 1 部分/标识符对照表 |
+| 枚举计数 | g_enum_count | 见第 1 部分/标识符对照表 |
+| 泛型约束数组 | g_generic_constr | 见第 1 部分/标识符对照表 |
+| 泛型约束计数 | g_generic_constr_count | 见第 1 部分/标识符对照表 |
+| 函数数组 | g_funcs | 见第 1 部分/标识符对照表 |
+| 结构体数组 | g_structs | 见第 1 部分/标识符对照表 |
+| 枚举数组 | g_enums | 见第 1 部分/标识符对照表 |
+| AST 节点计数 | g_ast_count | 见第 1 部分/标识符对照表 |
 
 ## 函数 解析泛型参数（parse_generics）
 ### 作用
@@ -253,7 +266,7 @@
 ### 作用
 解析函数声明中 `函数（fn） 名称（name）[泛型列表（generics）]（params...） [-> 返回类型（ret_type）] 「 函数体（AST 节点）（body） 」 | = 表达式（expr） ；` 的完整体部分。步骤：
 1. 解析泛型参数到局部缓冲区 泛型名列表（gnames）/泛型约束列表（gconstrs）
-2. 解析参数列表：支持 自身（self）、&自身、&可变（mut） 自身（分别标记为 数据（data）=1/2/3）、可变参数 `...名称（name）: 类型（枚举）（type）`（标记 数据=-1）、普通参数 `名称: 类型（枚举）`
+2. 解析参数列表：支持 自身（self）、&自身、&可变（mut） 自身（分别标记为 数据（data）=1/2/3）、可变参数 `...名称（name）: 类型（type）`（标记 数据=-1）、普通参数 `名称: 类型（type）`
 3. 解析返回类型（可选的 `-> type`，默认 单元类型（unit））
 4. 解析函数体：`「 块（block） 」` 或 `= 表达式（expr） ；`
 5. 构造 函数定义表达式（EXPR_FN） 节点（含热补丁版本号编码到返回类型高字节），注册到函数表，保存泛型信息到 函数信息（FuncInfo），存储参数类型到 函数信息
@@ -303,7 +316,7 @@
                     如果 非 检查（T_COMMA），那么：跳出循环
                     前进词法单元（）
                     继续下一次循环
-                -- 可变参数 ...名称（name）:类型（枚举）（type）
+                -- 可变参数 ...名称（name）:类型（type）
                 如果 检查（T_DOTDOTDOT），那么：
                     前进词法单元（）  -- 跳过 ...
                     令 可变参数名索引（vt）= 前进词法单元（）  -- 消费参数名
@@ -316,7 +329,7 @@
                     如果 非 检查（T_COMMA），那么：跳出循环
                     前进词法单元（）
                     继续下一次循环
-                -- 普通参数 名称（name）: 类型（枚举）（type）
+                -- 普通参数 名称（name）: 类型（type）
                 令 参数词法单元（pt）= 前进词法单元（）  -- 消费参数名
                 令 参数名称索引（pn）= 字符串驻留（词法单元词素索引（参数词法单元））
                 前进词法单元（）  -- 跳过 :
@@ -363,17 +376,17 @@
 1. "函数（fn） f（） 「」" 产生 函数定义表达式（EXPR_FN）（name=f, 程序计数器（pc）=0, 返回类型值（rtv）=单元类型（TY_UNIT）, 函数体（AST 节点）（body）=代码块表达式（EXPR_BLOCK））
 2. "函数（fn） f（变量甲（x）: 整数（int）） -> 整数（整数） 「 变量甲（变量甲） 」" 程序计数器（pc）=1, 返回类型值（rtv）=整数类型（TY_INT）
 3. "函数（fn） f（self） 「」" 参数 数据（data）=1（自身）
-4. "函数（fn） f（self） 「」" 参数 数据（data）=2；"&可变（mut） 自身（自身）" 数据=3
+4. "函数（fn） f（&自身（self）） 「」" 参数 数据（data）=2；"函数（fn） f（&可变（mut） 自身（self）） 「」" 数据=3
 5. "函数（fn） f（string） 「」" 参数 数据（data）=-1（可变参数）
 6. 等号体 "函数（fn） f（） -> 整数（int） = 42；" 函数体（AST 节点）（body）=整数字面量表达式（EXPR_INT）
 7. 泛型约束 "[泛型参数 泛型参数（T）（泛型参数 T）: 显示特质（Show）]" 正确保存
 8. 热补丁版本号编码：返回类型值（rtv） + 热补丁版本（hotpatch_ver） * 256
 
-## 函数 解析外部函数接口注解（ffiannotation）（parse_ffi_annotation）
+## 函数 解析 FFI 注解（parse_ffi_annotation）（parse_ffi_annotation）
 ### 作用
 解析 外部函数接口（FFI）（外部语言接口）注解 `@外部函数接口（ffi）（"language"）`。期望格式：`@外部函数接口（"lang_name"）`。返回语言名字符串的驻留索引；格式错误时报告诊断错误并返回 -1。
 ### 逻辑
-    函数 解析外部函数接口注解（ffiannotation）（parse_ffi_annotation）-> 整数
+    函数 解析 FFI 注解（parse_ffi_annotation）（parse_ffi_annotation）-> 整数
         前进词法单元（advance_tok）（）  -- 跳过 @
         如果 词法单元类别（tok_k）（当前词法单元（cur_tok）（）） 不等于 标识符（T_IDENT），那么：添加错误（add_error）（"期望（expected） 外部函数接口（ffi）"）； 返回 -1
         令 词素（lex）= 词法单元词素索引（tok_lx）（当前词法单元（））
@@ -381,7 +394,7 @@
         前进词法单元（）
         如果 词法单元类别（当前词法单元（）） 不等于 左圆括号（T_LPAREN），那么：添加错误（"期望（expected） （"）； 返回 -1
         前进词法单元（）
-        如果 词法单元类别（当前词法单元（）） 不等于 字符串字面量（T_STRING），那么：添加错误（"期望（expected） 字符串（string） 字面量（literal） 遍历（for） 外部函数接口（FFI） language"）； 返回 -1
+        如果 词法单元类别（当前词法单元（）） 不等于 字符串字面量（T_STRING），那么：添加错误（""expected string literal for FFI language""）； 返回 -1
         令 语言名索引（lang_ni）= 字符串驻留（str_intern）（词法单元词素索引（当前词法单元（）））
         前进词法单元（）
         如果 词法单元类别（当前词法单元（）） 不等于 右圆括号（T_RPAREN），那么：添加错误（"期望（expected） ）"）； 返回 -1

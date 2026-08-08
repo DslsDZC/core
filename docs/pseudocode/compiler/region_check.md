@@ -163,7 +163,7 @@
                     令 分配子图出口（alloc_exit） = 读 64 位（r64）（源 = 结构图数组，偏移 = 分配子图 * 结构图条目大小 + 出口字段偏移）
                     如果 分配子图出口 大于等于 0 且 当前节点序号 大于 分配子图出口，那么：
                         检查错误（check_error）（错误码：生命周期错误（EC_B_LIFETIME），
-                            消息 = "区域逃逸：返回指向已退出子图分配的指针",
+                            消息 = "region escape: returning pointer to exited subgraph allocation",
                             行号 = 0，列号 = 0）
             令 位掩码 = 位掩码 * 2
             令 位序号 = 位序号 + 1
@@ -238,7 +238,7 @@
                                 令 分配子图出口（alloc_exit） = 读 64 位（r64）（源 = 结构图数组，偏移 = 分配子图 * 结构图条目大小 + 出口字段偏移）
                                 如果 分配子图出口 大于等于 0 且 当前节点序号 大于 分配子图出口，那么：
                                     检查错误（check_error）（错误码：生命周期错误（EC_B_LIFETIME），
-                                        消息 = "悬垂指针：分配子图在解引用前已退出",
+                                        消息 = "dangling pointer: allocation subgraph exited before deref",
                                         行号 = 0，列号 = 0）
                         令 位掩码 = 位掩码 * 2
                         令 位序号 = 位序号 + 1

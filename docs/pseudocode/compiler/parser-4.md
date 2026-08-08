@@ -1,6 +1,6 @@
 # 解析器（parser）.cr 伪代码（第 4 部分：顶层声明解析 + 解析总入口）
 > 源文件：src/compiler/解析器（parser）.cr（第 1229~1691 行）
-> 功能概要：解析顶层声明（parse_declaration）：热补丁注解预处理、公开（pub） 修饰、外部（extern） 函数（fn） 声明（含 @外部函数接口（ffi） 注解）、函数/流程（flow） 函数声明、结构（struct） 结构体声明（含泛型与字段列表）、枚举（enum） 枚举声明（含泛型与变体及其关联类型）、接口（interface） 接口声明（含泛型与方法签名——自身（self）/&自身/&可变（mut） 自身 与普通参数类型、返回类型、最大方法计数 16、最大参数 8 的上限检查与诊断）、实现（impl） 块（含 实现 类型（Type） 「 方法（method）... 」 与 实现 Interface 遍历（for） 类型 「 方法... 」，方法体委托 parse_body，方法名按 类型.方法 格式拼接注册到查找表）、类型（枚举）（type） 别名声明、mod 模块声明（路径拼接与块内容跳过）。顶层解析入口（parse_all）：重置所有全局计数后循环调用 解析声明（parse_declaration），跳过 引入（import）/文件标识（fileid） 声明（留给导入解析模块处理），遇 文件结束标记（EOF） 或单次声明 AST 增长超 10000 时中止。
+> 功能概要：解析顶层声明（parse_declaration）：热补丁注解预处理、公开（pub） 修饰、外部（extern） 函数（fn） 声明（含 @外部函数接口（ffi） 注解）、函数/流程（flow） 函数声明、结构（struct） 结构体声明（含泛型与字段列表）、枚举（enum） 枚举声明（含泛型与变体及其关联类型）、接口（interface） 接口声明（含泛型与方法签名——自身（self）/&自身/&可变（mut） 自身 与普通参数类型、返回类型、最大方法计数 16、最大参数 8 的上限检查与诊断）、实现（impl） 块（含 实现 类型（Type） 「 方法（method）... 」 与 实现 Interface 遍历（for） 类型 「 方法... 」，方法体委托 parse_body，方法名按 类型.方法 格式拼接注册到查找表）、类型（type） 别名声明、mod 模块声明（路径拼接与块内容跳过）。顶层解析入口（parse_all）：重置所有全局计数后循环调用 解析声明（parse_declaration），跳过 引入（import）/文件标识（fileid） 声明（留给导入解析模块处理），遇 文件结束标记（EOF） 或单次声明 AST 增长超 10000 时中止。
 
 ## 标识符对照表
 
@@ -9,7 +9,7 @@
 | 解析声明 | parse_declaration | 解析声明（parse_declaration） |
 | 解析全部 | parse_all | 解析全部（parse_all） |
 | 解析函数体 | parse_body | 解析声明（parse_declaration） |
-| 解析ffiannotation | parse_ffi_annotation | 解析声明（parse_declaration） |
+| 解析 FFI 注解 | parse_ffi_annotation | 解析声明（parse_declaration） |
 | 解析泛型参数到容器 | parse_generics_into | 解析声明（parse_declaration） |
 | 解析代码块 | parse_block | 解析声明（parse_declaration） |
 | 解析新变量声明 | parse_new_var_decl | 解析声明（parse_declaration） |
@@ -45,7 +45,32 @@
 | 插件标签数组/计数 | g_plugin_tags/g_plugin_tag_count | 全局 |
 
 ## 全局状态
-（本部分未单独列出全局变量；涉及的全局变量含义见「标识符对照表」）
+
+本部分使用的全局变量：
+
+| 中文名 | 原名 | 说明 |
+|--------|------|------|
+| 词法单元数组/计数 | g_tokens/g_token_count | 见第 1 部分/标识符对照表 |
+| AST 节点数组/计数/容量 | g_ast/g_ast_count/g_ast_cap | 见第 1 部分/标识符对照表 |
+| 函数数组/计数/容量 | g_funcs/g_func_count/g_func_cap | 见第 1 部分/标识符对照表 |
+| 结构体数组/计数/容量 | g_structs/g_struct_count/g_struct_cap | 见第 1 部分/标识符对照表 |
+| 枚举数组/计数/容量 | g_enums/g_enum_count/g_enum_cap | 见第 1 部分/标识符对照表 |
+| 类型别名数组/计数/容量 | g_type_aliases/g_type_alias_count/g_type_alias_cap | 见第 1 部分/标识符对照表 |
+| 方法数组/计数/容量 | g_methods/g_method_count/g_method_cap | 见第 1 部分/标识符对照表 |
+| 接口数组/计数/容量 | g_ifaces/g_iface_count/g_iface_cap | 见第 1 部分/标识符对照表 |
+| 接口实现数组/计数/容量 | g_impl_for/g_impl_for_count/g_impl_for_cap | 见第 1 部分/标识符对照表 |
+| 全局声明数组/计数/容量 | g_global_lets/g_global_let_count/g_global_lets_cap | 见第 1 部分/标识符对照表 |
+| 泛型约束数组/计数/容量 | g_generic_constr/g_generic_constr_count/g_generic_constr_cap | 见第 1 部分/标识符对照表 |
+| 泛型参数数组/计数/容量 | g_gen_params/g_gen_param_count/g_gen_param_cap | 见第 1 部分/标识符对照表 |
+| 模块路径名数组/计数/容量 | g_mod_path_names/g_mod_path_count/g_mod_path_cap | 见第 1 部分/标识符对照表 |
+| 循环标签栈/容量 | g_loop_stack/g_loop_stack_cap | 见第 1 部分/标识符对照表 |
+| 循环嵌套深度 | g_loop_depth | 见第 1 部分/标识符对照表 |
+| 额外声明计数 | g_extra_let_count | 见第 1 部分/标识符对照表 |
+| 代码块语句计数 | g_block_stmt_count | 见第 1 部分/标识符对照表 |
+| 错误计数 | g_error_count | 见第 1 部分/标识符对照表 |
+| 诊断数组/计数 | g_diags/g_diag_count | 见第 1 部分/标识符对照表 |
+| 当前词法单元位置 | g_token_pos | 见第 1 部分/标识符对照表 |
+| 插件标签数组/计数 | g_plugin_tags/g_plugin_tag_count | 见第 1 部分/标识符对照表 |
 
 ## 函数 解析声明（parse_declaration）
 ### 作用
@@ -58,7 +83,7 @@
 6. **枚举（enum） 枚举声明**：解析 `枚举 名称（Name）[泛型列表（generics）] 「 变体1（Variant1）（type1）, 变体2（Variant2）, ... 」`，调用 添加枚举（add_enum） 注册并填充变体名/关联类型
 7. **接口（interface） 接口声明**：解析 `接口 名称（Name）[泛型列表（generics）] 「 函数（fn） 方法（method）（自身（self）/params...）: 返回（ret）； ... 」`，分配接口条目，填充泛型与方法签名（最大 16 方法，每方法最大 8 参数）
 8. **实现（impl） 块**：解析 `实现 类型（Type） 「 函数（fn） 方法（method）... 」` 或 `实现 特质（Trait） 遍历（for） 类型 「 函数 方法... 」`，方法体委托 解析函数体（parse_body），方法以 "类型.方法" 格式注册到方法查找表，实现-遍历 关系记录到 接口实现数组（g_impl_for）
-9. **类型（枚举）（type） 别名**：解析 `类型（枚举） 名称（Name） = 既有类型（ExistingType）；`
+9. **类型（type） 别名**：解析 `类型（type） 名称（Name） = 既有类型（ExistingType）；`
 10. **mod 模块声明**：解析 `mod 变量甲（a）::变量乙（b）::变量丙（c）；` 或 `mod 名称（name） 「 ... 」`，路径存入模块路径表，块体内容按嵌套括号深度跳过
 11. **全局变量声明**：若为 标识符（T_IDENT） 且 判断新变量声明（is_new_var_decl），调用 解析新变量声明（parse_new_var_decl） 并将结果及额外声明写入 全局声明数组（g_global_lets）
 12. **未知**：消费当前词法单元
@@ -75,16 +100,16 @@
         如果 检查（T_FN） 或 检查（T_FLOW） 或 检查（T_PUB） 或 检查（T_EXTERN），那么：
             令 表达式类别（k） = AST 访问器：类别（ast_kind）（注解节点）
             如果 表达式类别 等于 调用表达式（EXPR_CALL），那么：
-                令 被调者节点（callee） = AST 访问器：变量甲（a）（ast_a）（注解节点）
+                令 被调者节点（callee） = 第一子节点访问器（ast_a）（ast_a）（注解节点）
                 如果 AST 访问器：类别（ast_kind）（被调者节点） 等于 属性访问表达式（EXPR_AT），那么：
-                    令 名称索引（name_ni） = AST 访问器：变量甲（a）（ast_a）（被调者节点）
+                    令 名称索引（name_ni） = 第一子节点访问器（ast_a）（ast_a）（被调者节点）
                     令 名称（name） = 驻留字符串获取（istr_get）（名称索引）
                     如果 字符串相等比较（str_eq）（名称, "热补丁（hotpatch）"） 不等于 0，那么：
                         令 版本号提取值（hv） = 提取热补丁版本号（extract_hotpatch_ver）（ast_b（注解节点））
                         如果 版本号提取值 大于等于 0，那么：热补丁版本号 = 版本号提取值
                         否则：热补丁版本号 = 1
             否则如果 表达式类别 等于 属性访问表达式（EXPR_AT），那么：
-                令 名称索引 = AST 访问器：变量甲（a）（ast_a）（注解节点）
+                令 名称索引 = 第一子节点访问器（ast_a）（ast_a）（注解节点）
                 令 名称 = 驻留字符串获取（名称索引）
                 如果 字符串相等比较（名称, "热补丁（hotpatch）"） 不等于 0，那么：
                     热补丁版本号 = 1
@@ -100,7 +125,7 @@
         令 当前词法单元索引（t） = 当前词法单元（cur_tok）（）
         前进词法单元（）
         令 外部函数接口（FFI）语言名索引（ffi_lang_ni）：自动推导，可变 = -1
-        如果 检查（T_AT），那么：外部函数接口（FFI）语言名索引 = 解析外部函数接口注解（ffiannotation）（parse_ffi_annotation）（）
+        如果 检查（T_AT），那么：外部函数接口（FFI）语言名索引 = 解析 FFI 注解（parse_ffi_annotation）（parse_ffi_annotation）（）
         如果 词法单元类别（tok_k）（当前词法单元（）） 不等于 函数关键字（T_FN），那么：
             添加错误（add_error）（"期望（expected） '函数（fn）' after 外部（extern）"）
             返回
@@ -367,7 +392,7 @@
             接口实现计数（g_impl_for_count） = 接口实现计数 + 1
         返回
 
-    -- 类型（枚举）（type） 别名声明：类型（枚举） 名称（Name） = 既有类型（ExistingType）；
+    -- 类型（type） 别名声明：类型（type） 名称（Name） = 既有类型（ExistingType）；
     -- 将别名和对应的类型 AST 节点写入 类型别名数组（g_type_aliases）
     如果 检查（T_TYPE），那么：
         前进词法单元（）
@@ -444,7 +469,7 @@
 9. 接口方法超过 16 时诊断报错
 10. 接口方法参数超过 8 时诊断报错
 11. "实现（impl） 显示特质（Show） 遍历（for） Point 「 函数（fn） show（self） -> 字符串（string） 「 ... 」 」" 方法注册为 "Point.show"，实现-遍历 记录写入 接口实现数组（g_impl_for）
-12. "类型（枚举）（type） MyInt = 整数（int）；" 类型别名写入 类型别名数组（g_type_aliases）
+12. "类型（type） MyInt = 整数（int）；" 类型别名写入 类型别名数组（g_type_aliases）
 13. "mod 变量甲（a）::变量乙（b）::变量丙（c）；" 路径正确按 "::" 连接并写入 模块路径名数组（g_mod_path_names）
 14. "mod foo 「 ... 」" 块体内容按嵌套括号深度正确跳过
 15. 顶层全局变量 "变量甲（x） : 整数（int） = 1；" 写入 全局声明数组（g_global_lets），批量 "变量甲（a）, 变量乙（b） : 整数 = 1, 2；" 额外声明全部排出

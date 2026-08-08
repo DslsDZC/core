@@ -1,5 +1,5 @@
 # 入口文件（entry.cr）伪代码
-> 源文件：src/compiler/入口条目（entry）.cr（3 行）
+> 源文件：src/compiler/entry.cr（2 行）
 > 功能概要：项目模式入口点，将程序入口委托给编译器主入口函数。本文件是（corec）二进制的真正（main）函数定义，仅作转发。
 
 ## 标识符对照表

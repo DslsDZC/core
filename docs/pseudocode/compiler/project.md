@@ -1,5 +1,5 @@
 # 项目配置（project.cr）伪代码
-> 源文件：src/compiler/project.cr（57 行）
+> 源文件：src/compiler/project.cr（56 行）
 > 功能概要：项目级操作：读取（Core.toml）配置文件，解析项目名，定位（main.cr）入口文件并返回其源码内容。
 
 ## 标识符对照表

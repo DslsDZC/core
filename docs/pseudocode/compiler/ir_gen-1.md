@@ -86,7 +86,7 @@
 | 扩展 IR 局部作用域数组 | grow_ir_local_scopes | 压入 IR 作用域（push_ir_scope） |
 | 扩展 IR 字符串常量数组 | grow_ir_str_consts | 追踪字符串常量（track_str） |
 | 查找函数 | find_func | IR 调用返回类型（ir_call_return_type） |
-| 查找gsym | find_gsym | IR 调用返回类型（ir_call_return_type） |
+| 查找泛型符号 | find_gsym | IR 调用返回类型（ir_call_return_type） |
 | 符号类别 | sym_kind | IR 调用返回类型（ir_call_return_type） |
 | 符号类型 | sym_type | IR 调用返回类型（ir_call_return_type） |
 | 符号节点 | sym_node | IR 调用返回类型（ir_call_return_type） |
@@ -114,14 +114,14 @@
 | 函数符号类型 | SYM_FN | IR 调用返回类型（ir_call_return_type） |
 | 共享库函数符号类型 | SYM_SO_FN | IR 调用返回类型（ir_call_return_type） |
 
-| 整数字面量类型值 | TY_INT | IR 调用返回类型（ir_call_return_type） |
+| 整数类型 | TY_INT | IR 调用返回类型（ir_call_return_type） |
 | 字符串字面量类型值 | TY_STRING | IR 调用返回类型（ir_call_return_type） |
 | 浮点字面量类型值 | TY_FLOAT | IR 调用返回类型（ir_call_return_type） |
 | 布尔字面量类型值 | TY_BOOL | IR 调用返回类型（ir_call_return_type） |
-| 单元类型值 | TY_UNIT | IR 调用返回类型（ir_call_return_type） |
+| 单元类型 | TY_UNIT | IR 调用返回类型（ir_call_return_type） |
 | 字符字面量类型值 | TY_CHAR | IR 调用返回类型（ir_call_return_type） |
 
-| 单元类型索引 | TI_UNIT | IR 调用返回类型（ir_call_return_type） |
+| 单元类型信息 | TI_UNIT | IR 调用返回类型（ir_call_return_type） |
 | 整数类型索引 | TI_INT | IR 调用返回类型（ir_call_return_type） |
 | 浮点类型索引 | TI_FLOAT | IR 调用返回类型（ir_call_return_type） |
 | 布尔类型索引 | TI_BOOL | IR 调用返回类型（ir_call_return_type） |
@@ -145,7 +145,7 @@
 ## 函数 扩展 SG 分配数组（grow_sg_alloc）
 
 ### 作用
-动态扩展SG 分配槽总数（g_sg_alloc_total）数组的容量。当需要的项数超出当前容量时，分配更大的缓冲区并拷贝旧数据。
+动态扩展 SG 分配槽总数（g_sg_alloc_total）数组的容量。当需要的项数超出当前容量时，分配更大的缓冲区并拷贝旧数据。
 
 ### 逻辑
 接收 所需项数（needed）：整数
@@ -174,7 +174,7 @@
 ## 函数 扩展 SG 竞技场变量数组（grow_sg_arena_var）
 
 ### 作用
-动态扩展SG 竞技场变量数组（g_sg_arena_var）数组容量，逻辑与 扩展 SG 分配数组（grow_sg_alloc）完全对称。
+动态扩展 SG 竞技场变量数组（g_sg_arena_var）数组容量，逻辑与 扩展 SG 分配数组（grow_sg_alloc）完全对称。
 
 ### 逻辑
 接收 所需项数（needed）：整数
@@ -478,7 +478,7 @@ IR 指令访问器：设置类型类别（iri_set_tk）（索引, 类型类别�
 ## 函数 判断字节缓冲变量（is_byte_buf_var）
 
 ### 作用
-判断给定 IR 变量是否为原始字节缓冲区（由 分配内存（alloc）（）生成，类型为 单元类型索引（TI_UNIT）内部哨兵值，对应 Core 语言的字符串（string）类型）。字节缓冲区的地址运算不进行元素大小缩放。
+判断给定 IR 变量是否为原始字节缓冲区（由 分配内存（alloc）（）生成，类型为 单元类型信息（TI_UNIT）内部哨兵值，对应 Core 语言的字符串（string）类型）。字节缓冲区的地址运算不进行元素大小缩放。
 
 ### 逻辑
 接收 变量索引（var_idx）：整数
@@ -502,12 +502,12 @@ IR 指令访问器：设置类型类别（iri_set_tk）（索引, 类型类别�
 ## 函数 IR 调用返回类型（ir_call_return_type）
 
 ### 作用
-根据函数名字索引查询其 IR 级别的返回类型（整数类型索引（TI_INT）/浮点类型索引（TI_FLOAT）/布尔类型索引（TI_BOOL）/字符串类型索引（TI_STR）/单元类型索引（TI_UNIT）/字符类型索引（TI_CHAR））。覆盖内置函数（alloc）返回 单元类型索引 的特殊处理、运行时内置函数表查找、用户定义函数查找，以及共享库（.so）外部函数（SYM_SO_FN）的类型编码解析。
+根据函数名字索引查询其 IR 级别的返回类型（整数类型索引（TI_INT）/浮点类型索引（TI_FLOAT）/布尔类型索引（TI_BOOL）/字符串类型索引（TI_STR）/单元类型信息（TI_UNIT）/字符类型索引（TI_CHAR））。覆盖内置函数（alloc）返回 单元类型索引 的特殊处理、运行时内置函数表查找、用户定义函数查找，以及共享库（.so）外部函数（SYM_SO_FN）的类型编码解析。
 
 ### 逻辑
 接收 函数名字索引（func_ni）：整数
 如果 函数名字索引 小于 0，那么：
-    返回 单元类型索引（TI_UNIT）
+    返回 单元类型信息（TI_UNIT）
 
 （特殊处理：分配内存函数 返回原始字节缓冲区，保持 单元类型索引 哨兵值）
 如果 驻留字符串获取（istr_get）（函数名字索引）的结果指向 分配内存函数（alloc），那么：
@@ -534,7 +534,7 @@ IR 指令访问器：设置类型类别（iri_set_tk）（索引, 类型类别�
     如果 返回类型 等于 字符字面量类型值（TY_CHAR），那么：返回 字符类型索引
 
 （查 .so 外部函数符号）
-令 符号索引 = 全局符号查找（find_gsym）（函数名字索引）
+令 符号索引 = 查找泛型符号（find_gsym）（函数名字索引）
 如果 符号索引 小于 0，那么：
     返回 单元类型索引
 如果 符号类别（sym_kind）（符号索引）等于 函数符号类型（SYM_FN），那么：

@@ -8,7 +8,7 @@
 |--------|------|-------------|
 | 扩展动态类型集数组 | grow_dyn_type_sets | 扩展动态类型集数组 |
 | 动态设置类型 | dyn_set_type | 动态设置类型 |
-| 动态has类型 | dyn_has_type | 动态has类型 |
+| 动态类型判断 | dyn_has_type | 动态类型判断 |
 | 联合位图 | union_bitmaps | 联合位图 |
 | 验证动态方法 | validate_dyn_method | 验证动态方法 |
 | 类型推断表达式 | infer_expr | 类型推断表达式 |
@@ -24,7 +24,7 @@
 | 泛型映射 / 计数 / 容量 / 名称 / 类型 | g_gen_map / g_gen_map_count / g_gen_map_cap / g_gen_map_names / g_gen_map_types | 检查全部 |
 | 泛型应用数据数组 / 计数 / 容量 | g_gen_apply_data / g_gen_apply_data_count / g_gen_apply_data_cap | 检查全部 |
 | 泛型参数数组 / 计数 / 容量 | g_gen_params / g_gen_param_count / g_gen_param_cap | 检查全部 |
-| 初始化types | init_types | 检查全部 |
+| 初始化类型列表 | init_types | 检查全部 |
 | 初始化内建 | init_builtins | 检查全部 |
 | 收集声明 | collect_decls | 检查全部 |
 | 检查函数 | check_func | 检查全部 |
@@ -41,7 +41,7 @@
 | AST 访问器：设置b | ast_set_b | 类型推断表达式 |
 | 函数信息访问器系列 | fi_ast_node / fi_name / fi_return_type / fi_param_count / fi_generic_count / fi_generic_name | 类型推断表达式 |
 | 结构体信息访问器系列 | si_field_count / si_field_name / si_field_type / si_field_type_node / si_generic_count / si_generic_name | 类型推断表达式 |
-| 查找gsym | find_gsym | 类型推断表达式 |
+| 查找泛型符号 | find_gsym | 类型推断表达式 |
 | 查找符号 | find_sym | 类型推断表达式 |
 | 查找函数 | find_func | 类型推断表达式 |
 | 查找结构体 | find_struct | 类型推断表达式 |
@@ -56,18 +56,18 @@
 | 压入借用作用域 / 弹出借用作用域 | push_borrow_scope / pop_borrow_scope | 类型推断表达式 |
 | 压入不安全作用域 / 弹出不安全作用域 | push_unsafe_scope / pop_unsafe_scope | 类型推断表达式 |
 | 类型推断泛型调用 | infer_gen_call | 类型推断表达式 |
-| 类型equal | type_equal | 类型推断表达式 |
+| 类型相等判断 | type_equal | 类型推断表达式 |
 | 获取类型类别 | get_type_kind | 类型推断表达式 |
 | 获取类型数据 | get_type_data | 类型推断表达式 |
 | 获取类型额外 | get_type_extra | 类型推断表达式 |
 | 获取类型名称 | get_type_name | 验证动态方法 |
-| 类型has方法 | type_has_method | 验证动态方法 |
+| 类型方法判断 | type_has_method | 验证动态方法 |
 | 分配类型 | alloc_type | 类型推断表达式 |
 | 解析类型节点 | res_type_node | 类型推断表达式 |
 | 解析调用类型 | res_call_type | 类型推断表达式 |
 | 判断函数泛型 | is_func_generic | 类型推断表达式 |
 | 判断结构体泛型 | is_struct_generic | 类型推断表达式 |
-| 统一types | unify_types | 类型推断表达式 |
+| 统一类型列表 | unify_types | 类型推断表达式 |
 | 替换返回类型 | substitute_return_type | 类型推断表达式 |
 | 扫描让出 | scan_for_yield | 类型推断表达式 |
 | 借用变量名称 | borrow_var_name | 类型推断表达式 |
@@ -75,7 +75,7 @@
 | 扩展类型数组 | grow_types | 分配类型 |
 | 扩展符号数组 | grow_syms | 检查全部 |
 | 扩展动态类型集数组 | grow_dyn_type_sets | 动态设置类型 |
-| 扩展泛型映射数组 | grow_gen_map | 统一types |
+| 扩展泛型映射数组 | grow_gen_map | 统一类型列表 |
 | 扩展泛型应用数据数组 | grow_gen_apply_data | 类型推断表达式 |
 | 扩展函数数组 | grow_funcs | 检查全部 |
 | 驻留字符串获取 | istr_get | 类型推断表达式 |
@@ -111,8 +111,8 @@
 如果 所需条目数（needed）小于 动态类型集合容量（g_dyn_type_set_cap），那么：返回
 
 令 新容量（nc）= 动态类型集合容量（g_dyn_type_set_cap） * 2（可变）
-如果 新容量（nc）小于 64，那么：令 新容量（名称计数） = 64
-如果 新容量（nc）小于 所需条目数（needed），那么：令 新容量（名称计数） = 所需条目数（需求） + 64
+如果 新容量（nc）小于 64，那么：令 新容量（nc） = 64
+如果 新容量（nc）小于 所需条目数（needed），那么：令 新容量（nc） = 所需条目数（需求） + 64
 
 令 新缓冲（nb）= 调用 分配（alloc）（新容量（nc） * 8）的字节
 调用 内部：动态拷贝（_dyncpy）（动态类型集合数组（g_dyn_type_sets），动态类型集合容量（g_dyn_type_set_cap） * 8，新缓冲（nb））
@@ -122,9 +122,9 @@
 
 ### 测试要点
 1. 需求量小于当前容量：直接返回
-2. 首次扩容从空（容量（cap）=0）开始：名称计数（nc） = 64
+2. 首次扩容从空（容量（cap）=0）开始：新容量（nc） = 64
 3. 已有数据被拷贝保留到新缓冲
-4. 需求量远大于当前容量：名称计数（nc） = 需求（needed） + 64
+4. 需求量远大于当前容量：新容量（nc） = 需求（needed） + 64
 
 ## 函数 动态设置类型（dyn_set_type）
 **签名：** `函数（fn） 动态设置类型（dyn_set_type）（var_idx: 整数（int）, ti: 整数）`
@@ -210,7 +210,7 @@
         左移计数（shl） = 左移计数（shl） - 1
     如果 （位图 变量甲（a）（变量甲） / 位值（bit）） % 2 不等于 0 或 （位图 变量乙（b）（变量乙） / 位值（bit）） % 2 不等于 0，那么：
         结果（r） = 结果（r） + 位值（bit）
-    位索引（pos） = 位索引（位置） + 1
+    位索引（pos） = 位索引（pos） + 1
 返回 结果（r）
 `
 
@@ -253,7 +253,7 @@
             如果 非 调用 类型具有（has）方法（type_has_method）（类型名索引（type_ni），方法名索引（method_ni）），那么：
                 令 类型名字符串（tname）= 调用 驻留字符串获取（istr_get）（type_ni）
                 令 方法名字符串（mname）= 调用 驻留字符串获取（istr_get）（method_ni）
-                调用 检查错误（check_error）（未定义方法错误码（EC_N_METHOD），"动态（dyn）: 方法 '" + 方法名字符串（mname）+ "' 在类型 '" + 类型名字符串（tname）+ "' 上未找到"，行号（line），列号（col））
+                调用 检查错误（check_error）（未定义方法错误码（EC_N_METHOD），"dyn: 方法 '" + 方法名字符串（mname）+ "' 在类型 '" + 类型名字符串（tname）+ "' 上未找到"，行号（line），列号（col））
     类型索引（ti） = 类型索引（ti） + 1
 `
 
@@ -317,7 +317,7 @@
 
     如果 操作码（op）等于 加法运算指令（OP_ADD）或 操作码（op）等于 减法运算指令（OP_SUB）或 操作码（op）等于 乘法运算指令（OP_MUL）或 操作码（op）等于 除法运算指令（OP_DIV）或 操作码（op）等于 取模运算指令（OP_MOD），那么：
         （字符串拼接：仅 加法运算符（OP_ADD） 适用）
-        如果 操作码（op）等于 加法运算指令（OP_ADD）且（左侧类型（lt）等于 类型表预分配：字符串（TI_STR）或 右侧类型（rt）等于 类型表预分配：字符串（类型信息：字符串）），那么：返回 类型表预分配：字符串（类型信息：字符串）
+        如果 操作码（op）等于 加法运算指令（OP_ADD）且（左侧类型（lt）等于 类型表预分配：字符串（TI_STR）或 右侧类型（rt）等于 类型表预分配：字符串（TI_STR）），那么：返回 类型表预分配：字符串（TI_STR）
         （指针算术：*泛型参数（T） + 数量（n） 或 *泛型参数 - 数量 → *泛型参数 T）
         如果（操作码（op）等于 加法运算指令（OP_ADD）或 操作码（op）等于 减法运算指令（OP_SUB））且（调用 获取类型类别（get_type_kind）（lt）等于 类型条目类别：指针（TYP_PTR）且 右侧类型（rt）等于 类型表预分配：整数（TI_INT）），那么：返回 左侧类型（lt）
         （指针算术：数量（n） + *泛型参数（T） → *泛型参数 T）
@@ -325,9 +325,9 @@
         （指针差值：*泛型参数（T） - *泛型参数 → 整数（int））
         如果 操作码（op）等于 减法运算指令（OP_SUB）且 调用 获取类型类别（get_type_kind）（lt）等于 类型条目类别：指针（TYP_PTR）且 调用 获取类型类别（get_type_kind）（rt）等于 类型条目类别：指针（指针类型），那么：返回 类型表预分配：整数（TI_INT）
         （算术操作需整数或浮点数）
-        如果 左侧类型（lt）不等于 类型表预分配：整数（TI_INT）且 左侧类型（lt）不等于 类型表预分配：浮点数（TI_FLOAT）且 右侧类型（rt）不等于 类型表预分配：整数（类型信息：整数）且 右侧类型（rt）不等于 类型表预分配：浮点数（类型信息：浮点），那么：
+        如果 左侧类型（lt）不等于 类型表预分配：整数（TI_INT）且 左侧类型（lt）不等于 类型表预分配：浮点数（TI_FLOAT）且 右侧类型（rt）不等于 类型表预分配：整数（TI_INT）且 右侧类型（rt）不等于 类型表预分配：浮点数（TI_FLOAT），那么：
             调用 检查错误（check_error）（加法类型错误码（EC_TB_ADD），"算术操作需要整数或浮点数"，调用 AST 访问器系列（ast_line）（node），调用 AST 访问器系列（ast_col）（节点（节点）））
-        如果 左侧类型（lt）等于 类型表预分配：浮点数（TI_FLOAT）或 右侧类型（rt）等于 类型表预分配：浮点数（类型信息：浮点），那么：返回 类型表预分配：浮点数（类型信息：浮点）
+        如果 左侧类型（lt）等于 类型表预分配：浮点数（TI_FLOAT）或 右侧类型（rt）等于 类型表预分配：浮点数（TI_FLOAT），那么：返回 类型表预分配：浮点数（TI_FLOAT）
         返回 类型表预分配：整数（TI_INT）
 
     （bool）
@@ -335,7 +335,7 @@
 
     （逻辑运算 && 和 ||）
     如果 操作码（op）等于 逻辑与指令（OP_AND）或 操作码（op）等于 逻辑或指令（OP_OR），那么：
-        如果（左侧类型（lt）不等于 类型表预分配：布尔（TI_BOOL）且 左侧类型（lt）不等于 类型表预分配：整数（TI_INT））或（右侧类型（rt）不等于 类型表预分配：布尔（类型信息：布尔）且 右侧类型（rt）不等于 类型表预分配：整数（类型信息：整数）），那么：
+        如果（左侧类型（lt）不等于 类型表预分配：布尔（TI_BOOL）且 左侧类型（lt）不等于 类型表预分配：整数（TI_INT））或（右侧类型（rt）不等于 类型表预分配：布尔（TI_BOOL）且 右侧类型（rt）不等于 类型表预分配：整数（TI_INT）），那么：
             调用 检查错误（check_error）（EC_TC_IF_COND，"逻辑操作符需要布尔或整数操作数"，调用 AST 访问器系列（ast_line）（node），调用 AST 访问器系列（ast_col）（节点（节点）））
         返回 类型表预分配：布尔（TI_BOOL）
 
@@ -586,7 +586,7 @@
         如果 语句索引（i）大于等于 语句计数（stmt_count），那么：跳出循环
         令 语句节点（sn）= 调用 读写全局（r64）（代码块语句数组（g_block_stmts），（语句起始（stmt_start） + 语句索引（i）） * 8）
         令 结果类型（res） = 调用 类型推断表达式（infer_expr）（sn）
-        语句索引（i） = 语句索引（索引） + 1
+        语句索引（i） = 语句索引（i） + 1
     调用 弹出借用作用域（pop_borrow_scope）（）
     返回 结果类型（res）
 
@@ -788,7 +788,7 @@
                 调用 记录借用持有者（record_borrow_holder）（变量名索引（var_ni），被借用者名索引（borrowed_ni），可变标记（mut_flag））
     令 类型表索引（ti）= 值类型表索引（val_ti）
     如果 类型节点（type_node）大于等于 0，那么：令 类型表索引（ti） = 调用 解析类型节点（res_type_node）（type_node）
-    如果 调用 驻留字符串获取（istr_get）（var_ni）不等于 "下划线（_）"，那么：
+    如果 调用 驻留字符串获取（istr_get）（var_ni）不等于 "_"，那么：
         调用 定义符号（def_sym）（变量名索引（var_ni），符号类别：局部变量（SYM_LOCAL），类型表索引（ti），-1）
         如果 类型表索引（ti）等于 类型表预分配：动态（TI_DYN）且 值节点（val_node）大于等于 0，那么：
             调用 扩展动态类型集数组（grow_dyn_type_sets）（g_sym_count）
@@ -870,7 +870,7 @@
         令 字段名（field_name）= 调用 驻留字符串获取（istr_get）（field_ni）
         令 索引值（idx）= 调用 字符串转整数（str_int）（field_name）
         令 元组元素个数（tc）= 调用 获取类型数据（get_type_data）（actual_ti）
-        如果 索引值（idx）大于等于 0 且 索引值（索引）小于 元组元素个数（tc），那么：
+        如果 索引值（idx）大于等于 0 且 索引值（idx）小于 元组元素个数（tc），那么：
             令 数据起始（data_start）= 调用 获取类型额外（get_type_extra）（actual_ti）
             如果 调用 AST 访问器系列（ast_data）（node）不等于 索引值（idx），那么：
                 调用 AST 访问器：设置数据（ast_set_data）（节点（node），索引值（idx））
@@ -1006,7 +1006,7 @@
         如果 调用 获取类型类别（get_type_kind）（base_ti）等于 类型条目类别：命名（TYP_NAMED），那么：
             令 基础名索引（base_ni）= 调用 获取类型数据（get_type_data）（base_ti）
             令 基础名字符串（base_name）= 调用 驻留字符串获取（istr_get）（base_ni）
-            如果 基础名字符串（base_name）等于 "可选类型（Option）" 或 基础名字符串（base_name）等于 "结果类型（Result）"，那么：
+            如果 基础名字符串（base_name）等于 "Option" 或 基础名字符串（base_name）等于 "Result"，那么：
                 令 泛型应用起始（ga_start）= 调用 获取类型额外（get_type_extra）（inner_ti）
                 如果 调用 读写全局（r64）（泛型应用数据数组（g_gen_apply_data），泛型应用起始（ga_start） * 8）大于等于 1，那么：
                     返回 调用 读写全局（r64）（泛型应用数据数组（g_gen_apply_data），（泛型应用起始（ga_start） + 1） * 8）  （第一个类型参数）
@@ -1050,29 +1050,29 @@
     令 参数（args）= 调用 AST 访问器系列（ast_b）（node）
 
     （@大小计算（sizeOf）（T）——一个类型参数）
-    如果 调用 字符串相等比较（str_eq）（名字（name），"大小计算（sizeOf）"）不等于 0，那么：
+    如果 调用 字符串相等比较（str_eq）（名字（name），"sizeOf"）不等于 0，那么：
         如果 参数（args）小于 0，那么：
-            调用 检查错误（check_error）（未定义名称错误码（EC_N_UNDEFINED），"@大小计算（sizeOf） 需要一个类型参数"，调用 AST 访问器系列（ast_line）（node），调用 AST 访问器系列（ast_col）（节点（节点）））
+            调用 检查错误（check_error）（未定义名称错误码（EC_N_UNDEFINED），"sizeOf 需要一个类型参数"，调用 AST 访问器系列（ast_line）（node），调用 AST 访问器系列（ast_col）（节点（节点）））
             返回 类型表预分配：永无（TI_NEVER）
         令 类型表索引（ti）= 调用 解析类型节点（res_type_node）（args）
         如果 类型表索引（ti）小于 0，那么：
-            调用 检查错误（check_error）（未定义名称错误码（EC_N_UNDEFINED），"@大小计算（sizeOf）：未知类型"，调用 AST 访问器系列（ast_line）（node），调用 AST 访问器系列（ast_col）（节点（节点）））
+            调用 检查错误（check_error）（未定义名称错误码（EC_N_UNDEFINED），"sizeOf：未知类型"，调用 AST 访问器系列（ast_line）（node），调用 AST 访问器系列（ast_col）（节点（节点）））
             返回 类型表预分配：永无（TI_NEVER）
         返回 类型表预分配：整数（TI_INT）
 
     （@地址（addr）（fn）——函数地址，类型为 整数（int））
-    如果 调用 字符串相等比较（str_eq）（名字（name），"地址（addr）"）不等于 0，那么：
+    如果 调用 字符串相等比较（str_eq）（名字（name），"addr"）不等于 0，那么：
         调用 AST 访问器：设置类型值（ast_set_type_val）（节点（node），类型表预分配：整数（TI_INT））
         返回 类型表预分配：整数（TI_INT）
 
     （@对齐计算（alignOf）（T）——一个类型参数）
-    如果 调用 字符串相等比较（str_eq）（名字（name），"对齐计算（alignOf）"）不等于 0，那么：
+    如果 调用 字符串相等比较（str_eq）（名字（name），"alignOf"）不等于 0，那么：
         如果 参数（args）小于 0，那么：
-            调用 检查错误（check_error）（未定义名称错误码（EC_N_UNDEFINED），"@对齐计算（alignOf） 需要一个类型参数"，调用 AST 访问器系列（ast_line）（node），调用 AST 访问器系列（ast_col）（节点（节点）））
+            调用 检查错误（check_error）（未定义名称错误码（EC_N_UNDEFINED），"alignOf 需要一个类型参数"，调用 AST 访问器系列（ast_line）（node），调用 AST 访问器系列（ast_col）（节点（节点）））
             返回 类型表预分配：永无（TI_NEVER）
         令 类型表索引（ti）= 调用 解析类型节点（res_type_node）（args）
         如果 类型表索引（ti）小于 0，那么：
-            调用 检查错误（check_error）（未定义名称错误码（EC_N_UNDEFINED），"@对齐计算（alignOf）：未知类型"，调用 AST 访问器系列（ast_line）（node），调用 AST 访问器系列（ast_col）（节点（节点）））
+            调用 检查错误（check_error）（未定义名称错误码（EC_N_UNDEFINED），"alignOf：未知类型"，调用 AST 访问器系列（ast_line）（node），调用 AST 访问器系列（ast_col）（节点（节点）））
             返回 类型表预分配：永无（TI_NEVER）
         返回 类型表预分配：整数（TI_INT）
 
@@ -1085,9 +1085,9 @@
         返回 类型表预分配：字符串（TI_STR）
 
     （@字段检查（hasField）（泛型参数 T（T）, name）——类型 + 字符串两个参数）
-    如果 调用 字符串相等比较（str_eq）（名字（name），"字段检查（hasField）"）不等于 0，那么：
+    如果 调用 字符串相等比较（str_eq）（名字（name），"hasField"）不等于 0，那么：
         如果 参数（args）小于 0 或 调用 AST 访问器系列（ast_b）（args）小于 0，那么：
-            调用 检查错误（check_error）（未定义名称错误码（EC_N_UNDEFINED），"@字段检查（hasField） 需要 2 个参数"，调用 AST 访问器系列（ast_line）（node），调用 AST 访问器系列（ast_col）（节点（节点）））
+            调用 检查错误（check_error）（未定义名称错误码（EC_N_UNDEFINED），"hasField 需要 2 个参数"，调用 AST 访问器系列（ast_line）（node），调用 AST 访问器系列（ast_col）（节点（节点）））
             返回 类型表预分配：永无（TI_NEVER）
         令 类型表索引（ti）= 调用 解析类型节点（res_type_node）（调用 AST 访问器系列（ast_a）（args））
         返回 类型表预分配：布尔（TI_BOOL）
@@ -1145,7 +1145,7 @@
         返回 类型表预分配：单元（TI_UNIT）
 
     （@热补丁（hotpatch）——函数注解，非表达式）
-    如果 调用 字符串相等比较（str_eq）（名字（name），"热补丁（hotpatch）"）不等于 0，那么：返回 类型表预分配：单元（TI_UNIT）
+    如果 调用 字符串相等比较（str_eq）（名字（name），"hotpatch"）不等于 0，那么：返回 类型表预分配：单元（TI_UNIT）
 
     （未知 @ 内建——报告错误）
     调用 检查错误（check_error）（未定义名称错误码（EC_N_UNDEFINED），"未知 @ 内建：" + 名字（name），调用 AST 访问器系列（ast_line）（node），调用 AST 访问器系列（ast_col）（节点（节点）））
@@ -1157,7 +1157,7 @@
 
 ### 测试要点
 1. 整数字面量 42：返回 类型信息：整数（TI_INT）
-2. 标识符引用已定义变量（TI_INT）：返回 类型信息：整数（类型信息：整数）
+2. 标识符引用已定义变量（TI_INT）：返回 类型信息：整数（TI_INT）
 3. 被借用的变量被使用：产生 借用期间使用错误码（EC_B_USE_WHILE_BORROWED） 诊断
 4. 未定义变量：产生 未定义名称错误码（EC_N_UNDEFINED） 诊断
 5. 二元加法 整数（int）+整数：返回 类型信息：整数（TI_INT）；整数+字符串（string）：返回 类型信息：字符串（TI_STR）；自定义类型+整数：产生 加法类型错误码（EC_TB_ADD）
@@ -1170,7 +1170,7 @@
 12. 如果（if）-否则（else） 两分支：动态类型集合合并（union_bitmaps），类型不同产生 如果分支类型错误码（EC_TC_IF_BRANCH）
 13. 动态（dyn） 类型上方法调用：通过 验证动态方法（validate_dyn_method） 验证所有可能类型
 14. 结构体字面量泛型推断：通过字段类型映射泛型参数创建 泛型应用类型（TYP_GENERIC_APPLY）
-15. 尝试（try）? 操作符：对 可选类型（Option）[泛型参数 泛型参数（T）（泛型参数 T）] 或 结果类型（Result）[泛型参数 泛型参数,错误（E）] 提取第一类型参数
+15. 尝试（try）? 操作符：对 可选类型（Option）[泛型参数（T）] 或 结果类型（Result）[泛型参数 泛型参数,错误（E）] 提取第一类型参数
 
 ## 函数 检查全部（check_all）
 **签名：** `函数（fn） 检查全部（check_all）（）`
@@ -1246,14 +1246,14 @@
 循环（当 函数遍历索引（i）小于 函数计数（g_func_count）时）：
     如果 函数遍历索引（i）大于等于 函数计数（g_func_count），那么：跳出循环
     调用 检查函数（check_func）（i）
-    函数遍历索引（i） = 函数遍历索引（索引） + 1
+    函数遍历索引（i） = 函数遍历索引（i） + 1
 
 （检查全局 令（let） 初始化器）
 令 全局声明遍历索引（i）= 0
 循环（当 全局声明遍历索引（i）小于 全局声明计数（g_global_let_count）时）：
     如果 全局声明遍历索引（i）大于等于 全局声明计数（g_global_let_count），那么：跳出循环
     调用 检查全局声明（check_global_let）（调用 读写全局（r64）（全局声明数组（g_global_lets），全局声明遍历索引（i） * 8））
-    全局声明遍历索引（i） = 全局声明遍历索引（索引） + 1
+    全局声明遍历索引（i） = 全局声明遍历索引（i） + 1
 
 （检查 实现（impl）-遍历（for） 关系）
 调用 检查实现（check_impl_for）（）

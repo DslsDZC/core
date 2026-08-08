@@ -11,7 +11,7 @@
 | 判断结构体泛型 | is_struct_generic | 判断结构体泛型 |
 | 查找结构体按字节名称 | find_struct_by_name | 查找结构体按字节名称 |
 | 解析调用类型 | res_call_type | 解析调用类型 |
-| 统一types | unify_types | 统一types |
+| 统一类型列表 | unify_types | 统一类型列表 |
 | 替换返回类型 | substitute_return_type | 替换返回类型 |
 | 类型推断泛型调用 | infer_gen_call | 类型推断泛型调用 |
 | 检查函数 | check_func | 检查函数 |
@@ -21,17 +21,17 @@
 | 解析类型节点 | res_type_node | 检查函数 |
 | 检查接口 | check_iface | 类型推断泛型调用 |
 | 查找接口 | find_iface | 类型推断泛型调用 |
-| 查找gsym | find_gsym | 解析调用类型 |
+| 查找泛型符号 | find_gsym | 解析调用类型 |
 | 查找符号 | find_sym | 检查函数 |
 | 定义符号 | def_sym | 检查函数 |
 | 压入作用域 | push_scope | 检查函数 |
 | 弹出作用域 | pop_scope | 检查函数 |
 | 分配类型 | alloc_type | 解析调用类型 |
-| 获取类型类别 | get_type_kind | 统一types |
-| 获取类型数据 | get_type_data | 统一types |
+| 获取类型类别 | get_type_kind | 统一类型列表 |
+| 获取类型数据 | get_type_data | 统一类型列表 |
 | 获取类型额外 | get_type_extra | 替换返回类型 |
 | 获取类型名称 | get_type_name | 类型推断泛型调用 |
-| 类型equal | type_equal | 替换返回类型 |
+| 类型相等判断 | type_equal | 替换返回类型 |
 | 检查错误 | check_error | 解析调用类型 |
 | 扫描让出 | scan_for_yield | 检查函数 |
 | 当前检查函数索引 | g_checker_current_fi | 检查函数 |
@@ -39,10 +39,10 @@
 | 函数计数 | g_func_count | 判断函数泛型 |
 | 结构体数组 | g_structs | 判断结构体泛型 |
 | 结构体计数 | g_struct_count | 判断结构体泛型 |
-| 泛型映射计数 | g_gen_map_count | 统一types |
-| 泛型映射容量 | g_gen_map_cap | 统一types |
-| 泛型映射名数组 | g_gen_map_names | 统一types |
-| 泛型映射类型数组 | g_gen_map_types | 统一types |
+| 泛型映射计数 | g_gen_map_count | 统一类型列表 |
+| 泛型映射容量 | g_gen_map_cap | 统一类型列表 |
+| 泛型映射名数组 | g_gen_map_names | 统一类型列表 |
+| 泛型映射类型数组 | g_gen_map_types | 统一类型列表 |
 | 泛型应用数据数组 | g_gen_apply_data | 解析调用类型 |
 | 泛型应用数据计数 | g_gen_apply_data_count | 解析调用类型 |
 | 泛型约束数组 | g_generic_constr | 类型推断泛型调用 |
@@ -70,14 +70,11 @@
 | 字符串驻留 | str_intern | 检查函数 |
 | 字符串长度 | str_len | 检查函数 |
 | 字符串切片 | str_sub | 检查函数 |
-| 字符串拼接 | concat | 类型推断泛型调用 |
 | 读单字节 | load8 | 检查函数 |
 | 整数转字符串 | int_str | 检查实现 |
-| 扩展泛型映射数组 | grow_gen_map | 统一types |
+| 扩展泛型映射数组 | grow_gen_map | 统一类型列表 |
 | 扩展泛型应用数据数组 | grow_gen_apply_data | 解析调用类型 |
 | 扩展泛型参数数组 | grow_gen_params | 检查函数 |
-| 扩展符号数组 | grow_syms | 检查全部 |
-| 扩展函数数组 | grow_funcs | 检查全部 |
 | AST 访问器系列 | ast_kind / ast_a / ast_b / ast_c / ast_int_val / ast_type_val / ast_data / ast_line / ast_col / ast_set_b / ast_set_int_val | 多函数共用 |
 | 函数信息访问器系列 | fi_ast_node / fi_name / fi_return_type / fi_param_count / fi_generic_count / fi_generic_name / fi_param_type / fi_set_name / fi_set_ast_node / fi_set_return_type / fi_set_param_count / fi_set_ispure / fi_set_generic_count | 多函数共用 |
 | 结构体信息访问器：泛型计数 | si_generic_count | 判断结构体泛型 |
@@ -130,8 +127,8 @@
     令 索引（i）= 0（可变）
     循环：
         如果 索引（i）大于等于 函数计数（g_func_count），那么：返回 -1
-        如果 调用 函数信息访问器系列（fi_name）（i）等于 名称索引（name_idx），那么：返回 索引（索引）
-        令 索引（i） = 索引（索引） + 1
+        如果 调用 函数信息访问器系列（fi_name）（i）等于 名称索引（name_idx），那么：返回 索引（i）
+        令 索引（i） = 索引（i） + 1
     返回 -1
 `
 
@@ -172,8 +169,8 @@
     令 索引（i）= 0（可变）
     循环：
         如果 索引（i）大于等于 结构体计数（g_struct_count），那么：返回 -1
-        如果 调用 结构体信息访问器：名称（si_name）（i）等于 名称索引（name_idx），那么：返回 索引（索引）
-        令 索引（i） = 索引（索引） + 1
+        如果 调用 结构体信息访问器：名称（si_name）（i）等于 名称索引（name_idx），那么：返回 索引（i）
+        令 索引（i） = 索引（i） + 1
     返回 -1
 `
 
@@ -249,13 +246,13 @@
 3. 常规命名类型 → 正常解析
 4. 泛型应用中嵌套泛型参数 → 递归创建 类型条目类别：泛型参数（TYP_GENERIC_PARAM）
 
-## 函数 统一类型列表（types）（unify_types）
+## 函数 统一类型列表（unify_types）
 ### 作用
 将模式类型（pattern）与具体类型（concrete）统一化。如果模式是泛型参数，则记录映射关系或检查已有映射的一致性。如果是泛型应用模式，则递归统一化每个泛型参数。
 
 ### 逻辑
 `
-函数 统一类型列表（types）（unify_types）（模式类型表索引 pattern：整数，具体类型表索引 concrete：整数）-> 布尔
+函数 统一类型列表（unify_types）（模式类型表索引 pattern：整数，具体类型表索引 concrete：整数）-> 布尔
     如果 模式类型表索引（pattern）等于 具体类型表索引（concrete），那么：返回 真
 
     令 模式类别（pk）= 调用 获取类型类别（get_type_kind）（pattern）
@@ -290,7 +287,7 @@
         令 参数索引（ai）= 0（可变）
         循环：
             如果 参数索引（ai）大于等于 模式参数个数（pc），那么：跳出循环
-            如果 非 调用 统一类型列表（types）（unify_types）（调用 读写全局（r64）（泛型应用数据数组（g_gen_apply_data），（模式数据起始（ps） + 1 + 参数索引（ai）） * 8），调用 读写全局（r64）（泛型应用数据数组（g_gen_apply_data），（具体数据起始（cs） + 1 + 参数索引（ai）） * 8）），那么：返回 假
+            如果 非 调用 统一类型列表（unify_types）（调用 读写全局（r64）（泛型应用数据数组（g_gen_apply_data），（模式数据起始（ps） + 1 + 参数索引（ai）） * 8），调用 读写全局（r64）（泛型应用数据数组（g_gen_apply_data），（具体数据起始（cs） + 1 + 参数索引（ai）） * 8）），那么：返回 假
             令 参数索引（ai） = 参数索引（ai） + 1
         返回 真
 
@@ -382,7 +379,7 @@
         如果 原始类型节点（orig_type_node）大于等于 0，那么：
             令 模式类型（pattern_ti）= 调用 解析调用类型（res_call_type）（原始类型节点（orig_type_node），函数表索引（fi））
             令 具体类型（concrete_ti）= 调用 类型推断表达式（infer_expr）（调用 AST 访问器系列（ast_a）（an））
-            调用 统一类型列表（types）（unify_types）（模式类型（pattern_ti），具体类型（concrete_ti））
+            调用 统一类型列表（unify_types）（模式类型（pattern_ti），具体类型（concrete_ti））
         否则：
             调用 类型推断表达式（infer_expr）（调用 AST 访问器系列（ast_a）（an））
 
@@ -553,14 +550,14 @@
             令 是否为数据流函数（is_flow_fn）= 0（可变）
             如果 函数体节点（body）大于等于 0 且 调用 扫描让出（scan_for_yield）（body）不等于 0，那么：令 是否为数据流函数（is_flow_fn） = 1
             如果 是否为数据流函数（is_flow_fn）为假 且 调用 获取类型类别（get_type_kind）（ret_ti）不等于 类型条目类别：泛型参数（TYP_GENERIC_PARAM），那么：
-                调用 检查错误（check_error）（类型函数错误：返回类型不匹配（EC_TF_RETURN），"函数返回类型不匹配"，调用 AST 访问器系列（ast_line）（fn_node），调用 AST 访问器系列（ast_col）（fn_node））
+                调用 检查错误（check_error）（返回类型不匹配错误码（EC_TF_RETURN），"函数返回类型不匹配"，调用 AST 访问器系列（ast_line）（fn_node），调用 AST 访问器系列（ast_col）（fn_node））
 
     调用 弹出作用域（pop_scope）（）
 `
 
 ### 测试要点
 1. 正常函数：参数和函数体类型全部匹配
-2. 返回类型不匹配：产生 类型函数错误：返回类型不匹配（EC_TF_RETURN）诊断
+2. 返回类型不匹配：产生 返回类型不匹配错误码（EC_TF_RETURN）诊断
 3. 泛型函数的返回类型是泛型参数：跳过声明时的返回类型检查
 4. 数据流函数（流程（flow） 函数）（yield）：跳过返回类型检查
 5. 自身（self）参数模式 1（按值）/2（&自身）/3（&可变（mut） 自身）：正确派生结构体类型和引用类型
@@ -604,13 +601,13 @@
 
             令 函数表索引（fi）= 调用 查找函数（find_func）（mangled_ni）
             如果 函数表索引（fi）小于 0，那么：
-                调用 检查错误（check_error）（类型函数错误：方法未找到（EC_TF_METHOD_NOT_FOUND），"实现缺少方法 '" + 方法名字符串（method_name）+ "' 对于接口 '" + 调用 驻留字符串获取（istr_get）（iface_ni）+ "'"，0，0）
+                调用 检查错误（check_error）（方法未找到错误码（EC_TF_METHOD_NOT_FOUND），"实现缺少方法 '" + 方法名字符串（method_name）+ "' 对于接口 '" + 调用 驻留字符串获取（istr_get）（iface_ni）+ "'"，0，0）
                 令 方法索引（mi） = 方法索引（mi） + 1
                 继续下一次循环
 
             令 实际参数个数（actual_pc）= 调用 函数信息访问器系列（fi_param_count）（fi）
             如果 实际参数个数（actual_pc）不等于 期望参数个数（method_pc），那么：
-                调用 检查错误（check_error）（类型函数错误：方法实参个数不匹配（EC_TF_METHOD_ARG_CNT），"参数个数不匹配 对于方法 '" + 方法名字符串（method_name）+ "': 期望 " + 调用 整数转字符串（int_str）（method_pc）+ " 得到 " + 调用 整数转字符串（int_str）（actual_pc），0，0）
+                调用 检查错误（check_error）（方法实参个数不匹配错误码（EC_TF_METHOD_ARG_CNT），"参数个数不匹配 对于方法 '" + 方法名字符串（method_name）+ "': 期望 " + 调用 整数转字符串（int_str）（method_pc）+ " 得到 " + 调用 整数转字符串（int_str）（actual_pc），0，0）
 
             令 参数类型索引（pti）= 0（可变）
             循环：
@@ -619,12 +616,12 @@
                 令 实际参数类型（actual_pt）= 调用 函数信息访问器系列（fi_param_type）（函数表索引（fi），参数类型索引（pti））
                 如果 期望参数类型（expected_pt）不等于 实际参数类型（actual_pt），那么：
                     令 参数序号文本（pnum_str）= 调用 整数转字符串（int_str）（参数类型索引（pti） + 1）
-                    调用 检查错误（check_error）（类型函数错误：方法实参类型不匹配（EC_TF_METHOD_ARG_TYP），"参数 " + 参数序号文本（pnum_str）+ " 类型不匹配 对于方法 '" + 方法名字符串（method_name）+ "' 在接口 '" + 调用 驻留字符串获取（istr_get）（iface_ni）+ "'"，0，0）
+                    调用 检查错误（check_error）（方法实参类型不匹配错误码（EC_TF_METHOD_ARG_TYP），"参数 " + 参数序号文本（pnum_str）+ " 类型不匹配 对于方法 '" + 方法名字符串（method_name）+ "' 在接口 '" + 调用 驻留字符串获取（istr_get）（iface_ni）+ "'"，0，0）
                 令 参数类型索引（pti） = 参数类型索引（pti） + 1
 
             令 实际返回类型（actual_rt）= 调用 函数信息访问器系列（fi_return_type）（fi）
             如果 实际返回类型（actual_rt）不等于 期望返回类型（method_rt），那么：
-                调用 检查错误（check_error）（类型函数错误：返回类型不匹配（EC_TF_RETURN），"返回类型不匹配 对于方法 '" + 方法名字符串（method_name）+ "' 在接口 '" + 调用 驻留字符串获取（istr_get）（iface_ni）+ "'"，0，0）
+                调用 检查错误（check_error）（返回类型不匹配错误码（EC_TF_RETURN），"返回类型不匹配 对于方法 '" + 方法名字符串（method_name）+ "' 在接口 '" + 调用 驻留字符串获取（istr_get）（iface_ni）+ "'"，0，0）
 
             令 方法索引（mi） = 方法索引（mi） + 1
 
@@ -633,10 +630,10 @@
 
 ### 测试要点
 1. 实现类型提供所有方法且签名匹配：无诊断（静默通过）
-2. 缺少方法：产生 类型函数错误：方法未找到（EC_TF_METHOD_NOT_FOUND）诊断
-3. 参数个数不匹配：产生 类型函数错误：方法实参个数不匹配（EC_TF_METHOD_ARG_CNT）诊断
-4. 参数类型不匹配：产生 类型函数错误：方法实参类型不匹配（EC_TF_METHOD_ARG_TYP）诊断
-5. 返回类型不匹配：产生 类型函数错误：返回类型不匹配（EC_TF_RETURN）诊断
+2. 缺少方法：产生 方法未找到错误码（EC_TF_METHOD_NOT_FOUND）诊断
+3. 参数个数不匹配：产生 方法实参个数不匹配错误码（EC_TF_METHOD_ARG_CNT）诊断
+4. 参数类型不匹配：产生 方法实参类型不匹配错误码（EC_TF_METHOD_ARG_TYP）诊断
+5. 返回类型不匹配：产生 返回类型不匹配错误码（EC_TF_RETURN）诊断
 6. 接口不存在：产生 名称解析错误：未定义名称（EC_N_UNDEFINED）诊断
 7. 接口实现计数（g_impl_for_count）为 0：无操作
 
