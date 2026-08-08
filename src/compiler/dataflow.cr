@@ -16,6 +16,7 @@ fn init_df() {
     g_df_edge_cap = 0;
     g_df_node_region_cap = 0;   // node region array rebuilt on grow
     g_cur_sg = -1;              // no region open yet
+    g_last_state_node = -1;     // state chain starts empty per compile
     fi : ., mut = 0;
     loop {
         if fi >= g_func_count { break; }
@@ -77,6 +78,18 @@ fn sg_pop() {
     w64(g_sgs, idx * ESZ_SG + OFF_SG_EXIT, g_df_node_count);
     w64(g_sgs, idx * ESZ_SG + OFF_SG_NCOUNT,
         g_df_node_count - r64(g_sgs, idx * ESZ_SG + OFF_SG_NSTART));
+    // Loop termination dependency: the region exit node (last node created in
+    // the region, i.e. the exit label) must happen after the region's last
+    // side effect — a VSDG state edge enforcing loop-exit ordering.
+    kind := r64(g_sgs, idx * ESZ_SG + OFF_SG_KIND);
+    if kind == SG_LOOP || kind == SG_FOR {
+        last_node := g_df_node_count - 1;
+        if last_node >= r64(g_sgs, idx * ESZ_SG + OFF_SG_NSTART) {
+            if g_last_state_node >= 0 {
+                df_add_edge_kind(g_last_state_node, last_node, 1);  // termination dependency
+            }
+        }
+    }
     g_cur_sg = r64(g_sgs, idx * ESZ_SG + OFF_SG_PARENT);
 }
 
@@ -105,23 +118,54 @@ fn df_create_node(opcode: int, dest: int, src1: int, src2: int, src3: int, type_
 
     // Add edges for src fields that are IR variables (based on opcode)
     df_connect_srcs(nid, opcode, src1, src2, src3);
+    // VSDG state chain: side-effecting nodes are ordered by state edges
+    df_connect_state(nid, opcode, src3);
     return nid;
 }
 
 // --- Edge creation ---
 
-fn df_add_edge(from_id: int, to_id: int) {
+fn df_add_edge_kind(from_id: int, to_id: int, kind: int) {
     if from_id < 0 || to_id < 0 { return; }
     eid := g_df_edge_count;
     grow_df_edges(eid + 1);
     w64(g_df_edges, eid * ESZ_DFEDGE + OFF_DFE_FROM, from_id);
     w64(g_df_edges, eid * ESZ_DFEDGE + OFF_DFE_TO, to_id);
+    w64(g_df_edges, eid * ESZ_DFEDGE + OFF_DFE_KIND, kind);
     old_first := r64(g_df_nodes, from_id * ESZ_DFNODE + OFF_DF_FIRST_EDGE);
     w64(g_df_edges, eid * ESZ_DFEDGE + OFF_DFE_NEXT, old_first);
     w64(g_df_nodes, from_id * ESZ_DFNODE + OFF_DF_FIRST_EDGE, eid);
     old_cnt := r64(g_df_nodes, from_id * ESZ_DFNODE + OFF_DF_EDGE_COUNT);
     w64(g_df_nodes, from_id * ESZ_DFNODE + OFF_DF_EDGE_COUNT, old_cnt + 1);
     g_df_edge_count = eid + 1;
+}
+
+// Data edges (def-use) — the common case
+fn df_add_edge(from_id: int, to_id: int) {
+    df_add_edge_kind(from_id, to_id, 0);
+}
+
+// VSDG state chain: keep the ordering of side-effecting operations in program
+// order. Called for every created DFNode; only nodes that mutate memory or
+// call impure functions enter the chain (each links to the previous one via a
+// kind=1 state edge).
+fn df_connect_state(node_id: int, opcode: int, s3: int) {
+    is_side_effect : ., mut = 0;
+    if opcode == IR_STORE          { is_side_effect = 1; }
+    if opcode == IR_STORE_FIELD    { is_side_effect = 1; }
+    if opcode == IR_STORE_INDEX    { is_side_effect = 1; }
+    if opcode == IR_STORE_INDEX_VAR { is_side_effect = 1; }
+    if opcode == IR_CALL {
+        // s3 = func name idx; resolve to func index for purity. Unknown/external
+        // functions are conservatively treated as side-effecting.
+        cfi := find_func(s3);
+        if cfi < 0 { is_side_effect = 1; }
+        else if fi_ispure(cfi) == 0 { is_side_effect = 1; }
+    }
+    if is_side_effect != 0 {
+        if g_last_state_node >= 0 { df_add_edge_kind(g_last_state_node, node_id, 1); }
+        g_last_state_node = node_id;
+    }
 }
 
 fn df_use_var(consumer_node: int, var_idx: int) {
@@ -276,6 +320,8 @@ fn compute_usage_counts() {
     ei : ., mut = 0;
     loop {
         if ei >= g_df_edge_count { break; }
+        // State edges are not data consumers — skip them for usage counts
+        if r64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_KIND) != 0 { ei = ei + 1; continue; }
         from_id := r64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_FROM);
         dest := r64(g_df_nodes, from_id * ESZ_DFNODE + OFF_DF_DEST);
         if dest >= 0 {
@@ -335,6 +381,7 @@ fn df_begin_func(func_idx: int) {
         w64(g_df_func_node_start, func_idx * 8, g_df_node_count);
         sg_push(SG_FUNC);
     }
+    g_last_state_node = -1;  // fresh state chain per function
 }
 
 fn df_end_func(func_idx: int) {
@@ -394,13 +441,17 @@ fn df_graph_to_dot() -> string {
         ni = ni + 1;
     }
 
-    // Edges
+    // Edges (state edges dashed/red so ordering constraints stand out)
     ei : ., mut = 0;
     loop {
         if ei >= g_df_edge_count { break; }
         e_from := r64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_FROM);
         e_to := r64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_TO);
-        dot = dot + "    n" + int_str(e_from) + " -> n" + int_str(e_to) + ";\n";
+        if r64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_KIND) != 0 {
+            dot = dot + "    n" + int_str(e_from) + " -> n" + int_str(e_to) + " [style=dashed,color=red];\n";
+        } else {
+            dot = dot + "    n" + int_str(e_from) + " -> n" + int_str(e_to) + ";\n";
+        }
         ei = ei + 1;
     }
 

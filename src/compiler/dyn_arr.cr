@@ -96,8 +96,9 @@ OFF_DF_S3 : int = 32;        OFF_DF_TK : int = 40;
 OFF_DF_FIRST_EDGE : int = 48; OFF_DF_EDGE_COUNT : int = 56;
 
 // DFEdge sizes and offsets
-ESZ_DFEDGE : int = 24;   // from_node,to_node,next_out = 3x8
+ESZ_DFEDGE : int = 32;   // from_node,to_node,next_out,kind = 4x8
 OFF_DFE_FROM : int = 0;  OFF_DFE_TO : int = 8;  OFF_DFE_NEXT : int = 16;
+OFF_DFE_KIND : int = 24; // 0=data (def-use), 1=state (ordering/termination)
 
 // Subgraph entry (48 bytes each)
 ESZ_SG   : int = 48;

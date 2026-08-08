@@ -254,6 +254,10 @@ fn load_cir_cache(path: string, func_idx: int) -> int {
         w64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_FROM, e_from);
         w64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_TO, e_to);
         w64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_NEXT, e_next);
+        // The on-disk cache format predates edge kinds (v2 serialization is a
+        // later task); restored edges default to data edges. This only
+        // initializes the in-memory field — the format is unchanged.
+        w64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_KIND, 0);
         ei = ei + 1;
     }
 

@@ -77,6 +77,18 @@ def test_node_region_mapping():
     # DOT cluster grouping: the for region's nodes appear in one cluster
     assert 'cluster_for' in out, f"DOT region cluster missing:\n{out}"
 
+def test_state_edges():
+    """State edges (VSDG): side-effect chain + loop termination dependencies
+    must appear in the cir dump as 'state: nA -> nB' lines."""
+    out = cir_dump("fn main() -> int {\n    s : ., mut = 0;\n    s = s + 1;\n    s = s + 2;\n    return s;\n}\n")
+    assert 'state' in out, f"state edges not shown in cir dump:\n{out}"
+
+def test_loop_termination_edge():
+    """A loop whose body has side effects must carry a termination dependency
+    from the last side-effect node to the loop exit node."""
+    out = cir_dump("fn main() -> int {\n    s : ., mut = 0;\n    for i in 0..3 { s = s + i; }\n    return s;\n}\n")
+    assert 'state' in out, f"loop termination state edge missing in cir dump:\n{out}"
+
 # --- Interpreter loop execution (TODO#3) ---
 # `corec run` compiles and interprets inline code; main()'s return value
 # becomes the process exit code.
@@ -111,6 +123,7 @@ def test_nested_loop_run():
 if __name__ == '__main__':
     import sys
     tests = [test_if_region, test_loop_region, test_node_region_mapping,
+             test_state_edges, test_loop_termination_edge,
              test_for_loop_run, test_while_loop_run, test_break_continue_run,
              test_nested_loop_run]
     failed = 0

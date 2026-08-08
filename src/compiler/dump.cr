@@ -273,6 +273,19 @@ fn cir_text_dump() -> string {
         ccr = ccr + "\n";
         fi = fi + 1;
     }
+
+    // VSDG state edges: side-effect chain + loop termination dependencies
+    ccr = ccr + "State edges:\n";
+    ei : ., mut = 0;
+    loop {
+        if ei >= g_df_edge_count { break; }
+        if r64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_KIND) != 0 {
+            e_from := r64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_FROM);
+            e_to := r64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_TO);
+            ccr = ccr + "  state: n" + int_str(e_from) + " -> n" + int_str(e_to) + "\n";
+        }
+        ei = ei + 1;
+    }
     return ccr;
 }
 
