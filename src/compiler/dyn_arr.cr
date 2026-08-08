@@ -113,6 +113,7 @@ SG_LOOP   : int = 1;
 SG_FOR    : int = 2;
 SG_FLOW   : int = 3;
 SG_UNSAFE : int = 4;
+SG_IF     : int = 5;  // conditional region: covers [condition, merge)
 
 // InterfaceInfo: fixed-size entry per interface
 // Header(24) + methods[16] * method_entry(88) = 1432 total

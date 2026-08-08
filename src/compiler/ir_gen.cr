@@ -1135,6 +1135,7 @@ fn gen_expr(node: int) -> int {
 
     // If expression
     if ast_kind(node) == EXPR_IF {
+        sg_push(SG_IF);  // conditional region: covers [condition, merge)
         cond := ast_a(node);
         then_node := ast_b(node);
         else_node := ast_c(node);
@@ -1157,6 +1158,7 @@ fn gen_expr(node: int) -> int {
             emit(IR_JUMP, -1, merge_lbl, 0, 0, 0);
         }
         emit(IR_LABEL, -1, merge_lbl, 0, 0, 0);
+        sg_pop();
         return -1;
     }
 
