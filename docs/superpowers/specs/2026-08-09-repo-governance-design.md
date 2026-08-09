@@ -17,8 +17,8 @@ Core 的愿景是成为严肃系统语言（语义保鲜、内核路线、形式
 ## 2. 治理模型
 
 - **GitFlow 标准**：`main` = 正式版线（仅正式版内容，对应 semver 发布）；`develop` = 集成分支（日常 PR 目标）；feature → develop 走 PR（审查 + CI + merge queue）；**develop → main 的合入只有维护者（DslsDZC）能做**（GitFlow 的发布负责人语义）
-- **非对称**：唯一实际审查 = 你对 RhineIris PR 的单向把关；你的改动走 PR 但自批兜底
-- **愿景结构 + 现状执行**：规则按最终形态全立（将来贡献者增多规则自动生效）；执行上互审约定优先、自批兜底（GitHub 无原生"非作者审批"开关，工具层面拦不住作者自批——此为已知限制，流程约定补充）
+- **非对称**：唯一实际审查 = 你对 RhineIris PR 的单向把关；你的改动走 PR，合入经 **B 流程**（临时豁免，见 §3.3）
+- **愿景结构 + 现状执行**：规则按最终形态全立（将来贡献者增多规则自动生效）；执行上互审约定优先（**实测修正 2026-08-09**：GitHub 原生禁止作者批准自己的 PR——"自批兜底"不成立，维护者自有 PR 合入经 B 流程临时豁免，见 §3.3）
 - **机制限制（如实记录）**：GitHub 无原生"禁止以 main 为 base 创建 PR"开关——"PR 不能指向 main"由 **main 规则组合强制**（restrict pushes 仅 DslsDZC + required reviewers 仅 DslsDZC：指向 main 的 PR 无维护者批准无法合入）+ CONTRIBUTING 约定（PR 一律指向 develop）实现
 - **铁律机械执行**：CLAUDE.md 第 2 条（禁止 git、全面 jj）用 hook 硬拦截
 
@@ -61,6 +61,11 @@ Core 的愿景是成为严肃系统语言（语义保鲜、内核路线、形式
   - `merge_queue` 规则被 API 拒绝（"Invalid rule 'merge_queue'" 空原因）——**降级为手动合入**：审批 + CI 状态检查门槛保留（D1/D3/D8 的自动化串行部分由人工点击合入替代）
   - pull_request 参数 schema 实测：5 个必填布尔（含 `require_code_owner_review`）、`allowed_merge_methods: ["squash"]` 强制 squash-only
   - `required_status_checks` 参数数组字段名是 `required_status_checks`（非 `checks`）
+  - **2026-08-09 实测（流程验证）**：
+    - GitHub **原生禁止作者批准自己的 PR**（"Can not approve your own pull request"）——"自批兜底"前提不成立；管理员强制合并亦被 bypass_actors 空集拦截
+    - **B 流程**（既定路径）：维护者自有 PR 合入 = 临时禁用对应 ruleset → squash 合并 → 恢复 active（PR #26 首次执行，2026-08-09）
+    - RhineIris 的审批要计入 required approvals 需 write 权限（fork 贡献者审批不满足要求）——待决策是否授予 collaborator
+    - CI 工作流注册冻结持续（GitHub 侧，注册表含已删文件/缺新文件）——develop 的 required_status_checks 暂移除，注册自愈后回填
   - M7（release/* 标签保护）与 D7（文件路径限制）未落地：脚本与已建 ruleset 均未含（免费计划可用但暂缓），列入后续项
 
 ## 4. GitHub 侧：落地方式
@@ -104,7 +109,7 @@ jj bookmark create feature/xxx        # feature 分支（base = develop）
 ...开发提交（自动签名）...
 jj git push -b feature/xxx
 gh pr create --base develop --fill        # PR 指向 develop（"不能指向 main"）
-→ 审查（互审优先/自批兜底）→ 手动合入（审批过 + PR CI 绿）
+→ 审查（RhineIris 的 PR 你审；你自己的 PR 走 B 流程临时豁免）→ 手动合入（PR CI 绿）
 → squash 合入 develop + 自动删源分支
 jj git fetch && jj bookmark move develop -r develop@origin   # 本地 develop 对齐
 
@@ -119,7 +124,7 @@ gh pr create --base main --fill       # develop→main PR（required reviewers =
 - [ ] 直推 main 被拒（403）；推 feature 分支成功
 - [ ] 指向 main 的 PR（非你创建）无法被批准合入——required reviewers 仅 DslsDZC
 - [ ] develop→main 合并只有你执行成功
-- [ ] 你的 feature PR：自批 → queue → squash 合入 develop → 源分支自动删除
+- [ ] 你的 feature PR：B 流程（临时豁免）→ squash 合入 develop → 源分支自动删除
 - [ ] RhineIris fork PR：base=develop，完整流程，你审批后合入 develop
 - [ ] 未签名提交的 PR 被拒（签名规则生效）；`jj log --no-graph -T 'signature'` 可见签名
 - [ ] 管理员账号直推 main 同样被拒（绕过已关闭）
@@ -154,7 +159,7 @@ gh pr create --base main --fill       # develop→main PR（required reviewers =
 
 - ✅ CI 骨架：已实现（2026-08-09），本地验证通过，随首个 PR 上线
 - ✅ 社区四件套：PR 模板 / CONTRIBUTING / SECURITY / CODE_OF_CONDUCT 已写（2026-08-09），随本 spec 首 PR 上线
-- ⬜ 本地配置：jj protect / jj 签名 / hook / settings 清理 / CLAUDE.md——零网络依赖，待落地
-- ⬜ 创建 `develop` 集成分支（从 main 派生，作为日常 PR 目标）
+- ✅ 本地配置：jj protect / jj 签名（behavior=own）/ hook / settings 清理 / CLAUDE.md——全部落地（2026-08-09）
+- ✅ `develop` 集成分支已创建并承载 PR #25
 - ✅ GitHub ruleset：**main-only-maintainer**（id 20601201）+ **develop-integration**（id 20601189）已创建并 active（2026-08-09）；gh TLS 间歇性故障期间以重试创建成功；squash-only（allowed_merge_methods=['squash']）已应用于双 ruleset；delete_branch_on_merge=True 已设
-- ⬜ spec 提交与 PR 流程本身（本条 spec 将作为首个 PR 提交）
+- ✅ 首个 PR（#25 → develop）与发布 PR（#26 → main，B 流程）已完成；治理全流程端到端验证
