@@ -56,6 +56,11 @@ Core 的愿景是成为严肃系统语言（语义保鲜、内核路线、形式
 
 - **GitHub 无原生"禁止以 main 为 base 创建 PR"开关**：M4（required reviewers 仅 DslsDZC）使指向 main 的 PR 无法被非你合入——"PR 不能指向 main"以规则兜底 + CONTRIBUTING 约定（PR 一律指向 develop）实现
 - **落地过渡**：两个 ruleset 先以 **evaluate（试运行）模式**启用，观察确认无干扰后转 active
+- **2026-08-09 落地偏差（免费计划限制，已实测）**：
+  - `enforcement: evaluate` 仅 Enterprise 可用——免费计划已直接以 **active** 创建（无试运行期，规则即刻生效）
+  - `merge_queue` 规则被 API 拒绝（"Invalid rule 'merge_queue'" 空原因）——**降级为手动合入**：审批 + CI 状态检查门槛保留（D1/D3/D8 的自动化串行部分由人工点击合入替代）
+  - pull_request 参数 schema 实测：5 个必填布尔（含 `require_code_owner_review`）、`allowed_merge_methods: ["squash"]` 强制 squash-only
+  - `required_status_checks` 参数数组字段名是 `required_status_checks`（非 `checks`）
 
 ## 4. GitHub 侧：落地方式
 
@@ -150,5 +155,5 @@ gh pr create --base main --fill       # develop→main PR（required reviewers =
 - ✅ 社区四件套：PR 模板 / CONTRIBUTING / SECURITY / CODE_OF_CONDUCT 已写（2026-08-09），随本 spec 首 PR 上线
 - ⬜ 本地配置：jj protect / jj 签名 / hook / settings 清理 / CLAUDE.md——零网络依赖，待落地
 - ⬜ 创建 `develop` 集成分支（从 main 派生，作为日常 PR 目标）
-- ⬜ GitHub ruleset（main + develop 两个）：待配置（gh CLI 当前 TLS 故障 + token 失效；路径 A/B 见第 4 节）
+- ✅ GitHub ruleset：**main-only-maintainer**（id 20601201）+ **develop-integration**（id 20601189）已创建并 active（2026-08-09）；gh TLS 间歇性故障期间以重试创建成功；squash-only 参数与仓库级自动删分支待网络稳定后补（或网页版）
 - ⬜ spec 提交与 PR 流程本身（本条 spec 将作为首个 PR 提交）
