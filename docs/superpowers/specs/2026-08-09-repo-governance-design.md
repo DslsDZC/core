@@ -61,6 +61,7 @@ Core 的愿景是成为严肃系统语言（语义保鲜、内核路线、形式
   - `merge_queue` 规则被 API 拒绝（"Invalid rule 'merge_queue'" 空原因）——**降级为手动合入**：审批 + CI 状态检查门槛保留（D1/D3/D8 的自动化串行部分由人工点击合入替代）
   - pull_request 参数 schema 实测：5 个必填布尔（含 `require_code_owner_review`）、`allowed_merge_methods: ["squash"]` 强制 squash-only
   - `required_status_checks` 参数数组字段名是 `required_status_checks`（非 `checks`）
+  - M7（release/* 标签保护）与 D7（文件路径限制）未落地：脚本与已建 ruleset 均未含（免费计划可用但暂缓），列入后续项
 
 ## 4. GitHub 侧：落地方式
 
@@ -103,14 +104,14 @@ jj bookmark create feature/xxx        # feature 分支（base = develop）
 ...开发提交（自动签名）...
 jj git push -b feature/xxx
 gh pr create --base develop --fill        # PR 指向 develop（"不能指向 main"）
-→ 审查（互审优先/自批兜底）→ merge queue（PR CI 绿 + 审批过）
+→ 审查（互审优先/自批兜底）→ 手动合入（审批过 + PR CI 绿）
 → squash 合入 develop + 自动删源分支
 jj git fetch && jj bookmark move develop -r develop@origin   # 本地 develop 对齐
 
 develop → main（只有你能）：
 jj git push -b develop                # 你有写权限
 gh pr create --base main --fill       # develop→main PR（required reviewers = 你）
-→ 你批准 → merge queue → squash 合入 main
+→ 你批准 → 手动 squash 合入 main
 ```
 
 ## 8. 验证清单（合入后端到端）
@@ -155,5 +156,5 @@ gh pr create --base main --fill       # develop→main PR（required reviewers =
 - ✅ 社区四件套：PR 模板 / CONTRIBUTING / SECURITY / CODE_OF_CONDUCT 已写（2026-08-09），随本 spec 首 PR 上线
 - ⬜ 本地配置：jj protect / jj 签名 / hook / settings 清理 / CLAUDE.md——零网络依赖，待落地
 - ⬜ 创建 `develop` 集成分支（从 main 派生，作为日常 PR 目标）
-- ✅ GitHub ruleset：**main-only-maintainer**（id 20601201）+ **develop-integration**（id 20601189）已创建并 active（2026-08-09）；gh TLS 间歇性故障期间以重试创建成功；squash-only 参数与仓库级自动删分支待网络稳定后补（或网页版）
+- ✅ GitHub ruleset：**main-only-maintainer**（id 20601201）+ **develop-integration**（id 20601189）已创建并 active（2026-08-09）；gh TLS 间歇性故障期间以重试创建成功；squash-only（allowed_merge_methods=['squash']）已应用于双 ruleset；delete_branch_on_merge=True 已设
 - ⬜ spec 提交与 PR 流程本身（本条 spec 将作为首个 PR 提交）

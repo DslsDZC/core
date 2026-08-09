@@ -2,7 +2,7 @@
 # 按 Core 裁剪：citool 砍掉（无动态矩阵需求）→ 静态矩阵直接内联；
 # 触发分两层：
 #   - pull_request（PR 快速层）：check / bootstrap-tests / selfhost-tests
-#   - merge_group（完整层，merge queue 在最新 main 上跑）：suite / full-bootstrap
+#   - merge_group（完整层，merge queue 在最新 develop 上跑——当前 merge_queue 因免费计划降级，本触发实际不可达，job 休眠待点亮）：suite / full-bootstrap
 # PR 层 job 在 merge_group 下也运行（Rust 语义：PR CI jobs 自动注册为 auto jobs）。
 # job 命令定义在 src/ci/run.sh（case CI_JOB_NAME 分发），本地用 run.sh 可复现。
 

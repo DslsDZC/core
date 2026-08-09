@@ -306,6 +306,8 @@ jj describe -m "chore(governance): 创建 develop 集成分支（GitFlow）"
 
 Create `tools/gh_setup_ruleset.sh`:
 
+（2026-08-09 落地后注：内嵌脚本为初版——最终以 tools/gh_setup_ruleset.sh 为准：active 替代 evaluate、merge_queue 已移除、字段名修正，偏差详见 spec §3.3）
+
 ```bash
 #!/bin/bash
 # 仓库治理 ruleset 配置脚本（spec §3 清单落地，路径 A）

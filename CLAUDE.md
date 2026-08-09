@@ -35,7 +35,7 @@ jj bookmark create feature/xxx        # 每个改动独立分支（base = develo
 # ...开发提交（SSH 自动签名）...
 jj git push -b feature/xxx
 gh pr create --base develop --fill    # PR 指向 develop（"不能指向 main"）
-# → 审查 → merge queue → squash 合入 develop → 自动删源分支
+# → 审查（审批+CI 绿）→ **手动 squash 合入 develop**（merge queue 因免费计划降级，见 spec §3.3）
 jj git fetch && jj bookmark move develop -r develop@origin
 ```
 
@@ -43,7 +43,7 @@ jj git fetch && jj bookmark move develop -r develop@origin
 
 ```bash
 jj git push -b develop
-gh pr create --base main --fill       # required reviewers = 你 → 你批准 → queue 合入
+gh pr create --base main --fill       # required reviewers = 你 → 你批准 → 手动 squash 合入
 ```
 
 - 合入 main 后（发布线）：

@@ -10,11 +10,11 @@ Core 的开发流程参考 Rust/Linux：**main 即 mainline，任何人（含维
 3. **开 PR——base 指向 `develop` 集成分支**（main 不接受直接合入；main 的合入仅维护者可执行），按 `.github/pull_request_template.md` 填写：
    - 变更描述、测试记录、语义保鲜影响（IR/类型语义是否变化）
 4. 等待审查（≥1 审批，审批人限维护者）
-5. 通过后进入 **merge queue**——PR 层 CI 全绿 + 在最新 develop 上完整测试，然后 **squash 合入 develop**，源分支自动删除
+5. 审批通过且 PR 层 CI 全绿后，维护者手动 **squash 合入 develop**（merge queue 因免费计划不可用，已降级；见 spec §3.3），源分支由 GitHub 自动删除
 
 ## 铁律
 
-- **全面使用 jj，禁止 `git` 命令**（仓库为 jj colocated 形态；CI/hook 会拦截 git）
+- **全面使用 jj，禁止 `git` 命令**（仓库为 jj colocated 形态；维护者本地 Claude Code hook 会拦截 git）
 - 长时间编译/测试任务限速运行（`cpulimit -l 10` 或 `nice -n 19`）
 - 文件还原必须经维护者明确许可
 

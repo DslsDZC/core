@@ -6,6 +6,7 @@
 #
 # 模板来源：rust-lang/rust src/ci/run.sh（configure/make 部分替换为 Core 构建命令）。
 
+CI_JOB_NAME="${CI_JOB_NAME:-}"
 set -euo pipefail
 IFS=$'\n\t'
 
@@ -13,7 +14,7 @@ if [ -n "$CI_JOB_NAME" ]; then
   echo "[CI_JOB_NAME=$CI_JOB_NAME]"
 fi
 
-ci_dir=`cd $(dirname $0) && pwd`
+ci_dir="$(cd "$(dirname "$0")" && pwd)"
 source "$ci_dir/shared.sh"
 
 # 自举构建：Python bootstrap → 原生 corec/corearch
