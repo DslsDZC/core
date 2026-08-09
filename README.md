@@ -16,52 +16,51 @@
 
 | 阶段 | 编译方式 | 产物 | 状态 |
 |------|---------|------|------|
-| Stage 0 | Python 引导编译器 | `build/corec`（前端）+ `build/corearch`（后端） | ✅ 正常 |
-| Stage 1 | `build/corec` + `build/corearch` 编译自举编译器源码 | `build/corec2`（自编译前端） | ✅ 可运行 |
-| Stage 2 | `build/corec2` + `build/corearch` 再次编译 | `build/corec3`（二次自编译） | ✅ 可运行 |
+| Stage 0 | Python 引导编译器 | `build/corec`（前端）+ `build/corearch`（后端） | 正常 |
+| Stage 1 | `build/corec` + `build/corearch` 编译自举编译器源码 | `build/corec2`（自编译前端） | 可运行 |
+| Stage 2 | `build/corec2` + `build/corearch` 再次编译 | `build/corec3`（二次自编译） | 可运行 |
 
 **当前限制：** corec2 自我编译虽可运行，但速度远慢于 build/corec（约 1000×），主要因为 ELF 后端代码生成尚无条件寄存器分配，所有变量走栈操作。优化方向包括寄存器分配、AST 折叠、公共子表达式消除等。
 
-> ⚠️ **2026-08 现状**：`corec2 check` 卡在 tokenizer（约 9 个全局变量未注册进 `g_ir_globals`，赋值静默丢弃）——自举阻塞项，见 TODO.md。
+> 注意（2026-08 现状）：`corec2 check` 卡在 tokenizer（约 9 个全局变量未注册进 `g_ir_globals`，赋值静默丢弃）——自举阻塞项，见 TODO.md。
 
 ### 已实现的核心特性
 
 | 类别 | 特性 | 状态 |
 |------|------|------|
-| **类型系统** | `int`、`float`、`bool`、`string`、`char`、`unit`、`never` | ✅ |
-| | 泛型函数与泛型结构体 | ✅ |
-| | `auto` / `.` 类型推导 | ✅ |
-| | `char` 字面量 `'a'`、位宽后缀 `_i32` `_u64` `_f32` `_f64` | ✅ |
-| **变量** | `:=` / `: type` 声明，`mut` / `pub` 标签，批量声明 | ✅ |
-| **函数** | 函数定义、调用、单行函数体、`pub fn` 可见性 | ✅ |
-| **控制流** | `if` / `else` / `elif`、`while`、`loop` + `break`/`continue`、`for` 区间和数组迭代 | ✅ |
-| | RVSDG 式嵌套 region（SG_IF/LOOP/FOR/FLOW/UNSAFE + state edges + .ccr v5） | ✅ |
-| **并发** | `go f(args)` / `go var start..end expr` 协程生成（端到端可用） | ✅ |
-| | `await` 异步等待 | ⬜ 待实现 |
-| | 协作式 Fiber 调度器（round-robin）、缓冲通道（阻塞） | ✅ 单 M 验证 |
-| | 多 M worker 线程 | ⬜ 待验证（TODO bug 2） |
-| **复合类型** | 结构体、枚举 + `match`、元组、定长数组、切片 | ✅ |
-| **方法** | `impl` 块、`self` / `&self` / `&mut self`、`impl Trait for Type` | ✅ |
-| **引用与借用** | `&T` / `&mut T`、借用检查（Borrow Checker） | ✅ |
-| **内存模型** | Arena 内存模型（init/new/reset + 子图绑定 + mmap 堆扩展） | ✅ |
-| | 指针安全三 pass：PointerAnalysis / RegionCheck / ProvenanceVerify | ✅ |
-| **@ 内建** | `@sizeOf` `@alignOf` `@fields` `@hasField` `@field` `@typeInfo` `@comptime` `@inline` `@no_bounds_check` `@fast` `@unroll` `@section`（12 个） | ✅ |
-| **编译器** | 增量缓存（函数级 .cir，默认开启 + clean-cache） | ✅ |
-| | `@hotpatch` 滚动更新（IR_HOTPATCH_ROUTE + SIGHUP 热加载） | ✅ |
-| | 惰性求值（IR_LAZY_THUNK/FORCE，调用级） | ⚡ 部分 |
-| | 控制流自动惰性（编译期指令下沉路线） | ⬜ 设计定案，待实现 |
-| **汇编层** | `.crasm` 统一汇编抽象层（虚拟寄存器 + 平台映射表） | ⬜ 设计已批准（docs/crasm.md） |
-| **语义检查** | 名字解析 + 类型检查、结构化错误码 + 源码定位 | ✅ |
-| **模块系统** | `import`、`fileid`、`@project`、`_import.cr`、依赖裁剪 | ✅ |
-| **标准库** | `io.cr` / `cli.cr` / `toml.cr` | ✅ |
-| | `math.cr` / `collections.cr` | ⚡ stub（TODO bug 4） |
-| **编译器基础设施** | 自举编译器（Core 写编译器）、x86-64 ELF 直接输出 | ✅ |
-| | `build`/`check`/`ccr`/`cir`/`run`/`clean-cache` 子命令 | ✅ |
-| | CIR 数据流图（带完整类型/语义信息）、`.ccr` 线性 CFG | ✅ |
-| **形式化验证** | 规约层 IR / 验证条件生成 / SMT 求解器接口 | ⬜ 占位 |
-| **发布与治理** | Arch Linux PKGBUILD | ✅ |
-| | GitFlow 治理：双 ruleset（main 仅维护者合入 / develop 集成分支）+ 签名提交 + merge queue（免费计划降级为手动合入） | ✅ |
-| | CI 骨架（Rust 模板重写：PR 快速层 + 完整层） | ⚡ GitHub 侧注册冻结，待自愈 |
+| **类型系统** | `int`、`float`、`bool`、`string`、`char`、`unit`、`never` | 完成 |
+| | 泛型函数与泛型结构体 | 完成 |
+| | `auto` / `.` 类型推导、位宽后缀 `_i32` `_u64` `_f32` `_f64` | 完成 |
+| **变量** | `:=` / `: type` 声明，`mut` / `pub` 标签，批量声明 | 完成 |
+| **函数** | 函数定义、调用、单行函数体、`pub fn` 可见性 | 完成 |
+| **控制流** | `if` / `else` / `elif`、`while`、`loop` + `break`/`continue`、`for` 区间和数组迭代 | 完成 |
+| | RVSDG 式嵌套 region（SG_IF/LOOP/FOR/FLOW/UNSAFE + state edges + .ccr v5） | 完成 |
+| **并发** | `go f(args)` / `go var start..end expr` 协程生成 | 完成（单 M 端到端） |
+| | 协作式 Fiber 调度器、缓冲通道（阻塞） | 完成（单 M 验证） |
+| | 多 M worker 线程 | 未完成（TODO bug 2） |
+| | `await` 异步等待 | 未完成 |
+| **复合类型** | 结构体、枚举 + `match`、元组、定长数组、切片 | 完成 |
+| **方法** | `impl` 块、`self` / `&self` / `&mut self`、`impl Trait for Type` | 完成 |
+| **引用与借用** | `&T` / `&mut T`、借用检查（Borrow Checker） | 完成 |
+| **内存模型** | Arena 内存模型（init/new/reset + 子图绑定 + mmap 堆扩展） | 完成 |
+| | 指针安全三 pass：PointerAnalysis / RegionCheck / ProvenanceVerify | 完成 |
+| **@ 内建** | `@sizeOf` `@alignOf` `@fields` `@hasField` `@field` `@typeInfo` `@comptime` `@inline` `@no_bounds_check` `@fast` `@unroll` `@section`（12 个） | 完成 |
+| **编译器** | 增量缓存（函数级 .cir，默认开启 + clean-cache） | 完成 |
+| | `@hotpatch` 滚动更新（IR_HOTPATCH_ROUTE + SIGHUP 热加载） | 完成 |
+| | 惰性求值（IR_LAZY_THUNK/FORCE，调用级） | 部分（thunk/force 为值搬运，无实际延迟） |
+| | 控制流自动惰性（编译期指令下沉路线） | 设计定案，待实现 |
+| **汇编层** | `.crasm` 统一汇编抽象层（虚拟寄存器 + 平台映射表） | 设计完成（docs/crasm.md） |
+| **语义检查** | 名字解析 + 类型检查、结构化错误码 + 源码定位 | 完成 |
+| **模块系统** | `import`、`fileid`、`@project`、`_import.cr`、依赖裁剪 | 完成 |
+| **标准库** | `io.cr` / `cli.cr` / `toml.cr` | 完成 |
+| | `math.cr` / `collections.cr` | 部分（stub，TODO bug 4） |
+| **编译器基础设施** | 自举编译器（Core 写编译器）、x86-64 ELF 直接输出 | 完成 |
+| | `build`/`check`/`ccr`/`cir`/`run`/`clean-cache` 子命令 | 完成 |
+| | CIR 数据流图（带完整类型/语义信息）、`.ccr` 线性 CFG | 完成 |
+| **形式化验证** | 规约层 IR / 验证条件生成 / SMT 求解器接口 | 占位 |
+| **发布与治理** | Arch Linux PKGBUILD | 完成 |
+| | GitFlow 治理：双 ruleset（main 仅维护者合入 / develop 集成分支）+ 签名提交 + merge queue（免费计划降级为手动合入） | 完成 |
+| | CI 骨架（Rust 模板重写：PR 快速层 + 完整层） | 部分（GitHub 侧注册冻结，待自愈） |
 
 ### 未完成与已知限制
 
