@@ -51,7 +51,7 @@ jobs:
           #   run_type: full
     steps:
       - name: checkout the source code
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5 (SHA pin, sha_pinning_required)
         with:
           fetch-depth: 2
 
