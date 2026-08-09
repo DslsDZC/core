@@ -1,0 +1,9 @@
+name: CI
+on:
+  push:
+    branches: ["**"]
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo name-ci-test
