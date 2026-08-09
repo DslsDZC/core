@@ -1,9 +1,0 @@
-name: test-valid
-on:
-  push:
-    branches: ["**"]
-jobs:
-  t:
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo ok
