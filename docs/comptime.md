@@ -54,8 +54,8 @@ comptime fn fibonacci(n: int) -> int {
     return fibonacci(n - 1) + fibonacci(n - 2);
 }
 
-x := fibonacci(40);              // ✅ 编译时算
-y := fibonacci(user_input);      // ❌ 编译错误：comptime fn 需要已知参数
+x := fibonacci(40);              //  编译时算
+y := fibonacci(user_input);      //  编译错误：comptime fn 需要已知参数
 ```
 
 ## 可编译时执行的条件
@@ -64,8 +64,8 @@ y := fibonacci(user_input);      // ❌ 编译错误：comptime fn 需要已知�
 
 | 执行条件 | 自动执行 | @comptime |
 |---------|---------|-----------|
-| 纯函数，所有输入已知 | ✅ | ✅ |
-| read_file，路径已知 | ✅ | ✅ |
-| 有未知输入 | ❌ 留给运行时 | ❌ 编译错误 |
-| 调用 FFI / volatile | ❌ | ❌ 编译错误 |
-| 类型内省（@typeInfo 等） | — | ✅ |
+| 纯函数，所有输入已知 |  |  |
+| read_file，路径已知 |  |  |
+| 有未知输入 |  留给运行时 |  编译错误 |
+| 调用 FFI / volatile |  |  编译错误 |
+| 类型内省（@typeInfo 等） | — |  |

@@ -86,9 +86,9 @@ go @("server2") worker(1);
 
 | 调用处 | 远端接口 | 结果 |
 |--------|---------|------|
-| `fn(x: int) -> int` | `fn(x: int) -> int` | ✅ 匹配 |
-| `fn(x: int) -> int` | `fn(x: int) -> string` | ❌ 不匹配 |
-| `fn(x: int) -> int` | `fn(x: dyn) -> int` | ✅ dyn 兼容 |
+| `fn(x: int) -> int` | `fn(x: int) -> int` |  匹配 |
+| `fn(x: int) -> int` | `fn(x: int) -> string` |  不匹配 |
+| `fn(x: int) -> int` | `fn(x: dyn) -> int` |  dyn 兼容 |
 
 不需要版本号。接口签名一致就能跑。版本号是人控制的，编译器只看接口类型。
 

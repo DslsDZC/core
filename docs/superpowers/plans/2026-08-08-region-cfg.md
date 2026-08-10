@@ -758,7 +758,7 @@ jj commit -m "feat: RegionCheck via explicit node→region mapping + docs sync (
 
 ## Self-Review（执行前自查）
 
-- **规格覆盖**：P1（SG_IF+映射+DOT）→ Task 1/2；P2（region 迭代）→ Task 3；P3（state edges）→ Task 4；P4（序列化 v2）→ Task 5；P5（RegionCheck+回归+文档）→ Task 6。规格第 11 节文档同步 → Task 6 Step 5 ✓
-- **类型一致**：`g_df_node_region`/`g_cur_sg`/`g_loop_region_*`/`OFF_DFE_KIND`/`SG_IF` 在各 Task 定义处与使用处一致 ✓
-- **全局约束**：所有长任务命令带 `nice -n 19`；提交用 `jj` ✓
+- **规格覆盖**：P1（SG_IF+映射+DOT）→ Task 1/2；P2（region 迭代）→ Task 3；P3（state edges）→ Task 4；P4（序列化 v2）→ Task 5；P5（RegionCheck+回归+文档）→ Task 6。规格第 11 节文档同步 → Task 6 Step 5 
+- **类型一致**：`g_df_node_region`/`g_cur_sg`/`g_loop_region_*`/`OFF_DFE_KIND`/`SG_IF` 在各 Task 定义处与使用处一致 
+- **全局约束**：所有长任务命令带 `nice -n 19`；提交用 `jj` 
 - **已知不确定点**：Task 3 复现测试若与预期失败模式不符，以实际输出为准修正（步骤已注明）；Task 5 的 v4 存档文件若无现成产物则跳过兼容测试并在提交注明
