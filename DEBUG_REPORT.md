@@ -3,7 +3,7 @@
 > 日期: 2026-07-06
 > PR: https://github.com/dslsdzc/core/compare/main...RhineIris:core:main
 >
-> **⚠️ 历史存档**：本报告描述的问题均已在后续修复中解决——
+> ** 历史存档**：本报告描述的问题均已在后续修复中解决——
 > 文中 3 个已修复 Bug 已合并（PR #9/#16 时期）；"仍未解决的根本性 Bug"
 > （rip_patch 位置错位）已由 2026-07-23 P0 全量修复（`emit_instr()` disp32
 > 写入补上当前指令基址）解决，corec2 → corec3 自举现已全程通过。
@@ -114,7 +114,7 @@ fn tokenize() {
 PATCH gvi=698 ppos=74669 off=5584 target=4736480 rel=467503
 PATCH gvi=698 ppos=74751 off=5584 target=4736480 rel=467421
 PATCH gvi=698 ppos=74845 off=5584 target=4736480 rel=467327
-... (16 total, all target=4736480 ✓)
+... (16 total, all target=4736480 )
 ```
 
 - `off=5584` → 全部一致
@@ -188,8 +188,8 @@ syscall3(1, fd, g_elf_buf, sz);
 
 | 位置 | 期望值 | 实际值 | 状态 |
 |------|--------|--------|------|
-| buf[500000] | 0x12345678 | 0x12345678 | 保留 ✓ |
-| buf[74717] | 0xCAFEBABE 或 0xDEADBEEF | 0x458948ff | 覆盖 ✗ |
+| buf[500000] | 0x12345678 | 0x12345678 | 保留  |
+| buf[74717] | 0xCAFEBABE 或 0xDEADBEEF | 0x458948ff | 覆盖  |
 
 - 标记 1（位置 500000）→ **保留成功**，说明 buffer 在 elf_gen 返回后没有被整体污染
 - 标记 2（位置 74717）和标记 3（位置 74717）→ **都被覆盖**，最终值是原始指令代码

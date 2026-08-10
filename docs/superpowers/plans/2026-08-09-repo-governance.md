@@ -514,7 +514,7 @@ jj log -r main@origin --no-graph -T 'commit_id.short()' && jj log -r develop@ori
 
 - [ ] **Step 4: 收尾核对 spec §12 状态清单**
 
-全部 ⬜ 项变为 ✅（本地配置、develop、ruleset、签名密钥、首个 PR）。剩余 ⬜（CI 完整层点亮、opt-regress）属后续项，在 spec §11 跟踪。
+全部  项变为 （本地配置、develop、ruleset、签名密钥、首个 PR）。剩余 （CI 完整层点亮、opt-regress）属后续项，在 spec §11 跟踪。
 
 ---
 

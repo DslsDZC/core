@@ -157,9 +157,9 @@ gh pr create --base main --fill       # develop→main PR（required reviewers =
 
 ## 12. 当前状态
 
-- ✅ CI 骨架：已实现（2026-08-09），本地验证通过，随首个 PR 上线
-- ✅ 社区四件套：PR 模板 / CONTRIBUTING / SECURITY / CODE_OF_CONDUCT 已写（2026-08-09），随本 spec 首 PR 上线
-- ✅ 本地配置：jj protect / jj 签名（behavior=own）/ hook / settings 清理 / CLAUDE.md——全部落地（2026-08-09）
-- ✅ `develop` 集成分支已创建并承载 PR #25
-- ✅ GitHub ruleset：**main-only-maintainer**（id 20601201）+ **develop-integration**（id 20601189）已创建并 active（2026-08-09）；gh TLS 间歇性故障期间以重试创建成功；squash-only（allowed_merge_methods=['squash']）已应用于双 ruleset；delete_branch_on_merge=True 已设
-- ✅ 首个 PR（#25 → develop）与发布 PR（#26 → main，B 流程）已完成；治理全流程端到端验证
+-  CI 骨架：已实现（2026-08-09），本地验证通过，随首个 PR 上线
+-  社区四件套：PR 模板 / CONTRIBUTING / SECURITY / CODE_OF_CONDUCT 已写（2026-08-09），随本 spec 首 PR 上线
+-  本地配置：jj protect / jj 签名（behavior=own）/ hook / settings 清理 / CLAUDE.md——全部落地（2026-08-09）
+-  `develop` 集成分支已创建并承载 PR #25
+-  GitHub ruleset：**main-only-maintainer**（id 20601201）+ **develop-integration**（id 20601189）已创建并 active（2026-08-09）；gh TLS 间歇性故障期间以重试创建成功；squash-only（allowed_merge_methods=['squash']）已应用于双 ruleset；delete_branch_on_merge=True 已设
+-  首个 PR（#25 → develop）与发布 PR（#26 → main，B 流程）已完成；治理全流程端到端验证

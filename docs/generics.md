@@ -48,8 +48,8 @@ fn print_size<T>(x: T) {
 约束推导：编译器看图，发现 `x.size()` 调用，检查传入的实际类型是否有 `.size()` 方法。
 
 ```core
-print_size(42);          // ❌ int 没有 .size()
-print_size("hello");     // ✅ string 有 .len()，编译器推导约束匹配
+print_size(42);          //  int 没有 .size()
+print_size("hello");     //  string 有 .len()，编译器推导约束匹配
 ```
 
 ### 隐式约束推导
@@ -61,8 +61,8 @@ fn add<T>(a: T, b: T) -> T {
     return a + b;    // 编译器推导：T 必须支持 + 运算
 }
 
-add(1, 2);           // ✅ int 支持 +
-add("a", "b");       // ✅ string 支持 +
+add(1, 2);           //  int 支持 +
+add("a", "b");       //  string 支持 +
 ```
 
 ## 图上的实现
@@ -145,7 +145,7 @@ arr := make_array<int, 10>();
 编译器处理方式：`N` 被约束为 `int`，且在调用处必须是 `@comptime` 已知的编译时值。
 
 ```core
-make_array<int, user_input>();  // ❌ 编译错误：泛型参数 N 需要编译时已知
+make_array<int, user_input>();  //  编译错误：泛型参数 N 需要编译时已知
 ```
 
 ## 设计与替代方案
