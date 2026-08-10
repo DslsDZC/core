@@ -132,6 +132,19 @@ RVSDG 式嵌套 region 已落地（规格 docs/superpowers/specs/2026-08-08-regi
   - `lexer.cr` 浮点/`..` 范围修复（main 已有）→ 核对 lexer.md 是否已反映
 - 完成后需重跑 `python3 tools/pseudocode_check.py` 并更新相应文档的源行数标注
 
+### 7. 类型双关验证缺口（2026-08-10 记）
+- 背景：设计讨论定论——指针模型扩展收敛：**"程序内部地址直接指"（0x 字面量指内部对象）不做**（YAGNI：内部对象用 `&` 取址更优——无漂移/类型全/验证无条件；外部契约地址 unsafe 已够用；0x 字面量仅保留 unsafe 外部入口角色）；**类型双关保留**——图只认字节（pts/offset/alloc_size 全字节级，无类型检查），双关在图层天然合法，验证 = 边界 + 宽度
+- 现状核实（源码）：
+  - checker EXPR_AS **无类型兼容检查**（checker.cr:2188 仅推断内层 + 返回目标类型）→ `*(float*)&i` 已放行
+  - cast 透传（ir_gen.cr:1595 EXPR_AS 返回内层表达式）→ provenance 边不断
+  - DEREF 边界检查只查 `off >= alloc_size`（provenance_verify.cr:58-64）→ 越界双关照拦
+  - DEREF 节点不携带类型（ir_gen.cr:735 `emit(IR_DEREF, dv, inner_var, 0, 0, 0)`，type_kind=0）→ 访问宽度无从查
+  - **asp 无主机制**：checker.cr:404/1451 写入 TYP_PTR 的 asp 标志（unsafe 块内 = 外部地址空间），全仓库无任何消费点——`0x... as *int` 在 safe 代码同样放行，安全语义未落地
+- 待修：
+  1. DEREF 宽度检查：`off + width <= alloc_size`（width 从 s1 指针变量的 TYP_PTR 指向类型经 type_size（ir_gen.cr:295）取；DEREF 的 type_kind 是占位 0，需从变量类型推导或改 emit 传真实类型）
+  2. asp 机制收尾：完成（asp=1 指针的 DEREF 要求 unsafe 包裹）或删除（当前写入无人消费，是隐患）
+- 参考：docs/pointer-model.md（unsafe 边界表已删"类型双关"行 + 新增类型双关节 + 2026-08-10 设计定论）
+
 ## 待实现特性
 
 ### 控制流自动惰性（2026-08-09 记）
