@@ -30,7 +30,7 @@
 - emit_alloc_body 零初始化 + 链式扩容标记满
 
 ### @ 内建原语（12 个全部完整）
-- `@sizeOf(T)` / `@alignOf(T)` — 编译期常量，ELF 验证 8 / 1 ✅
+- `@sizeOf(T)` / `@alignOf(T)` — 编译期常量，ELF 验证 8 / 1 
 - `@fields(T)` — 遍历 struct fields，返回逗号分隔名字符串
 - `@hasField(T, name)` / `@field(T, name)` — 结构体字段存在性 + 偏移量
 - `@typeInfo(T)` — 类型名称字符串
@@ -84,10 +84,10 @@ RVSDG 式嵌套 region 已落地（规格 docs/superpowers/specs/2026-08-08-regi
 - 仅增加 mmap 扩容会让热缓存路径增长到约 7.6 GiB RSS 并触发 WSL OOM；需要按函数回收临时 IR/缓存数据，而不是继续扩大堆
 
 ### 2. 并发集成：单 M 已端到端验证，多 M 未验证
-- ✅ `go f(args)` 端到端已通：`sched_go(@addr(f), arg)` → g_new 存 saved_fn/saved_arg → 静态构建由 ELF 后端内联发射 fiber_init/fiber_switch/goroutine_entry_wrapper（不再依赖 rt.s 链接）→ wrapper 调用 saved_fn(saved_arg) → 结果经 result_ch 回传
-- ✅ 主线程注册为 G 0，可经 channel 阻塞/唤醒；sched_yield 不再重排 Gwaiting
-- ⏳ M 线程 worker loop（m_start_workers）未连到调度器完整测试——静态构建尚未内联发射 m_start_workers（rt.s 符号）
-- ⏳ channel wait queue 链表操作未在多线程并发下验证
+-  `go f(args)` 端到端已通：`sched_go(@addr(f), arg)` → g_new 存 saved_fn/saved_arg → 静态构建由 ELF 后端内联发射 fiber_init/fiber_switch/goroutine_entry_wrapper（不再依赖 rt.s 链接）→ wrapper 调用 saved_fn(saved_arg) → 结果经 result_ch 回传
+-  主线程注册为 G 0，可经 channel 阻塞/唤醒；sched_yield 不再重排 Gwaiting
+-  M 线程 worker loop（m_start_workers）未连到调度器完整测试——静态构建尚未内联发射 m_start_workers（rt.s 符号）
+-  channel wait queue 链表操作未在多线程并发下验证
 - 注意：G 结构 offset 56 同时用作 saved_fn（goroutine.cr）与 temp_val（chan.cr 等待队列 handoff）——单 G 流程可用（wrapper 在 chan 操作前读取 saved_fn），但字段语义重叠，重构时需拆分
 
 ### 3. 解释器局限
@@ -132,6 +132,19 @@ RVSDG 式嵌套 region 已落地（规格 docs/superpowers/specs/2026-08-08-regi
   - `lexer.cr` 浮点/`..` 范围修复（main 已有）→ 核对 lexer.md 是否已反映
 - 完成后需重跑 `python3 tools/pseudocode_check.py` 并更新相应文档的源行数标注
 
+### 7. 类型双关验证缺口（2026-08-10 记）
+- 背景：设计讨论定论——指针模型扩展收敛：**"程序内部地址直接指"（0x 字面量指内部对象）不做**（YAGNI：内部对象用 `&` 取址更优——无漂移/类型全/验证无条件；外部契约地址 unsafe 已够用；0x 字面量仅保留 unsafe 外部入口角色）；**类型双关保留**——图只认字节（pts/offset/alloc_size 全字节级，无类型检查），双关在图层天然合法，验证 = 边界 + 宽度
+- 现状核实（源码）：
+  - checker EXPR_AS **无类型兼容检查**（checker.cr:2188 仅推断内层 + 返回目标类型）→ `*(float*)&i` 已放行
+  - cast 透传（ir_gen.cr:1595 EXPR_AS 返回内层表达式）→ provenance 边不断
+  - DEREF 边界检查只查 `off >= alloc_size`（provenance_verify.cr:58-64）→ 越界双关照拦
+  - DEREF 节点不携带类型（ir_gen.cr:735 `emit(IR_DEREF, dv, inner_var, 0, 0, 0)`，type_kind=0）→ 访问宽度无从查
+  - **asp 无主机制**：checker.cr:404/1451 写入 TYP_PTR 的 asp 标志（unsafe 块内 = 外部地址空间），全仓库无任何消费点——`0x... as *int` 在 safe 代码同样放行，安全语义未落地
+- 待修：
+  1. DEREF 宽度检查：`off + width <= alloc_size`（width 从 s1 指针变量的 TYP_PTR 指向类型经 type_size（ir_gen.cr:295）取；DEREF 的 type_kind 是占位 0，需从变量类型推导或改 emit 传真实类型）
+  2. asp 机制收尾：完成（asp=1 指针的 DEREF 要求 unsafe 包裹）或删除（当前写入无人消费，是隐患）
+- 参考：docs/pointer-model.md（unsafe 边界表已删"类型双关"行 + 新增类型双关节 + 2026-08-10 设计定论）
+
 ## 待实现特性
 
 ### 控制流自动惰性（2026-08-09 记）
@@ -165,3 +178,19 @@ RVSDG 式嵌套 region 已落地（规格 docs/superpowers/specs/2026-08-08-regi
   6. （后补）ARM64/RISC-V 映射表
 - 明确不做（YAGNI）：模拟器/调试器、C 生态兼容、指令级时序验证、特权副作用验证（隔离，人工保证）
 - 参考：`docs/crasm.md`（正式文档）、`docs/superpowers/specs/2026-08-08-crasm-design.md`（批准记录）
+
+### 对照 CompCert 审查发现的未修复 bug（2026-08-11 记，详见 docs/compcert-reference.md）
+
+- **int_str 空字符串 bug**：`int_str(7)` 恒返回空、`int_str(567)` 随编译产物不稳定——打印链问题（预先存在，修复 .ccr s1 64 位后被大数路径暴露）。影响：float 打印精度（`float_str_bits(3.14)` 显示 "3.4"）、大 int 常量打印
+- **字符串拼接 + println 崩溃**：`println("AB" + "CD")` 程序核心转储（预先存在，concat 相关）。影响：check_error 的拼接错误信息不可读
+- **region_check 误报（B11）**：deref 读出的 int 值被当作指针做区域逃逸检查——`v := *p; return v;` 被拦（预先存在，pts 语义需按类型过滤）
+- **float 打印精度**：float_str_bits 的舍入为简单实现（第 7 位 ≥5 时第 6 位 +1，无进位传播）——±1ulp 显示误差可接受，但依赖 int_str 修复后重新验证
+
+### float 支持实现记录（2026-08-11，对照 IEEE 754 / SysV 标准实现）
+
+- 字面量：decimal → binary64 位模式（纯整数算法，≤18 位有效数字，±1ulp）
+- 算术：addsd/subsd/mulsd/divsd（F2 0F 5x C1）；比较：comisd + setcc 无符号标志
+- 转换：IR_I2F/IR_F2I（cvtsi2sd/cvttsd2si）+ float 运算 int 操作数隐式转换
+- 参数/返回：SysV XMM0-7（int/float 独立编号）+ XMM0 返回 + 栈参数（float 超 8）
+- 打印：float_str_bits（位模式 → 十进制，长除 + 去尾零）
+- 验证：O0/O1/O2 运行全部通过；待办：float 打印精度（int_str 修复后）、f32 单精度、printf 风格最短表示

@@ -267,8 +267,9 @@ fn emit_alloc_body(buf: string, pos: int, bss_va: int, globals_size: int) -> int
     }
     // cmp rdx, [rcx] -- 48 3B 11
     w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 59); w8(buf, pos+cp+2, 17); cp = cp + 3;
-    // jbe +14 (skip call+reload+jmp if within bounds) -- 76 0E
-    w8(buf, pos+cp, 118); w8(buf, pos+cp+1, 14); cp = cp + 2;
+    // jbe +17 (skip call+reload+rdi+jmp if within bounds)
+    // 修复：原 +14 漏了 mov rdi,r9（3 字节）→ 跳到指令中间（0xf9）→ 死循环
+    w8(buf, pos+cp, 118); w8(buf, pos+cp+1, 17); cp = cp + 2;
     // call heap_expand -- E8 xx xx xx xx (patched in elf_gen after heap_expand emitted)
     g_heap_expand_call_pos = pos + cp;
     e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;
@@ -1078,7 +1079,14 @@ fn elf_gen(buf: string) -> int {
         pc2 := r64(g_ir_func_param_count, fi * 8);
 
         fsz := r64(g_x86_func_code_sz, fi * 8);
+        // SysV 16 字节对齐（发现 11）：call 后 rsp%16=8；
+        // opt≥1 有 6 个 push（rbx,r12-15,rbp）→ rsp%16=8 → size 需 ≡8 (mod 16)；
+        // opt<1 有 1 个 push（rbp）→ rsp%16=0 → size 需 ≡0 (mod 16)。
         g_x86_emit_stack_size = vc2 * 8;
+        if (g_x86_emit_stack_size % 16 == 0 && g_opt_level >= 1) ||
+           (g_x86_emit_stack_size % 16 == 8 && g_opt_level < 1) {
+            g_x86_emit_stack_size = g_x86_emit_stack_size + 8;
+        }
         total_code = total_code + sz_push_rbp() + sz_mov_rbp_rsp();
         if g_opt_level >= 1 { total_code = total_code + 18; }  // push rbx,r12-r15(9) + pop r15-r12,rbx(9)
         ss_dry := g_x86_emit_stack_size;
@@ -1195,7 +1203,12 @@ fi = 0; loop { if fi >= g_ir_func_count { break; }
         g2_init();
         g_current_func_var_start = vs;
         vi := 0; loop { if vi >= vc { break; } g2_slot(vs + vi); vi = vi + 1; }
+        // SysV 16 字节对齐（发现 11）：与 dry run 相同的对齐规则
         g_x86_emit_stack_size = vc * 8;
+        if (g_x86_emit_stack_size % 16 == 0 && g_opt_level >= 1) ||
+           (g_x86_emit_stack_size % 16 == 8 && g_opt_level < 1) {
+            g_x86_emit_stack_size = g_x86_emit_stack_size + 8;
+        }
 
         // Init label state for single-pass backpatching (-1 = not yet seen)
         li2 : ., mut = 0;
@@ -1225,17 +1238,43 @@ fi = 0; loop { if fi >= g_ir_func_count { break; }
         // Save register and caller-stack params into this function's slots.
         pi := 0; loop { if pi >= pc { break; }
             po2 := -(vs + pi + 1 - g_current_func_var_start) * 8;  // force stack slot, ignore reg alloc
-            if pi == 0 { cp = cp + e2_st(buf, cp, 7, po2); }
-            if pi == 1 { w8(buf, cp, 72); w8(buf, cp+1, 137); w8(buf, cp+2, 117); w8(buf, cp+3, po2); cp = cp + 4; }
-            if pi == 2 { w8(buf, cp, 72); w8(buf, cp+1, 137); w8(buf, cp+2, 85); w8(buf, cp+3, po2); cp = cp + 4; }
-            if pi == 3 { w8(buf, cp, 72); w8(buf, cp+1, 137); w8(buf, cp+2, 77); w8(buf, cp+3, po2); cp = cp + 4; }
-            if pi == 4 { w8(buf, cp, 76); w8(buf, cp+1, 137); w8(buf, cp+2, 69); w8(buf, cp+3, po2); cp = cp + 4; }
-            if pi == 5 { w8(buf, cp, 76); w8(buf, cp+1, 137); w8(buf, cp+2, 77); w8(buf, cp+3, po2); cp = cp + 4; }
-            if pi >= 6 {
+            pty := irv_type(vs + pi);
+            if pty == TI_FLOAT && pi < 6 {
+                // float 参数在 XMM：movsd [rbp+po2], xmm{frn}（SysV）
+                // frn = 第 pi 个参数前的 float 参数数
+                frn : ., mut = 0;
+                fj : ., mut = 0;
+                loop { if fj >= pi { break; }
+                    if irv_type(vs + fj) == TI_FLOAT { frn = frn + 1; }
+                    fj = fj + 1; }
+                if frn < 8 {
+                    // movsd [rbp+po2], xmm{frn} — F2 0F 11 /rn（mod=01, rm=5）
+                    w8(buf, cp, 242); w8(buf, cp+1, 15); w8(buf, cp+2, 17);
+                    w8(buf, cp+3, 64 + frn * 8 + 5); w8(buf, cp+4, po2); cp = cp + 5;
+                } else {
+                    // 9+ float 参数在栈上（边缘场景，位置布局简化处理）
+                    caller_off := 16 + (pi - 6) * 8;
+                    if g_opt_level >= 1 { caller_off = caller_off + 40; }
+                    cp = cp + e2_sd_load(buf, cp, caller_off);
+                    cp = cp + e2_sd_store(buf, cp, po2);
+                }
+            } else if pi >= 6 {
                 caller_off := 16 + (pi - 6) * 8;
                 if g_opt_level >= 1 { caller_off = caller_off + 40; }
-                cp = cp + e2_ld(buf, cp, 10, caller_off);
-                cp = cp + e2_st(buf, cp, 10, po2);
+                if pty == TI_FLOAT {
+                    cp = cp + e2_sd_load(buf, cp, caller_off);
+                    cp = cp + e2_sd_store(buf, cp, po2);
+                } else {
+                    cp = cp + e2_ld(buf, cp, 10, caller_off);
+                    cp = cp + e2_st(buf, cp, 10, po2);
+                }
+            } else {
+                if pi == 0 { cp = cp + e2_st(buf, cp, 7, po2); }
+                if pi == 1 { w8(buf, cp, 72); w8(buf, cp+1, 137); w8(buf, cp+2, 117); w8(buf, cp+3, po2); cp = cp + 4; }
+                if pi == 2 { w8(buf, cp, 72); w8(buf, cp+1, 137); w8(buf, cp+2, 85); w8(buf, cp+3, po2); cp = cp + 4; }
+                if pi == 3 { w8(buf, cp, 72); w8(buf, cp+1, 137); w8(buf, cp+2, 77); w8(buf, cp+3, po2); cp = cp + 4; }
+                if pi == 4 { w8(buf, cp, 76); w8(buf, cp+1, 137); w8(buf, cp+2, 69); w8(buf, cp+3, po2); cp = cp + 4; }
+                if pi == 5 { w8(buf, cp, 76); w8(buf, cp+1, 137); w8(buf, cp+2, 77); w8(buf, cp+3, po2); cp = cp + 4; }
             }
         pi = pi + 1; }
 

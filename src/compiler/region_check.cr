@@ -37,8 +37,11 @@ fn rc_pts_has_escaped(pts: int, ni: int, nstart: int) -> int {
     bi : ., mut = 0;
     loop { if bi >= 64 { break; }
         if (pts / mask) % 2 == 1 {
-            alloc_seq := bi + nstart;
-            alloc_sg := alloc_seq_to_sg(alloc_seq);
+            // 修复 3 配套：pts 位号 = 全局 alloc 序号（g_pa_alloc_count），
+            // 经映射表查 DF 节点序号（旧代码 bi+nstart 是错误语义——alloc 序号
+            // 不是"函数内第 nstart+bi 个节点"）。
+            alloc_node := r64(g_pa_alloc_nodes, bi * 8);
+            alloc_sg := alloc_seq_to_sg(alloc_node);
             deref_sg := subgraph_containing(ni);
             if alloc_sg >= 0 && deref_sg >= 0 {
                 alloc_exit := r64(g_sgs, alloc_sg * ESZ_SG + OFF_SG_EXIT);
@@ -66,8 +69,8 @@ fn rc_return_escape(ni: int, s1: int, nstart: int) {
     bi : ., mut = 0;
     loop { if bi >= 64 { break; }
         if (pts / mask) % 2 == 1 {
-            alloc_seq := bi + nstart;
-            alloc_sg := alloc_seq_to_sg(alloc_seq);
+            alloc_node := r64(g_pa_alloc_nodes, bi * 8);
+            alloc_sg := alloc_seq_to_sg(alloc_node);
             if alloc_sg >= 0 {
                 alloc_sg_kind := r64(g_sgs, alloc_sg * ESZ_SG + OFF_SG_KIND);
                 if alloc_sg_kind == SG_FUNC {  // function-level alloc = ok to return
@@ -112,8 +115,8 @@ fn region_check_func(nstart: int, ncount: int) {
                 bi : ., mut = 0;
                 loop { if bi >= 64 { break; }
                     if (pts / mask) % 2 == 1 {
-                        alloc_seq := bi + nstart;
-                        alloc_sg := alloc_seq_to_sg(alloc_seq);
+                        alloc_node := r64(g_pa_alloc_nodes, bi * 8);
+                        alloc_sg := alloc_seq_to_sg(alloc_node);
                         deref_sg := subgraph_containing(ni);
                         if alloc_sg >= 0 && deref_sg >= 0 {
                             alloc_exit := r64(g_sgs, alloc_sg * ESZ_SG + OFF_SG_EXIT);

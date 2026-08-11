@@ -40,6 +40,16 @@ fn grow_alloc_pts(n: int) {
     g_alloc_pts = nb; g_alloc_pts_cap = nc;
 }
 
+fn grow_pa_alloc_nodes(n: int) {
+    if n < g_pa_alloc_nodes_cap { return; }
+    nc := g_pa_alloc_nodes_cap;
+    if nc == 0 { nc = 16; }
+    loop { if nc > n { break; } nc = nc * 2; }
+    nb := alloc(nc * 8);
+    if g_pa_alloc_nodes_cap > 0 { _dyncpy(g_pa_alloc_nodes, g_pa_alloc_nodes_cap * 8, nb); }
+    g_pa_alloc_nodes = nb; g_pa_alloc_nodes_cap = nc;
+}
+
 // Set a bit in a pts bitmap at given index
 fn pa_set_bit(bitmap: int, bitpos: int) -> int {
     // bitpos: which bit to set (0-63)
@@ -192,10 +202,21 @@ fn ptr_analysis_func(nstart: int, ncount: int, vstart: int, vcount: int) {
 
             if d >= 0 {
                 // Addr: ALLOC/REF/ADDR_INDEX → self-pointer
-                if op == IR_ALLOC || op == IR_ALLOC_STRUCT || op == IR_ALLOC_ARRAY {
+                if op == IR_ALLOC_STRUCT || op == IR_ALLOC_ARRAY {
+                    // 修复 12：IR_ALLOC（标量变量槽标记，不发射代码）不是堆分配，
+                    // 不参与 pts 追踪——修复前它被分配 pts 位，导致 p = &arr[i]
+                    // 的 pts 含变量槽的位（多个 alloc 位污染）→ s3 取错 alloc。
                     if r64(g_pts, d * 8) == 0 {
-                        w64(g_pts, d * 8, 1);
-                        changed = 1;
+                        // 修复 3：每个 alloc 分配递增位号（bit = alloc_seq），并登记
+                        // alloc_seq → DF 节点序号。修复前恒设 bit 0——所有 alloc 别名
+                        // 串扰，provenance 的 get_alloc_size(0) 查到节点 0 → 检查永远不生成。
+                        if g_pa_alloc_count < 64 {
+                            grow_pa_alloc_nodes(g_pa_alloc_count + 1);
+                            w64(g_pa_alloc_nodes, g_pa_alloc_count * 8, ni);
+                            w64(g_pts, d * 8, pa_set_bit(0, g_pa_alloc_count));
+                            g_pa_alloc_count = g_pa_alloc_count + 1;
+                            changed = 1;
+                        }
                     }
                     w64(g_offsets, d * 8, 0);
                 }
@@ -208,7 +229,26 @@ fn ptr_analysis_func(nstart: int, ncount: int, vstart: int, vcount: int) {
 
                 if op == IR_ADDR_INDEX && s1 >= 0 {
                     if pa_merge_pts(d, s1) != 0 { changed = 1; }
-                    w64(g_offsets, d * 8, r64(g_offsets, s1 * 8));
+                    // offset 由索引 s2 决定：常量索引可精确计算（idx*8），
+                    // 运行时索引 → 未知（-1），迫使 provenance_verify 生成运行时检查。
+                    // 修复前：无条件传播 s1 的 offset（数组=0），运行时越界被误判为
+                    // 编译期安全 → 越界裸读（见 docs/compcert-reference.md 审查记录）。
+                    base_off := r64(g_offsets, s1 * 8);
+                    idx_val : int = -1;
+                    if s2 >= 0 {
+                        prod := r64(g_df_var_producer, s2 * 8);
+                        if prod >= 0 {
+                            prod_op := r64(g_df_nodes, prod * ESZ_DFNODE + OFF_DF_OPCODE);
+                            if prod_op == IR_CONST {
+                                idx_val = r64(g_df_nodes, prod * ESZ_DFNODE + OFF_DF_S1);
+                            }
+                        }
+                    }
+                    if idx_val >= 0 && base_off >= 0 {
+                        w64(g_offsets, d * 8, base_off + idx_val * 8);
+                    } else {
+                        w64(g_offsets, d * 8, -1);
+                    }
                 }
 
                 // BINARY with PTR ops: propagate with offset
@@ -234,11 +274,15 @@ fn ptr_analysis_func(nstart: int, ncount: int, vstart: int, vcount: int) {
                     }
                 }
 
-                // Copy: LOAD/STORE propagate pts along def-use
-                if (op == IR_LOAD || op == IR_STORE) && s1 >= 0 {
+                // LOAD: d ← s1 拷贝传播
+                if op == IR_LOAD && s1 >= 0 {
                     if pa_merge_pts(d, s1) != 0 { changed = 1; }
                     w64(g_offsets, d * 8, r64(g_offsets, s1 * 8));
                 }
+                // STORE: s1 ← s2 拷贝传播。修复 4：IR_STORE 的 dest 恒为 -1，
+                // 原代码把 STORE 混进 LOAD 分支（用 d 传播）→ 永不执行 →
+                // p = &arr[i] 的 offset 丢失 → 越界检查被跳过。
+                // 注意：此分支必须在 if d >= 0 块外（d 恒为 -1）。
 
                 // PHI: merge pts from both predecessors (implicit flow)
                 if op == IR_PHI {
@@ -251,6 +295,12 @@ fn ptr_analysis_func(nstart: int, ncount: int, vstart: int, vcount: int) {
                 if op == IR_CALL {
                     w64(g_offsets, d * 8, 0);
                 }
+            }
+
+            // Store: s1 ← s2 拷贝传播（IR_STORE 的 d 恒为 -1，必须在 if d >= 0 块外）
+            if op == IR_STORE && s1 >= 0 && s2 >= 0 {
+                if pa_merge_pts(s1, s2) != 0 { changed = 1; }
+                w64(g_offsets, s1 * 8, r64(g_offsets, s2 * 8));
             }
 
             // Store: *p = v (Andersen store rule) — s1=ptr, s2=val

@@ -262,6 +262,86 @@ fn e2_alu(b: string, p: int, op: int) -> int {
     return cp - p;
 }
 
+// ── SSE2 double 运算（IEEE 754 标准，float 支持）──
+// movsd xmm0, [rbp+disp] — F2 0F 10 /0
+fn e2_sd_load(b: string, p: int, o: int) -> int {
+    cp := p;
+    w8(b, cp, 242); w8(b, cp+1, 15); w8(b, cp+2, 16); cp = cp + 3;
+    if o >= -128 && o <= 127 {
+        w8(b, cp, 69); w8(b, cp+1, o); cp = cp + 2;      // ModRM 01 000 101
+    } else {
+        w8(b, cp, 133); cp = cp + 1;                     // ModRM 10 000 101
+        cp = cp + e2_w32(b, cp, o);
+    }
+    return cp - p;
+}
+// movsd xmm1, [rbp+disp] — F2 0F 10 /1
+fn e2_sd_load1(b: string, p: int, o: int) -> int {
+    cp := p;
+    w8(b, cp, 242); w8(b, cp+1, 15); w8(b, cp+2, 16); cp = cp + 3;
+    if o >= -128 && o <= 127 {
+        w8(b, cp, 77); w8(b, cp+1, o); cp = cp + 2;      // ModRM 01 001 101
+    } else {
+        w8(b, cp, 141); cp = cp + 1;                     // ModRM 10 001 101
+        cp = cp + e2_w32(b, cp, o);
+    }
+    return cp - p;
+}
+// movsd xmm{rn}, [rbp+disp] — F2 0F 10 /rn（rn=0..7，SysV float 参数）
+fn e2_sd_load_x(b: string, p: int, o: int, rn: int) -> int {
+    cp := p;
+    w8(b, cp, 242); w8(b, cp+1, 15); w8(b, cp+2, 16); cp = cp + 3;
+    if o >= -128 && o <= 127 {
+        w8(b, cp, 64 + rn * 8 + 5); w8(b, cp+1, o); cp = cp + 2;
+    } else {
+        w8(b, cp, 128 + rn * 8 + 5); cp = cp + 1;
+        cp = cp + e2_w32(b, cp, o);
+    }
+    return cp - p;
+}
+
+// 存返回值到 dest：float → movsd [slot], xmm0（SysV XMM0 返回）；int → rax
+fn e2_store_ret(b: string, p: int, d: int) -> int {
+    if d >= 0 && irv_type(d) == TI_FLOAT {
+        return e2_sd_store(b, p, g2_slot(d));
+    }
+    return e2_st(b, p, 0, g2_slot(d));
+}
+
+// 压栈 float（8 字节）：sub rsp,8 + movsd [rsp],xmm0
+fn e2_push_xmm0(b: string, p: int) -> int {
+    cp := p;
+    w8(b, cp, 72); w8(b, cp+1, 131); w8(b, cp+2, 236); w8(b, cp+3, 8); cp = cp + 4;
+    w8(b, cp, 242); w8(b, cp+1, 15); w8(b, cp+2, 17); w8(b, cp+3, 4); w8(b, cp+4, 36); cp = cp + 5;
+    return cp - p;
+}
+
+// cvtsi2sd xmm0, [rbp+disp] — F2 0F 2A /0（int→float 转换）
+fn e2_sd_cvt(b: string, p: int, o: int) -> int {
+    cp := p;
+    w8(b, cp, 242); w8(b, cp+1, 15); w8(b, cp+2, 42); cp = cp + 3;
+    if o >= -128 && o <= 127 {
+        w8(b, cp, 69); w8(b, cp+1, o); cp = cp + 2;      // ModRM 01 000 101
+    } else {
+        w8(b, cp, 133); cp = cp + 1;                     // ModRM 10 000 101
+        cp = cp + e2_w32(b, cp, o);
+    }
+    return cp - p;
+}
+
+// movsd [rbp+disp], xmm0 — F2 0F 11 /0
+fn e2_sd_store(b: string, p: int, o: int) -> int {
+    cp := p;
+    w8(b, cp, 242); w8(b, cp+1, 15); w8(b, cp+2, 17); cp = cp + 3;
+    if o >= -128 && o <= 127 {
+        w8(b, cp, 69); w8(b, cp+1, o); cp = cp + 2;
+    } else {
+        w8(b, cp, 133); cp = cp + 1;
+        cp = cp + e2_w32(b, cp, o);
+    }
+    return cp - p;
+}
+
 // ── emit_instr: write one instruction to buffer, return bytes written ──
 
 fn e2_load_var(buf: string, pos: int, reg: int, var_idx: int) -> int {
@@ -302,6 +382,24 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
 
     if op == IR_NOP { return 0; }
 
+    if op == IR_I2F && d >= 0 {
+        // int → float：cvtsi2sd xmm0, [rbp+disp] — F2 0F 2A /0，然后 movsd 存回
+        do2 := g2_slot(d);
+        cp = cp + e2_sd_cvt(buf, pos+cp, g2_slot(s1));   // cvtsi2sd xmm0, [s1]
+        cp = cp + e2_sd_store(buf, pos+cp, do2);
+        return cp;
+    }
+
+    if op == IR_F2I && d >= 0 {
+        // float → int：movsd xmm0, [s1]；cvttsd2si rax, xmm0（F2 48 0F 2C C0）；存回
+        do2 := g2_slot(d);
+        cp = cp + e2_sd_load(buf, pos+cp, g2_slot(s1));
+        w8(buf, pos+cp, 242); w8(buf, pos+cp+1, 72); w8(buf, pos+cp+2, 15);
+        w8(buf, pos+cp+3, 44); w8(buf, pos+cp+4, 192); cp = cp + 5;
+        cp = cp + e2_st(buf, pos+cp, 0, do2);
+        return cp;
+    }
+
     if op == IR_CONST && d >= 0 {
         do2 := g2_slot(d);
         if ti == TI_STR {
@@ -321,6 +419,35 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
 
     if op == IR_BINARY {
         do2 := g2_slot(d);
+        if ti == TI_FLOAT {
+            // float 运算（SSE2 double，IEEE 754）——标准答案实现
+            cp = cp + e2_sd_load(buf, pos+cp, g2_slot(s1));   // xmm0 = s1
+            cp = cp + e2_sd_load1(buf, pos+cp, g2_slot(s2));  // xmm1 = s2
+            // F2 0F 5x C1：addsd/subsd/mulsd/divsd xmm0, xmm1
+            if s3 == OP_ADD { w8(buf, pos+cp, 242); w8(buf, pos+cp+1, 15); w8(buf, pos+cp+2, 88); w8(buf, pos+cp+3, 193); cp = cp + 4; }
+            else if s3 == OP_SUB { w8(buf, pos+cp, 242); w8(buf, pos+cp+1, 15); w8(buf, pos+cp+2, 92); w8(buf, pos+cp+3, 193); cp = cp + 4; }
+            else if s3 == OP_MUL { w8(buf, pos+cp, 242); w8(buf, pos+cp+1, 15); w8(buf, pos+cp+2, 89); w8(buf, pos+cp+3, 193); cp = cp + 4; }
+            else if s3 == OP_DIV { w8(buf, pos+cp, 242); w8(buf, pos+cp+1, 15); w8(buf, pos+cp+2, 94); w8(buf, pos+cp+3, 193); cp = cp + 4; }
+            if s3 >= OP_ADD && s3 <= OP_DIV {
+                cp = cp + e2_sd_store(buf, pos+cp, do2);
+            } else if s3 >= OP_EQ && s3 <= OP_GE {
+                // float 比较：comisd xmm0, xmm1 — 66 0F 2F C1，用无符号标志
+                // （IEEE 754：< → CF=1；== → ZF=1；> → CF=0&&ZF=0）
+                // 比较结果是 int（0/1），用整数路径存储
+                w8(buf, pos+cp, 102); w8(buf, pos+cp+1, 15); w8(buf, pos+cp+2, 47); w8(buf, pos+cp+3, 193); cp = cp + 4;
+                sop : ., mut = 148;  // sete
+                if s3 == OP_NE { sop = 149; }
+                else if s3 == OP_LT { sop = 146; }   // setb（CF）
+                else if s3 == OP_GT { sop = 151; }   // seta（CF=0 && ZF=0）
+                else if s3 == OP_LE { sop = 150; }   // setbe
+                else if s3 == OP_GE { sop = 147; }   // setae
+                w8(buf, pos+cp, 15); w8(buf, pos+cp+1, sop); w8(buf, pos+cp+2, 192); cp = cp + 3;
+                // movzx r10d, al — 44 0F B6 D0
+                w8(buf, pos+cp, 68); w8(buf, pos+cp+1, 15); w8(buf, pos+cp+2, 182); w8(buf, pos+cp+3, 208); cp = cp + 4;
+                cp = cp + e2_st(buf, pos+cp, 10, do2);
+            }
+            return cp;
+        }
         cp = cp + e2_load_var(buf, pos+cp, 10, s1);
         cp = cp + e2_load_var(buf, pos+cp, 11, s2);
         if s3 == OP_ADD         { cp = cp + e2_alu(buf, pos+cp, 1); }
@@ -420,19 +547,51 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
 
     if op == IR_CALL {
         fa := s1; ac := s2;
+        // SysV AMD64 参数分派：int 用 ir（0-5 → rdi,rsi,rdx,rcx,r8,r9），
+        // float 用 fr（0-7 → xmm0-7），各自独立编号（标准答案）
+        // 第一遍：寄存器参数（位置顺序，左到右）
+        ir_cnt : ., mut = 0; fr_cnt : ., mut = 0;
         ai := 0;
-        loop { if ai >= ac { break; } if ai >= 6 { break; }
-            r := -1;
-            if ai == 0 { r = 7; } if ai == 1 { r = 6; } if ai == 2 { r = 2; } if ai == 3 { r = 1; } if ai == 4 { r = 8; } if ai == 5 { r = 9; }
-            if r >= 0 { cp = cp + e2_load_var(buf, pos+cp, r, fa + ai); }
+        loop { if ai >= ac { break; }
+            pt := irv_type(fa + ai);
+            if pt == TI_FLOAT {
+                if fr_cnt < 8 {
+                    cp = cp + e2_sd_load_x(buf, pos+cp, g2_slot(fa + ai), fr_cnt);
+                    fr_cnt = fr_cnt + 1;
+                }
+            } else {
+                if ir_cnt < 6 {
+                    r := -1;
+                    if ir_cnt == 0 { r = 7; } if ir_cnt == 1 { r = 6; } if ir_cnt == 2 { r = 2; }
+                    if ir_cnt == 3 { r = 1; } if ir_cnt == 4 { r = 8; } if ir_cnt == 5 { r = 9; }
+                    cp = cp + e2_load_var(buf, pos+cp, r, fa + ai);
+                    ir_cnt = ir_cnt + 1;
+                }
+            }
         ai = ai + 1; }
-        // System V AMD64 passes the 7th and later arguments on the stack,
-        // rightmost first, so argument 7 is closest to the return address.
+        // 第二遍：栈参数（右到左压，第 7 个 int / 第 9 个 float 超限才压）
+        stack_total : ., mut = 0;
         stack_ai : ., mut = ac - 1;
         loop {
-            if stack_ai < 6 { break; }
-            cp = cp + e2_load_var(buf, pos+cp, 10, fa + stack_ai);
-            e2_w8(buf, pos+cp, 65); e2_w8(buf, pos+cp+1, 82); cp = cp + 2;  // push r10
+            if stack_ai < 0 { break; }
+            ic2 : ., mut = 0; fc2 : ., mut = 0;
+            j2 : ., mut = 0;
+            loop { if j2 >= stack_ai { break; }
+                if irv_type(fa + j2) == TI_FLOAT { fc2 = fc2 + 1; } else { ic2 = ic2 + 1; }
+                j2 = j2 + 1; }
+            if irv_type(fa + stack_ai) == TI_FLOAT {
+                if fc2 >= 8 {
+                    cp = cp + e2_sd_load_x(buf, pos+cp, g2_slot(fa + stack_ai), 0);
+                    cp = cp + e2_push_xmm0(buf, pos+cp);
+                    stack_total = stack_total + 1;
+                }
+            } else {
+                if ic2 >= 6 {
+                    cp = cp + e2_load_var(buf, pos+cp, 10, fa + stack_ai);
+                    e2_w8(buf, pos+cp, 65); e2_w8(buf, pos+cp+1, 82); cp = cp + 2;  // push r10
+                    stack_total = stack_total + 1;
+                }
+            }
             stack_ai = stack_ai - 1;
         }
         // Match builtins by interned string index (integer compare, no str_eq)
@@ -443,12 +602,12 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
             cp = cp + e2_mov(buf, pos+cp, 2, 1);
             // syscall: 2-byte 0x0F 0x05
             e2_w8(buf, pos+cp, 15); e2_w8(buf, pos+cp+1, 5); cp = cp + 2;
-            if d >= 0 { cp = cp + e2_st(buf, pos+cp, 0, g2_slot(d)); }
+            if d >= 0 { cp = cp + e2_store_ret(buf, pos+cp, d); }
         } else if s3 == g_ni_load8 {
             // movzx rax, byte [rdi+rsi] — REX.W + 0x0FB6 + SIB
             cp = cp + emit_rex(buf, pos+cp, 1, 0, 0, 0); e2_w8(buf, pos+cp, 15); cp = cp + 1; e2_w8(buf, pos+cp, 182); cp = cp + 1;
             cp = cp + emit_modrm(buf, pos+cp, 0, 0, 4); cp = cp + emit_sib(buf, pos+cp, 0, 6, 7);
-            if d >= 0 { cp = cp + e2_st(buf, pos+cp, 0, g2_slot(d)); }
+            if d >= 0 { cp = cp + e2_store_ret(buf, pos+cp, d); }
         } else if s3 == g_ni_store8 {
             // mov [rdi+rsi], dl — 0x88 + SIB (3rd arg in rdx = register 2)
             e2_w8(buf, pos+cp, 136); cp = cp + 1; cp = cp + emit_modrm(buf, pos+cp, 0, 2, 4); cp = cp + emit_sib(buf, pos+cp, 0, 6, 7);
@@ -457,7 +616,7 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
             // mov rax, [rdi+rsi] — REX.W + 0x8B + SIB
             cp = cp + emit_rex(buf, pos+cp, 1, 0, 0, 0); e2_w8(buf, pos+cp, 139); cp = cp + 1;
             cp = cp + emit_modrm(buf, pos+cp, 0, 0, 4); cp = cp + emit_sib(buf, pos+cp, 0, 6, 7);
-            if d >= 0 { cp = cp + e2_st(buf, pos+cp, 0, g2_slot(d)); }
+            if d >= 0 { cp = cp + e2_store_ret(buf, pos+cp, d); }
         } else if s3 == g_ni_store_str_ptr {
             // mov [rdi + rsi], rdx
             // mov [rdi+rsi], rdx — REX.W + 0x89 + SIB
@@ -521,7 +680,7 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
             // test dl, dl
             e2_w8(buf, pos+cp, 132); cp = cp + 1; cp = cp + emit_modrm(buf, pos+cp, 3, 2, 2);
             e2_w8(buf, pos+cp, 117); e2_w8(buf, pos+cp+1, 241); cp = cp + 2;  // jne copy_loop
-            if d >= 0 { cp = cp + e2_st(buf, pos+cp, 0, g2_slot(d)); }
+            if d >= 0 { cp = cp + e2_store_ret(buf, pos+cp, d); }
         } else if s3 == g_ni_w64 {
             // w64(buf, pos, val) → mov [rsi+rdi??], rdx
             // Actually args: rdi=buf, rsi=pos, rdx=val
@@ -583,13 +742,13 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
                 g_x86_ext_rel_count = g_x86_ext_rel_count + 1;
                 cp = cp + e2_call(buf, pos+cp, 0);
             }
-            if d >= 0 { cp = cp + e2_st(buf, pos+cp, 0, g2_slot(d)); }
+            if d >= 0 { cp = cp + e2_store_ret(buf, pos+cp, d); }
         } else {
             // xor eax, eax
             e2_w8(buf, pos+cp, 49); e2_w8(buf, pos+cp+1, 192); cp = cp + 2;
-            if d >= 0 { cp = cp + e2_st(buf, pos+cp, 0, g2_slot(d)); }
+            if d >= 0 { cp = cp + e2_store_ret(buf, pos+cp, d); }
         }
-        stack_count := ac - 6;
+        stack_count := stack_total;   // 实际压栈数（int 超 6 + float 超 8）
         if stack_count > 0 {
             stack_bytes := stack_count * 8;
             if stack_bytes <= 127 {
@@ -665,7 +824,10 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
 
     if op == IR_RETURN {
         if s1 >= 0 {
-            if r64(g_x86_is_global, s1 * 8) != 0 {
+            if irv_type(s1) == TI_FLOAT {
+                // float 返回：movsd xmm0, [slot]（SysV 返回值在 XMM0）
+                cp = cp + e2_sd_load(buf, pos+cp, g2_slot(s1));
+            } else if r64(g_x86_is_global, s1 * 8) != 0 {
                 // Global: load via RIP-relative into rax
                 grow_rip_patch(g_x86_rip_patch_count + 1);
                 w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, pos + cp + 3);
@@ -858,12 +1020,13 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
             // jne .safe (skip ud2 if non-null)
             safe_jmp_pos := pos+cp;
             e2_w8(buf, pos+cp, 117); e2_w8(buf, pos+cp+1, 0); cp = cp + 2;  // placeholder
-            // .crash: ud2
-            w8(buf, cp, 15); w8(buf, cp+1, 11); cp = cp + 2;
-            // Patch jae to jump here
-            e2_w32(buf, crash_jmp_pos + 2, (pos+cp) - (crash_jmp_pos + 6));
-            // Patch jne to jump past ud2 to .safe
-            w8(buf, safe_jmp_pos + 1, (pos+cp) - (safe_jmp_pos + 2) + 2);
+            // .crash: ud2（必须写 pos+cp 绝对位置——修复前写 buf[cp] 污染函数头）
+            e2_w8(buf, pos+cp, 15); e2_w8(buf, pos+cp+1, 11); cp = cp + 2;
+            // Patch jae to jump to ud2 (crash): target = crash_jmp_pos+6+3+2
+            // (jae 6 + test 3 + jne 2 = ud2 起点)。修复前跳到 .safe，越界不崩溃。
+            e2_w32(buf, crash_jmp_pos + 2, (pos+cp) - (crash_jmp_pos + 6) - 2);
+            // Patch jne to jump past ud2 to .safe（修复前多 +2，跳到指令中间）
+            w8(buf, safe_jmp_pos + 1, (pos+cp) - (safe_jmp_pos + 2));
             // .safe: deref
         }
         // mov r10, [r10]

@@ -20,7 +20,7 @@ cp -r editor/nvim/plugin/*.lua    ~/.config/nvim/lua/plugins/
 |------|----------|------|
 | 语法高亮 | 自动 | `.cr`/`.cir`/`.ccr` 文件 |
 | 代码补全 | 自动 | blink.cmp 关键字 + types |
-| 代码片段 | `fn⭾` `struct⭾` 等 | 共 20+ 片段 |
+| 代码片段 | `fn` `struct` 等 | 共 20+ 片段 |
 | 诊断 | 保存时自动 | 编译器错误显示在行内 |
 | Quickfix | `:make` | 编译结果 + 错误列表 |
 | 悬浮信息 | `K` | 查看标识符定义 |

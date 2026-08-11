@@ -185,7 +185,18 @@ fail → panic
 | 外部硬件地址 | `0x7fff0000 as *int` 没有 ALLOC 节点 |
 | FFI 返回值 | 外部函数返回的指针没有 Core 的 provenance |
 | inline assembly | 汇编的输出指针没有来源 |
-| `unsafe` 类型双关 | 违反类型系统假设，编译器无法推导 |
+
+### 类型双关
+
+`*(float*)&i` **不需要 unsafe**。图的内存模型是"字节序列 + 宽度 + 边界"——provenance
+（alloc 归属）、offset（字节偏移）、alloc_size（字节大小）全部与类型无关，类型只是
+DEREF 处的"视图"。cast 在图里无节点（ir_gen 透传），provenance 边不断：
+
+- 双关合法判据 = 边界 + 宽度：`offset ∈ [0, alloc_size)` 且访问宽度不超出分配
+- 越界双关由现有 DEREF 边界检查拦截
+- 宽度检查（`off + width <= alloc_size`）待补，见 TODO 预存 bug 7
+- 编译器内部 `asp`（外部地址空间）标志在 checker 写入 TYP_PTR 但全仓库无消费点——
+  `0x... as *int` 在 safe 代码同样放行，归属待定，见 TODO 预存 bug 7
 
 `unsafe` 块内部的指针操作仍然被三点 pass 追踪。`unsafe` 不是"关掉验证"——是"标注图边界入口"。一旦进入 safe 代码，编译器重新获得追踪权。
 
@@ -217,6 +228,12 @@ Core 编译器已有数据流图（`src/compiler/dataflow.cr`）和线性扫描�
 `src/compiler/provenance_verify.cr`（ProvenanceVerify）。DEREF 后端发射 cmp+jae+ud2
 边界检查序列（s3 编码 alloc_size），运行时 prov_table 维护堆边界并 patch DEREF 检查点，
 配合 2026-07-28 的 Arena 内存模型（`src/stdlib/arena.cr`）。细节见 `TODO.md`。
+
+**更新（2026-08-10）**：设计定论——
+1. 类型双关由图自动验证（见上"类型双关"节），不需要 unsafe；宽度检查待补（TODO 预存 bug 7）
+2. **不扩展"程序内部地址直接指"（0x 字面量指内部对象）**——YAGNI：内部对象用 `&` 取址
+   更优（无漂移、类型全、验证无条件）；外部契约地址 unsafe 已够用。0x 字面量仅保留
+   unsafe 外部入口角色（上表前三行），详见 TODO 预存 bug 7
 
 ## 参考
 
