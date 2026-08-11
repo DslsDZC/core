@@ -138,6 +138,9 @@ g_plugin_rtypes : string, mut; g_plugin_rtype_count : int, mut; g_plugin_rtype_c
 // Pointer analysis storage
 g_pts : string, mut;       g_pts_count : int, mut;     g_pts_cap : int, mut;
 g_offsets : string, mut;   g_offsets_count : int, mut; g_offsets_cap : int, mut;
+// Alloc 序号 → DF 节点序号映射（修复 3：alloc pts 需要递增位号，provenance 按位号查 alloc 大小）
+g_pa_alloc_count : int, mut;
+g_pa_alloc_nodes : string, mut;   g_pa_alloc_nodes_cap : int, mut;
 
 fn grow_plugin_tags(needed: int) {
     if needed < g_plugin_tag_cap { return; }

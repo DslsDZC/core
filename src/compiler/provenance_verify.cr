@@ -3,15 +3,27 @@
 // Runs after PointerAnalysis (ptr_analysis.cr) and RegionCheck (region_check.cr).
 // Detects out-of-bounds pointer accesses at compile time.
 
-fn get_alloc_size(alloc_node_seq: int) -> int {
-    op := r64(g_df_nodes, alloc_node_seq * ESZ_DFNODE + OFF_DF_OPCODE);
-    s1 := r64(g_df_nodes, alloc_node_seq * ESZ_DFNODE + OFF_DF_S1);
-    s2 := r64(g_df_nodes, alloc_node_seq * ESZ_DFNODE + OFF_DF_S2);
-    s3 := r64(g_df_nodes, alloc_node_seq * ESZ_DFNODE + OFF_DF_S3);
+fn get_alloc_size(alloc_seq: int) -> int {
+    // 修复 3：alloc_seq 是 pts 位号（第几个 alloc），经映射表查 DF 节点序号再算大小。
+    // 修复前直接当节点序号用 → 查到节点 0 → 恒返回 -1 → 运行时检查永不生成。
+    if alloc_seq < 0 || alloc_seq >= g_pa_alloc_count { return -1; }
+    an := r64(g_pa_alloc_nodes, alloc_seq * 8);
+    op := r64(g_df_nodes, an * ESZ_DFNODE + OFF_DF_OPCODE);
+    s1 := r64(g_df_nodes, an * ESZ_DFNODE + OFF_DF_S1);
+    s3 := r64(g_df_nodes, an * ESZ_DFNODE + OFF_DF_S3);
 
-    if op == IR_ALLOC { return 8; }              // scalar = 8 bytes
-    if op == IR_ALLOC_STRUCT { return 8 + s2 * 8; }  // struct size
-    if op == IR_ALLOC_ARRAY { return s1 * s2; }       // count * element_size
+    // 修复 12：IR_ALLOC（标量变量槽标记）不是堆分配——不返回 8（修复前把
+    // 变量槽当 8 字节堆块，误报/误取 size）
+    if op == IR_ALLOC_ARRAY { return s1 * 8; }   // count * 8（元素恒 8 字节，见 instr.cr IR_ALLOC_ARRAY）
+    if op == IR_ALLOC_STRUCT {
+        // 与 instr.cr IR_ALLOC_STRUCT 一致：fc * 8（field count × 8）
+        fi : int = -1; si2 : ., mut = 0;
+        loop { if si2 >= g_struct_count { break; }
+            if si_name(si2) == s3 { fi = si2; break; }
+            si2 = si2 + 1; }
+        if fi >= 0 { return si_field_count(fi) * 8; }
+        return 8;
+    }
     return -1;  // unknown (defer to runtime check)
 }
 

@@ -1,0 +1,172 @@
+DIGEST 8816420a23d81c5ff7d074740c359321
+Ffmt_int
+R1025:1028 Stdlib.Lists.List <> <> lib
+R1030:1037 Stdlib.Arith.PeanoNat <> <> lib
+R1039:1044 Stdlib.funind.Recdef <> <> lib
+R1046:1048 Stdlib.micromega.Lia <> <> lib
+R1078:1083 Stdlib.Arith.Wf_nat <> <> lib
+R1093:1105 Stdlib.Lists.List ListNotations <> mod
+R1273:1275 Corelib.Init.Datatypes <> nat ind
+binder 1269:1269 <> n:1
+R1305:1308 Corelib.Init.Datatypes <> list ind
+R1310:1312 Corelib.Init.Datatypes <> nat ind
+R1325:1325 fmt_int <> n:1 var
+R1341:1343 Corelib.Init.Datatypes <> nil constr
+R1349:1349 Corelib.Init.Datatypes <> S constr
+R1356:1356 Corelib.Init.Datatypes <> ::list_scope:x_'::'_x not
+R1365:1369 Corelib.Init.Datatypes <> ::list_scope:x_'::'_x not
+R1358:1362 Stdlib.Arith.PeanoNat <> ::nat_scope:x_'mod'_x not
+R1357:1357 fmt_int <> n:1 var
+R1370:1379 fmt_int <> digits_rev:2 def
+R1383:1385 Stdlib.Arith.PeanoNat <> ::nat_scope:x_'/'_x not
+R1382:1382 fmt_int <> n:1 var
+binder 1269:1269 <> n:4
+binder 1269:1269 <> n:5
+binder 1269:1269 <> n:7
+R1325:1325 fmt_int <> n:7 var
+R1341:1343 Corelib.Init.Datatypes <> nil constr
+R1349:1349 Corelib.Init.Datatypes <> S constr
+R1356:1356 Corelib.Init.Datatypes <> ::list_scope:x_'::'_x not
+R1365:1369 Corelib.Init.Datatypes <> ::list_scope:x_'::'_x not
+R1358:1362 Stdlib.Arith.PeanoNat <> ::nat_scope:x_'mod'_x not
+R1357:1357 fmt_int <> n:7 var
+R1370:1379 fmt_int <> digits_rev:6 def
+R1383:1385 Stdlib.Arith.PeanoNat <> ::nat_scope:x_'/'_x not
+R1382:1382 fmt_int <> n:7 var
+binder 1269:1269 <> n:9
+binder 1269:1269 <> n:10
+R1325:1325 fmt_int <> n:10 var
+R1341:1343 Corelib.Init.Datatypes <> nil constr
+R1349:1349 Corelib.Init.Datatypes <> S constr
+R1356:1356 Corelib.Init.Datatypes <> ::list_scope:x_'::'_x not
+R1365:1369 Corelib.Init.Datatypes <> ::list_scope:x_'::'_x not
+R1358:1362 Stdlib.Arith.PeanoNat <> ::nat_scope:x_'mod'_x not
+R1357:1357 fmt_int <> n:10 var
+R1370:1379 fmt_int <> digits_rev:6 def
+R1383:1385 Stdlib.Arith.PeanoNat <> ::nat_scope:x_'/'_x not
+R1382:1382 fmt_int <> n:10 var
+binder 1292:1292 <> x:13
+R1297:1297 fmt_int <> x:13 var
+R1464:1473 Stdlib.Arith.PeanoNat Nat div_lt def
+R1464:1473 Stdlib.Arith.PeanoNat Nat div_lt def
+def 1596:1604 <> parse_fwd
+R1613:1615 Corelib.Init.Datatypes <> nat ind
+binder 1607:1609 <> acc:22
+R1624:1627 Corelib.Init.Datatypes <> list ind
+R1629:1631 Corelib.Init.Datatypes <> nat ind
+binder 1619:1620 <> ds:23
+R1636:1638 Corelib.Init.Datatypes <> nat ind
+R1651:1652 fmt_int <> ds:23 var
+R1663:1665 Corelib.Init.Datatypes <> nil constr
+R1670:1672 fmt_int <> acc:22 var
+R1679:1682 Corelib.Init.Datatypes <> ::list_scope:x_'::'_x not
+R1691:1699 fmt_int <> parse_fwd:24 def
+R1710:1712 Corelib.Init.Peano <> ::nat_scope:x_'+'_x not
+R1705:1707 Corelib.Init.Peano <> ::nat_scope:x_'*'_x not
+R1702:1704 fmt_int <> acc:22 var
+def 1820:1828 <> parse_rev
+R1836:1839 Corelib.Init.Datatypes <> list ind
+R1841:1843 Corelib.Init.Datatypes <> nat ind
+binder 1831:1832 <> ds:26
+R1848:1850 Corelib.Init.Datatypes <> nat ind
+R1863:1864 fmt_int <> ds:26 var
+R1875:1877 Corelib.Init.Datatypes <> nil constr
+R1889:1892 Corelib.Init.Datatypes <> ::list_scope:x_'::'_x not
+R1902:1904 Corelib.Init.Peano <> ::nat_scope:x_'+'_x not
+R1907:1909 Corelib.Init.Peano <> ::nat_scope:x_'*'_x not
+R1910:1918 fmt_int <> parse_rev:27 def
+def 2010:2015 <> digits
+R2022:2024 Corelib.Init.Datatypes <> nat ind
+binder 2018:2018 <> n:29
+R2029:2032 Corelib.Init.Datatypes <> list ind
+R2034:2036 Corelib.Init.Datatypes <> nat ind
+R2049:2049 fmt_int <> n:29 var
+R2065:2065 Stdlib.Lists.List ListNotations ::list_scope:'['_x_']' not
+R2067:2067 Stdlib.Lists.List ListNotations ::list_scope:'['_x_']' not
+R2078:2080 Stdlib.Lists.List <> rev def
+R2083:2092 fmt_int <> digits_rev thm
+R2094:2094 fmt_int <> n:29 var
+prf 2431:2450 <> parse_rev_digits_rev
+R2465:2467 Corelib.Init.Datatypes <> nat ind
+binder 2461:2461 <> n:31
+R2494:2496 Corelib.Init.Logic <> ::type_scope:x_'='_x not
+R2470:2478 fmt_int <> parse_rev def
+R2481:2490 fmt_int <> digits_rev thm
+R2492:2492 fmt_int <> n:31 var
+R2497:2497 fmt_int <> n:31 var
+R2538:2546 Stdlib.Arith.Wf_nat <> lt_wf_ind thm
+R2538:2546 Stdlib.Arith.Wf_nat <> lt_wf_ind thm
+R2585:2603 fmt_int <> digits_rev_equation def
+R2585:2603 fmt_int <> digits_rev_equation def
+R2585:2603 fmt_int <> digits_rev_equation def
+R2733:2751 fmt_int <> digits_rev_equation def
+R2754:2754 Corelib.Init.Datatypes <> S constr
+R2733:2751 fmt_int <> digits_rev_equation def
+R2754:2754 Corelib.Init.Datatypes <> S constr
+R2733:2751 fmt_int <> digits_rev_equation def
+R2754:2754 Corelib.Init.Datatypes <> S constr
+R2772:2778 Stdlib.Arith.PeanoNat Nat div def
+R2780:2789 Stdlib.Arith.PeanoNat Nat modulo def
+R2791:2797 Stdlib.Arith.PeanoNat Nat mul def
+R3007:3016 Stdlib.Arith.PeanoNat Nat div_lt def
+R3007:3016 Stdlib.Arith.PeanoNat Nat div_lt def
+R3238:3248 Stdlib.Arith.PeanoNat Nat div_mod thm
+R3251:3251 Corelib.Init.Datatypes <> S constr
+R3238:3248 Stdlib.Arith.PeanoNat Nat div_mod thm
+R3251:3251 Corelib.Init.Datatypes <> S constr
+R3238:3248 Stdlib.Arith.PeanoNat Nat div_mod thm
+R3251:3251 Corelib.Init.Datatypes <> S constr
+R3238:3248 Stdlib.Arith.PeanoNat Nat div_mod thm
+R3251:3251 Corelib.Init.Datatypes <> S constr
+R2772:2778 Stdlib.Arith.PeanoNat Nat div def
+R2780:2789 Stdlib.Arith.PeanoNat Nat modulo def
+R2791:2797 Stdlib.Arith.PeanoNat Nat mul def
+prf 3546:3559 <> parse_fwd_snoc
+R3577:3579 Corelib.Init.Datatypes <> nat ind
+binder 3571:3573 <> acc:32
+R3587:3590 Corelib.Init.Datatypes <> list ind
+R3592:3594 Corelib.Init.Datatypes <> nat ind
+binder 3583:3583 <> l:33
+R3602:3604 Corelib.Init.Datatypes <> nat ind
+binder 3598:3598 <> x:34
+R3634:3636 Corelib.Init.Logic <> ::type_scope:x_'='_x not
+R3610:3618 fmt_int <> parse_fwd def
+R3620:3622 fmt_int <> acc:32 var
+R3626:3629 Corelib.Init.Datatypes <> ::list_scope:x_'++'_x not
+R3625:3625 fmt_int <> l:33 var
+R3630:3630 Stdlib.Lists.List ListNotations ::list_scope:'['_x_']' not
+R3632:3632 Stdlib.Lists.List ListNotations ::list_scope:'['_x_']' not
+R3631:3631 fmt_int <> x:34 var
+R3657:3659 Corelib.Init.Peano <> ::nat_scope:x_'+'_x not
+R3652:3654 Corelib.Init.Peano <> ::nat_scope:x_'*'_x not
+R3637:3645 fmt_int <> parse_fwd def
+R3647:3649 fmt_int <> acc:32 var
+R3651:3651 fmt_int <> l:33 var
+R3660:3660 fmt_int <> x:34 var
+prf 3795:3807 <> parse_fwd_rev
+R3822:3825 Corelib.Init.Datatypes <> list ind
+R3827:3829 Corelib.Init.Datatypes <> nat ind
+binder 3818:3818 <> l:35
+R3851:3853 Corelib.Init.Logic <> ::type_scope:x_'='_x not
+R3832:3840 fmt_int <> parse_fwd def
+R3845:3847 Stdlib.Lists.List <> rev def
+R3849:3849 fmt_int <> l:35 var
+R3854:3862 fmt_int <> parse_rev def
+R3864:3864 fmt_int <> l:35 var
+R3940:3953 fmt_int <> parse_fwd_snoc thm
+R3940:3953 fmt_int <> parse_fwd_snoc thm
+R3940:3953 fmt_int <> parse_fwd_snoc thm
+prf 4212:4220 <> roundtrip
+R4235:4237 Corelib.Init.Datatypes <> nat ind
+binder 4231:4231 <> n:36
+R4262:4264 Corelib.Init.Logic <> ::type_scope:x_'='_x not
+R4240:4248 fmt_int <> parse_fwd def
+R4253:4258 fmt_int <> digits def
+R4260:4260 fmt_int <> n:36 var
+R4265:4265 fmt_int <> n:36 var
+R4296:4301 fmt_int <> digits def
+R4413:4425 fmt_int <> parse_fwd_rev thm
+R4413:4425 fmt_int <> parse_fwd_rev thm
+R4413:4425 fmt_int <> parse_fwd_rev thm
+R4485:4504 fmt_int <> parse_rev_digits_rev thm
+R4485:4504 fmt_int <> parse_rev_digits_rev thm

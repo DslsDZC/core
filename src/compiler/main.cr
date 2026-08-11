@@ -479,9 +479,16 @@ fn corec_main() -> int {
     }
 
     // === Pointer analysis + safety passes (always run, even at opt_level 0) ===
+    base_diags := g_diag_count;
     ptr_analysis_all();
     region_check_all();
     provenance_verify_all();
+    // 修复 5：编译期确定的越界（provenance 诊断）是硬错误——拦截编译。
+    // 修复前诊断只记录不拦截，越界程序照常生成。
+    if g_diag_count > base_diags {
+        print_diagnostics();
+        return 1;
+    }
 
     // === build | ccr need lower_to_ccr ===
     if g_opt_level >= 1 {

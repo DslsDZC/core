@@ -43,6 +43,10 @@ fn buf_write_i32(buf: string, pos: int, val: int) {
     w32(buf, pos, val);
 }
 
+fn buf_write_i64(buf: string, pos: int, val: int) {
+    w64(buf, pos, val);
+}
+
 fn buf_read_u32(buf: string, pos: int) -> int {
     b0 := load8(buf, pos);
     b1 := load8(buf, pos + 1);
@@ -76,6 +80,7 @@ fn buf_read_i64(buf: string, pos: int) -> int {
     h3 := load8(buf, pos + 7);
     hi : ., mut = h0 + h1 * 256 + h2 * 65536;
     if h3 >= 128 { hi = hi + (h3 - 256) * 16777216; }
+    else { hi = hi + h3 * 16777216; }   // 修复 15：h3 < 128 时漏加 h3×2^24 → bit 56-62 丢失
     // Keep the factor within the parser's supported integer-literal range.
     hi_part := hi * 65536;
     hi_part = hi_part * 65536;
@@ -97,7 +102,7 @@ fn calc_ccr_size() -> int {
     }
 
     sz = sz + g_ir_func_count * 28;       // func meta
-    sz = sz + g_ir_instr_count * 24;       // instrs
+    sz = sz + g_ir_instr_count * 28;       // instrs（s1 为 64 位）
     sz = sz + g_ir_var_count * 12;         // vars
     sz = sz + g_ir_str_const_count * 4;    // str_consts
 
@@ -202,7 +207,9 @@ fn save_ccr(path: string) -> int {
         if ii >= g_ir_instr_count { break; }
         buf_write_u32(buf, pos, iri_op(ii)); pos = pos + 4;
         buf_write_i32(buf, pos, iri_dest(ii)); pos = pos + 4;
-        buf_write_i32(buf, pos, iri_s1(ii)); pos = pos + 4;
+        // 修复 14：s1 改 64 位——IR_CONST 的大 int 常量 / float 位模式
+        // 之前被截断成 32 位（float 常量静默损坏）
+        buf_write_i64(buf, pos, iri_s1(ii)); pos = pos + 8;
         buf_write_i32(buf, pos, iri_s2(ii)); pos = pos + 4;
         buf_write_i32(buf, pos, iri_s3(ii)); pos = pos + 4;
         buf_write_u32(buf, pos, iri_tk(ii)); pos = pos + 4;
@@ -406,7 +413,7 @@ fn load_ccr(data: string, fsize: int) -> int {
         if ii >= instr_cnt { break; }
         opcode := buf_read_u32(data, pos); pos = pos + 4;
         dest := buf_read_i32(data, pos); pos = pos + 4;
-        s1 := buf_read_i32(data, pos); pos = pos + 4;
+        s1 := buf_read_i64(data, pos); pos = pos + 8;   // 修复 14：s1 64 位
         s2 := buf_read_i32(data, pos); pos = pos + 4;
         s3 := buf_read_i32(data, pos); pos = pos + 4;
         tk := buf_read_u32(data, pos); pos = pos + 4;

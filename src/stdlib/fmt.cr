@@ -190,3 +190,82 @@ fn format2(fmt_str: string, a0: string, a1: string) -> string {
 fn format_int(fmt_str: string, val: int) -> string {
     return format(fmt_str, int_str(val));
 }
+
+// ── float 打印（IEEE 754 double → 十进制字符串，定点最多 6 位小数）──
+// 纯整数实现：提取符号/指数/尾数 → 规范化 → 整数部分 + 小数长除
+
+fn fpow2i(k: int) -> int {
+    v : int = 1; i : ., mut = 0;
+    loop { if i >= k { break; } v = v * 2; i = i + 1; }
+    return v;
+}
+
+fn float_str_bits(bits: int) -> string {
+    // 符号（bit63）
+    neg : int = 0; u : int = bits;
+    if u < 0 { neg = 1; u = u - (-9223372036854775808); }  // 减 -2^63 = 清 bit63（无 & 运算符）
+    // 提取字段（除以 2^52 代替移位）
+    exp := (u / 4503599627370496) % 2048;
+    mant := u % 4503599627370496;
+    // 特殊值（IEEE 754 标准）
+    if exp == 0 && mant == 0 {
+        if neg != 0 { return "-0"; }
+        return "0";
+    }
+    if exp == 2047 {
+        if mant == 0 { if neg != 0 { return "-inf"; } return "inf"; }
+        return "nan";
+    }
+    // 归一化：m = 1.mant（正规）或 0.mant（次正规），e = exp - 1023
+    m : int = mant; e : int = exp - 1023;
+    if exp != 0 { m = mant + 4503599627370496; }
+    else { e = e + 1; }
+    // value = m × 2^(e-52)（m 是 2^52 缩放的尾数）
+    ip : int = 0;
+    den : int = 1;   // 小数分母（小数部分 = r/den）
+    r : int = 0;
+    if e >= 52 {
+        if e - 52 <= 10 { ip = m * fpow2i(e - 52); }
+        else { ip = m * 1024; }   // 大数近似（超出 int 范围）
+    } else {
+        if 52 - e <= 53 {
+            den = fpow2i(52 - e);
+            ip = m / den;
+            r = m % den;
+        } else {
+            ip = 0; den = fpow2i(53); r = m;  // 极小值
+        }
+    }
+    // 长除：r × 10 / den，提取 7 位（第 7 位用于舍入）
+    frac_str : ., mut = "";
+    r2 : ., mut = r;
+    di : ., mut = 0;
+    loop { if di >= 7 { break; }
+        r2 = r2 * 10;
+        dg2 := r2 / den;
+        if dg2 > 9 { dg2 = 9; }
+        r2 = r2 - dg2 * den;
+        if di < 6 { frac_str = frac_str + int_str(dg2); }
+        else if dg2 >= 5 {
+            // 第 7 位 ≥ 5：第 6 位 +1（简单舍入）
+            fl2 := str_len(frac_str);
+            if fl2 > 0 {
+                last := load8(frac_str, fl2 - 1) - 48;
+                if last < 9 {
+                    pre := str_sub(frac_str, 0, fl2 - 1);
+                    frac_str = pre + chr(last + 49);
+                }
+            }
+        }
+        di = di + 1; }
+    // 去尾零
+    fl := str_len(frac_str);
+    loop { if fl <= 0 { break; } if load8(frac_str, fl - 1) != 48 { break; } fl = fl - 1; }
+    if fl > 0 { frac_str = str_sub(frac_str, 0, fl); }
+    // 组装
+    out : ., mut = "";
+    if neg != 0 { out = out + "-"; }
+    out = out + int_str(ip);
+    if fl > 0 { out = out + "." + frac_str; }
+    return out;
+}

@@ -178,3 +178,19 @@ RVSDG 式嵌套 region 已落地（规格 docs/superpowers/specs/2026-08-08-regi
   6. （后补）ARM64/RISC-V 映射表
 - 明确不做（YAGNI）：模拟器/调试器、C 生态兼容、指令级时序验证、特权副作用验证（隔离，人工保证）
 - 参考：`docs/crasm.md`（正式文档）、`docs/superpowers/specs/2026-08-08-crasm-design.md`（批准记录）
+
+### 对照 CompCert 审查发现的未修复 bug（2026-08-11 记，详见 docs/compcert-reference.md）
+
+- **int_str 空字符串 bug**：`int_str(7)` 恒返回空、`int_str(567)` 随编译产物不稳定——打印链问题（预先存在，修复 .ccr s1 64 位后被大数路径暴露）。影响：float 打印精度（`float_str_bits(3.14)` 显示 "3.4"）、大 int 常量打印
+- **字符串拼接 + println 崩溃**：`println("AB" + "CD")` 程序核心转储（预先存在，concat 相关）。影响：check_error 的拼接错误信息不可读
+- **region_check 误报（B11）**：deref 读出的 int 值被当作指针做区域逃逸检查——`v := *p; return v;` 被拦（预先存在，pts 语义需按类型过滤）
+- **float 打印精度**：float_str_bits 的舍入为简单实现（第 7 位 ≥5 时第 6 位 +1，无进位传播）——±1ulp 显示误差可接受，但依赖 int_str 修复后重新验证
+
+### float 支持实现记录（2026-08-11，对照 IEEE 754 / SysV 标准实现）
+
+- 字面量：decimal → binary64 位模式（纯整数算法，≤18 位有效数字，±1ulp）
+- 算术：addsd/subsd/mulsd/divsd（F2 0F 5x C1）；比较：comisd + setcc 无符号标志
+- 转换：IR_I2F/IR_F2I（cvtsi2sd/cvttsd2si）+ float 运算 int 操作数隐式转换
+- 参数/返回：SysV XMM0-7（int/float 独立编号）+ XMM0 返回 + 栈参数（float 超 8）
+- 打印：float_str_bits（位模式 → 十进制，长除 + 去尾零）
+- 验证：O0/O1/O2 运行全部通过；待办：float 打印精度（int_str 修复后）、f32 单精度、printf 风格最短表示

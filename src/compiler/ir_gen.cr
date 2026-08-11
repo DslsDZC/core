@@ -643,8 +643,24 @@ fn gen_expr(node: int) -> int {
                 }
             }
         }
-        v := new_ir_var("bin", TI_INT);
-        emit(IR_BINARY, v, left_var, right_var, op, 0);
+        // float 运算：类型标记 TI_FLOAT（后端按 ti 分派 SSE2，IEEE 754 标准）
+        // int 操作数隐式转换（cvtsi2sd）——阶段 4
+        fti : int = 0;
+        if lt == TI_FLOAT || rt == TI_FLOAT {
+            fti = TI_FLOAT;
+            if lt != TI_FLOAT {
+                t1 := new_ir_var("_f0", TI_FLOAT);
+                emit(IR_I2F, t1, left_var, 0, 0, TI_FLOAT);
+                left_var = t1;
+            }
+            if rt != TI_FLOAT {
+                t2 := new_ir_var("_f1", TI_FLOAT);
+                emit(IR_I2F, t2, right_var, 0, 0, TI_FLOAT);
+                right_var = t2;
+            }
+        }
+        v := new_ir_var("bin", fti);
+        emit(IR_BINARY, v, left_var, right_var, op, fti);
         return v;
     }
 

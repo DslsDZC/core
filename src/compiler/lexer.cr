@@ -107,6 +107,77 @@ fn lookup_keyword(s: string) -> int {
     return T_IDENT;
 }
 
+// 2^k（纯整数，k >= 0）
+fn pow2i(k: int) -> int {
+    v : int = 1; i : ., mut = 0;
+    loop { if i >= k { break; } v = v * 2; i = i + 1; }
+    return v;
+}
+
+// decimal string → IEEE 754 binary64 位模式（纯整数近似，≤18 位有效数字）
+// 实现：value = ip + fp/den → 整数部分位 + 64 位长除小数 → 53 位尾数窗口
+// 精度：截断（无舍入），≤18 位有效数字内 ~2ulp
+fn str_to_f64_bits(s: string) -> int {
+    sl := str_len(s);
+    i : ., mut = 0;
+    neg : int = 0;
+    if i < sl && load8(s, i) == 45 { neg = 1; i = i + 1; }
+    ip : int = 0; fp : int = 0; den : int = 1; sd : int = 0; dg : ., mut = 0;
+    loop { if i >= sl { break; }
+        c := load8(s, i);
+        if c == 46 { sd = 1; i = i + 1; continue; }
+        if c < 48 || c > 57 { break; }
+        dg = dg + 1;
+        if dg <= 18 {
+            if sd != 0 { fp = fp * 10 + (c - 48); den = den * 10; }
+            else { ip = ip * 10 + (c - 48); }
+        }
+        i = i + 1; }
+    if ip == 0 && fp == 0 {
+        if neg != 0 { return -9223372036854775808; }
+        return 0;
+    }
+    // 小数 64 位（长除：r=fp，每轮 r×2 vs den）
+    frac64 : int = 0;
+    r : ., mut = fp;
+    bits : ., mut = 0;
+    loop { if bits >= 64 { break; }
+        if r >= 4611686018427387904 { r = r / 2; den = den / 2; }
+        r = r * 2;
+        frac64 = frac64 * 2;
+        if r >= den { r = r - den; frac64 = frac64 + 1; }
+        bits = bits + 1; }
+    // 整数部分位宽
+    bi : ., mut = 0; t2 : ., mut = ip;
+    loop { if t2 == 0 { break; } t2 = t2 / 2; bi = bi + 1; }
+    mant : int = 0;
+    exp : int = 0;
+    if bi > 0 {
+        sh := 53 - bi;
+        mant = (ip * pow2i(sh)) + (frac64 / pow2i(64 - sh));
+        exp = 1023 + (bi - 1);
+    } else {
+        // 纯小数：frac64 的最高位
+        bf : ., mut = 0; t2 = frac64;
+        loop { if t2 == 0 { break; } t2 = t2 / 2; bf = bf + 1; }
+        if bf == 0 {
+            if neg != 0 { return -9223372036854775808; }
+            return 0;
+        }
+        sh := 53 - bf;
+        if sh >= 0 { mant = frac64 * pow2i(sh); }
+        else { mant = frac64 / pow2i(-sh); }
+        exp = 1023 + (bf - 65);
+    }
+    // 组装（mant 截断到 52 位——无舍入）
+    bits64 : int = 0;
+    if exp > 0 && exp < 2047 {
+        bits64 = (mant % 4503599627370496) + exp * 4503599627370496;
+    }
+    if neg != 0 { bits64 = bits64 + -9223372036854775808; }
+    return bits64;
+}
+
 fn add_tok(kind: int, lex: int, start_line: int, start_col: int) {
     grow_tokens(g_token_count + 1);
     tp := g_token_count * ESZ_TOKEN;
@@ -236,8 +307,10 @@ fn tokenize(_src: string) {
             // Float: only consume the '.' when it does not start a '..'
             // range operator (otherwise `0..4` lexes as `0.` `.4` and the
             // range is silently lost — the for-loop body never executes).
+            has_dot : ., mut = 0;
             if cur_char_at(_src, _pos, _slen) == 46 && peek_at(_src, _pos, _slen) != 46 {
                 _pos = _pos + 1;
+                has_dot = 1;
                 loop { if is_digit(cur_char_at(_src, _pos, _slen)) != 0 { _pos = _pos + 1; } else { break; } }
             }
             // Suffix
@@ -251,13 +324,18 @@ fn tokenize(_src: string) {
                 suffix = str_sub(_src, ss, _pos - ss);
             }
             num_str := str_sub(_src, start, _pos - start - str_len(suffix));
-            ival : ., mut = str_int(num_str);
-            if suffix == "u8" || suffix == "u16" || suffix == "u32" || suffix == "u64" { }
-            else if suffix == "i8" || suffix == "i16" || suffix == "i32" || suffix == "i64" { }
-            else if suffix == "f32" || suffix == "f64" { }
-            else if str_len(suffix) > 0 { }
-            if str_len(suffix) > 0 { add_tok(T_INT, -1, start_line, start_col); }
-            else { add_tok_int(T_INT, ival, start_line, start_col); }
+            // float 字面量（含小数点或 f32/f64 后缀）→ IEEE 754 binary64 位模式
+            // 修复前 float 走 str_int（3.14 解析成 3，小数静默丢弃）
+            if has_dot != 0 || suffix == "f32" || suffix == "f64" {
+                add_tok_int(T_FLOAT, str_to_f64_bits(num_str), start_line, start_col);
+            } else {
+                ival : ., mut = str_int(num_str);
+                if suffix == "u8" || suffix == "u16" || suffix == "u32" || suffix == "u64" { }
+                else if suffix == "i8" || suffix == "i16" || suffix == "i32" || suffix == "i64" { }
+                else if str_len(suffix) > 0 { }
+                if str_len(suffix) > 0 { add_tok(T_INT, -1, start_line, start_col); }
+                else { add_tok_int(T_INT, ival, start_line, start_col); }
+            }
             _pos = skip_ws(_src, _pos, _slen);
             continue;
         }

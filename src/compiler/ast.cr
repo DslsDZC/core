@@ -571,6 +571,8 @@ IR_CALL_EXTERN : int = 45;  // dest=result_var, s1=func_name_ni, s2=first_arg, s
 IR_LAZY_THUNK  : int = 46;  // dest=thunk_var, s1=expr_var — wrap as lazy thunk
 IR_LAZY_FORCE  : int = 47;  // dest=val_var, s1=thunk_var — force evaluation
 IR_FNADDR : int = 48;  // dest=addr_var, s1=fn_name_ni — load function address (movabs + link-time patch)
+IR_I2F : int = 49;  // dest=float_var, s1=int_var — int → float（cvtsi2sd）
+IR_F2I : int = 50;  // dest=int_var, s1=float_var — float → int（cvttsd2si）
 
 // Resolution flag for BRANCH/JUMP (stored in type_kind field after label resolution)
 IR_RESOLVED : int = 1;
