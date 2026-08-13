@@ -143,7 +143,7 @@ spec fn vec_invariant[T](v: Vec[T]) -> bool {
 | `#pure` | 无 STORE 到外部变量、无 CALL 到非纯函数 | |
 | `#deterministic` | 纯 + 无随机/外部依赖 | |
 | `#terminating` | 所有循环有可识别变体 | |
-| `#no_alloc` | 无 ALLOC/ALLOC_ARRAY 节点 | |
+| `#no_alloc` | 无 ALLOC/ALLOC_ARRAY/ALLOC_STRUCT/ALLOC_AT 节点 | |
 | `#no_throw` | 无异常路径 | |
 | `#safe_index` | 所有索引访问在边界内 | |
 | `#len_preserved` | 集合长度不变（无插入/删除） | `sort` |
@@ -422,7 +422,7 @@ SMT 解不出时返回**反例模型**（哪个输入违反性质）——开发
 | `#check(b != 0)` 已证 | 除法免零检查 |
 | `#safe_index` 已证 | DEREF 运行时边界检查（cmp+jae+ud2）直接消除——编译期证明免检的规约版，覆盖运行时数组 |
 | `#pure` 已证 | CSE / 死代码删除 / 重排（纯调用可删可移） |
-| `#no_alloc` 已证 | 栈分配替代堆分配 |
+| `#no_alloc` 已证 | 栈分配替代堆分配（区域路径：静态大小预计算 → 纯 bump 零碎片） |
 | `loop invariant` + `#terminating` 已证 | 循环变换（向量化/强度削减/展开）前提满足 |
 | 指针分离/别名规约已证 | 内存访问重排（否则保守不重排） |
 | `#deterministic` 已证 | 更激进的缓存/重算策略 |
