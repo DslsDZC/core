@@ -72,6 +72,14 @@
 - **arena 回归确认**：`arena_test.cr` 的基本分配、嵌套和 free-list 复用均通过
 - **完整自举确认**：`corec build src/compiler` 在 O0/O1 下均成功，三代后端输出逐字节一致
 
+### 指针宽度、外部地址与动态边界修复（2026-08-16）
+- **访问宽度传递**：`IR_DEREF` / `IR_STORE_PTR` 保留 pointee 宽度，静态验证改为 `offset + width <= allocation_size`
+- **读写统一验证**：越界 store 不再绕过 ProvenanceVerify，静态可确定的越界读写均阻止编译
+- **外部地址空间**：整数转指针标记 `asp=1`，safe 代码解引被拒绝，`unsafe` 边界内保留原有能力
+- **动态边界根因修复**：ELF 检查从错误的页内偏移改为 `pointer - allocation_base`，合法变量索引不再误触发 `SIGILL`
+- **保守多目标语义**：运行时偏移且 points-to 存在多个 allocation 时拒绝编译，不伪造已证明的边界
+- **回归与自举**：15 个指针回归覆盖静态/动态读写、类型双关与 unsafe；`corec2` / `corec3` 逐字节一致
+
 ## Region 化控制流（2026-08-08 完成）
 
 RVSDG 式嵌套 region 已落地（规格 docs/superpowers/specs/2026-08-08-region-cfg-design.md）：
@@ -80,9 +88,10 @@ RVSDG 式嵌套 region 已落地（规格 docs/superpowers/specs/2026-08-08-regi
 - state edges（副作用链 + 循环终止依赖）+ .ccr v5（SG 段 24B + edge kind + v4 兼容）
 
 ### 已知缺口（region 化相关，待修）
-- 缓存命中路径 SG 段不完整（load_cir_cache 不恢复嵌套 region——仅函数级 region）
-- while 循环无终止依赖（while 不生成 region）
+- 缓存命中路径 SG 段不完整（已修复，2026-08-18：CIR v13 保存/恢复嵌套 region 与 node→region 映射；`test_nested_regions_cache_persist` 覆盖）
+- while 循环无终止依赖（已修复，2026-08-18：while 使用 SG_LOOP、arena reset 与终止 state edge；`test_while_region_and_termination_edge` / `test_while_break_continue_run` 覆盖）
 - 终止边源边界与链头推进（已修复，2026-08-08——final review Important #1：sg_pop 终止边源须在 region 内 + 链头推进到 exit 节点，test_termination_edge_source_guard 覆盖）
+- 解释器内联 callee 循环不更新局部状态（已修复，2026-08-18：补齐 callee `ALLOC/STORE/LOAD`、arena 与立即 return 语义；`test_inline_callee_while_run` 覆盖）
 - callee inline 执行中的循环崩溃（解释器限制，预存）
 
 ## 预存 Bug（不阻塞开发，待修复）
@@ -130,18 +139,13 @@ RVSDG 式嵌套 region 已落地（规格 docs/superpowers/specs/2026-08-08-regi
   - `lexer.cr` 浮点/`..` 范围修复（main 已有）→ 核对 lexer.md 是否已反映
 - 完成后需重跑 `python3 tools/pseudocode_check.py` 并更新相应文档的源行数标注
 
-### 7. 类型双关验证缺口（2026-08-10 记）
-- 背景：设计讨论定论——指针模型扩展收敛：**"程序内部地址直接指"（0x 字面量指内部对象）不做**（YAGNI：内部对象用 `&` 取址更优——无漂移/类型全/验证无条件；外部契约地址 unsafe 已够用；0x 字面量仅保留 unsafe 外部入口角色）；**类型双关保留**——图只认字节（pts/offset/alloc_size 全字节级，无类型检查），双关在图层天然合法，验证 = 边界 + 宽度
-- 现状核实（源码）：
-  - checker EXPR_AS **无类型兼容检查**（checker.cr:2188 仅推断内层 + 返回目标类型）→ `*(float*)&i` 已放行
-  - cast 透传（ir_gen.cr:1595 EXPR_AS 返回内层表达式）→ provenance 边不断
-  - DEREF 边界检查只查 `off >= alloc_size`（provenance_verify.cr:58-64）→ 越界双关照拦
-  - DEREF 节点不携带类型（ir_gen.cr:735 `emit(IR_DEREF, dv, inner_var, 0, 0, 0)`，type_kind=0）→ 访问宽度无从查
-  - **asp 无主机制**：checker.cr:404/1451 写入 TYP_PTR 的 asp 标志（unsafe 块内 = 外部地址空间），全仓库无任何消费点——`0x... as *int` 在 safe 代码同样放行，安全语义未落地
-- 待修：
-  1. DEREF 宽度检查：`off + width <= alloc_size`（width 从 s1 指针变量的 TYP_PTR 指向类型经 type_size（ir_gen.cr:295）取；DEREF 的 type_kind 是占位 0，需从变量类型推导或改 emit 传真实类型）
-  2. asp 机制收尾：完成（asp=1 指针的 DEREF 要求 unsafe 包裹）或删除（当前写入无人消费，是隐患）
-- 参考：docs/pointer-model.md（unsafe 边界表已删"类型双关"行 + 新增类型双关节 + 2026-08-10 设计定论）
+### 7. 类型双关验证（2026-08-16 已修复）
+- 类型双关保留，合法判据为 provenance + 字节偏移 + 访问宽度
+- cast 通过有类型的 `IR_LOAD` 保留值流和 `asp`，不会断开 points-to 传播
+- `IR_DEREF` / `IR_STORE_PTR` 统一执行 `off + width <= alloc_size`
+- 整数转指针产生 `asp=1`，解引必须位于 `unsafe`
+- 动态偏移使用 points-to 目标的实际 allocation base 生成 ELF 检查；多目标无法唯一定位基址时保守拒绝
+- 回归见 `tests/selfhost/test_pointer_safety.py`
 
 ## 待实现特性
 

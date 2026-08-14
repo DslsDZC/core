@@ -5,37 +5,78 @@
 // compiler's global arrays.
 
 // Magic header for .cir cache files
-// v5: edges serialized as 4×8B (from/to/next/kind) so cache hits restore
-// state edges; v4 cache files are rejected by the version check.
+// v13: persist nested SG region metadata in per-function cache files.
 CIR_CACHE_MAGIC : int = 0xC1C1C1C1C1C1C1C1;
-CIR_CACHE_VER   : int = 5;
+CIR_CACHE_VER   : int = 13;
 
 g_cir_write_buf : string, mut;
 g_cir_write_pos : int, mut;
 g_cir_write_cap : int, mut;
 
+// Count non-function regions belonging to one function. The function SG is
+// recreated by df_begin_func on a cache hit, so only nested records are stored.
+fn cir_cache_sg_count(node_start: int, node_count: int) -> int {
+    count : ., mut = 0;
+    si : ., mut = 0;
+    loop {
+        if si >= g_sg_count { break; }
+        kind := r64(g_sgs, si * ESZ_SG + OFF_SG_KIND);
+        nstart := r64(g_sgs, si * ESZ_SG + OFF_SG_NSTART);
+        if kind != SG_FUNC && nstart >= node_start && nstart < node_start + node_count {
+            count = count + 1;
+        }
+        si = si + 1;
+    }
+    return count;
+}
+
+// Encode a region parent as an index within the serialized nested-region
+// list. -1 denotes the function SG recreated by df_begin_func.
+fn cir_cache_sg_parent(sg_idx: int, node_start: int, node_count: int) -> int {
+    parent := r64(g_sgs, sg_idx * ESZ_SG + OFF_SG_PARENT);
+    if parent < 0 { return -1; }
+    parent_kind := r64(g_sgs, parent * ESZ_SG + OFF_SG_KIND);
+    parent_start := r64(g_sgs, parent * ESZ_SG + OFF_SG_NSTART);
+    if parent_kind == SG_FUNC && parent_start == node_start { return -1; }
+
+    local : ., mut = 0;
+    si : ., mut = 0;
+    loop {
+        if si >= sg_idx { break; }
+        kind := r64(g_sgs, si * ESZ_SG + OFF_SG_KIND);
+        nstart := r64(g_sgs, si * ESZ_SG + OFF_SG_NSTART);
+        if kind != SG_FUNC && nstart >= node_start && nstart < node_start + node_count {
+            if si == parent { return local; }
+            local = local + 1;
+        }
+        si = si + 1;
+    }
+    return -1;
+}
+
 // Save one function's DFG state to a .cir cache file.
 // path: full file path (including .core/cache/cir/ prefix)
-// func_idx: function index in g_ir_func_*
+// source_fi: source FuncInfo index used for AST fingerprints
+// ir_fi: compact IR function index used for IR/DFG ranges
 // Returns 0 on success, -1 on failure.
-fn save_cir_cache(path: string, func_idx: int) -> int {
+fn save_cir_cache(path: string, source_fi: int, ir_fi: int) -> int {
     fd := syscall3(2, path, 577, 420);  // O_WRONLY|O_CREAT|O_TRUNC, 0644
     if fd < 0 { return -1; }
 
     // Compute fingerprint
-    fn_node := fi_ast_node(func_idx);
+    fn_node := fi_ast_node(source_fi);
     fp := func_fingerprint(fn_node);
     sig := sig_fingerprint(fn_node);
-    name_ni := r64(g_ir_func_name_idx, func_idx * 8);
+    name_ni := r64(g_ir_func_name_idx, ir_fi * 8);
     name := istr_get(name_ni);
     name_len := str_len(name);
 
-    var_start := r64(g_ir_func_var_start, func_idx * 8);
-    var_count := r64(g_ir_func_var_count, func_idx * 8);
-    node_start := r64(g_df_func_node_start, func_idx * 8);
-    node_count := r64(g_df_func_node_count, func_idx * 8);
-    instr_start := r64(g_ir_func_instr_start, func_idx * 8);
-    instr_count := r64(g_ir_func_instr_count, func_idx * 8);
+    var_start := r64(g_ir_func_var_start, ir_fi * 8);
+    var_count := r64(g_ir_func_var_count, ir_fi * 8);
+    node_start := r64(g_df_func_node_start, ir_fi * 8);
+    node_count := r64(g_df_func_node_count, ir_fi * 8);
+    instr_start := r64(g_ir_func_instr_start, ir_fi * 8);
+    instr_count := r64(g_ir_func_instr_count, ir_fi * 8);
 
     // Serialize in memory and issue one write. The previous per-field writes
     // made a full self-host build perform millions of syscalls on its cache.
@@ -52,6 +93,9 @@ fn save_cir_cache(path: string, func_idx: int) -> int {
         total_size = total_size + 8 + str_len(istr_get(size_ni));
         size_si = size_si + 1;
     }
+    // v13: nested SG records (kind/enter/exit/parent/nstart/ncount).
+    sg_count := cir_cache_sg_count(node_start, node_count);
+    total_size = total_size + 8 + sg_count * 48;
     if total_size > g_cir_write_cap {
         new_cap := g_cir_write_cap * 2;
         if new_cap < 4096 { new_cap = 4096; }
@@ -96,6 +140,25 @@ fn save_cir_cache(path: string, func_idx: int) -> int {
         w64_cir(fd, r64(g_df_nodes, n * ESZ_DFNODE + OFF_DF_FIRST_EDGE));
         w64_cir(fd, r64(g_df_nodes, n * ESZ_DFNODE + OFF_DF_EDGE_COUNT));
         ni2 = ni2 + 1;
+    }
+
+    // Persist nested SG metadata with offsets relative to this function's
+    // node range. Parent indices are local to this serialized section.
+    w64_cir(fd, sg_count);
+    sg_i : ., mut = 0;
+    loop {
+        if sg_i >= g_sg_count { break; }
+        kind := r64(g_sgs, sg_i * ESZ_SG + OFF_SG_KIND);
+        nstart := r64(g_sgs, sg_i * ESZ_SG + OFF_SG_NSTART);
+        if kind != SG_FUNC && nstart >= node_start && nstart < node_start + node_count {
+            w64_cir(fd, kind);
+            w64_cir(fd, r64(g_sgs, sg_i * ESZ_SG + OFF_SG_ENTER) - node_start);
+            w64_cir(fd, r64(g_sgs, sg_i * ESZ_SG + OFF_SG_EXIT) - node_start);
+            w64_cir(fd, cir_cache_sg_parent(sg_i, node_start, node_count));
+            w64_cir(fd, nstart - node_start);
+            w64_cir(fd, r64(g_sgs, sg_i * ESZ_SG + OFF_SG_NCOUNT));
+        }
+        sg_i = sg_i + 1;
     }
 
     // Write edges (all edges for this function's nodes)
@@ -251,6 +314,43 @@ fn load_cir_cache(path: string, func_idx: int) -> int {
         ni = ni + 1;
     }
     g_df_node_count = base_node + node_count;
+
+    // Restore nested SG metadata (v13). The current function SG was opened by
+    // df_begin_func; cached parent=-1 refers to that SG.
+    sg_count := r64(data, pos); pos = pos + 8;
+    sg_base := g_sg_count;
+    sg_i : ., mut = 0;
+    loop {
+        if sg_i >= sg_count { break; }
+        new_sg := g_sg_count;
+        grow_sg(new_sg + 1);
+        kind := r64(data, pos); pos = pos + 8;
+        enter_rel := r64(data, pos); pos = pos + 8;
+        exit_rel := r64(data, pos); pos = pos + 8;
+        parent_rel := r64(data, pos); pos = pos + 8;
+        nstart_rel := r64(data, pos); pos = pos + 8;
+        ncount := r64(data, pos); pos = pos + 8;
+        parent := g_cur_sg;
+        if parent_rel >= 0 { parent = sg_base + parent_rel; }
+        f := new_sg * ESZ_SG;
+        w64(g_sgs, f + OFF_SG_KIND, kind);
+        w64(g_sgs, f + OFF_SG_ENTER, base_node + enter_rel);
+        w64(g_sgs, f + OFF_SG_EXIT, base_node + exit_rel);
+        w64(g_sgs, f + OFF_SG_PARENT, parent);
+        w64(g_sgs, f + OFF_SG_NSTART, base_node + nstart_rel);
+        w64(g_sgs, f + OFF_SG_NCOUNT, ncount);
+        g_sg_count = new_sg + 1;
+
+        // Later (inner) records overwrite the enclosing region mapping.
+        rn : ., mut = base_node + nstart_rel;
+        rend := rn + ncount;
+        loop {
+            if rn >= rend { break; }
+            w64(g_df_node_region, rn * 8, new_sg);
+            rn = rn + 1;
+        }
+        sg_i = sg_i + 1;
+    }
 
     // Restore edges (v5: 4×8B per edge — from/to/next/kind)
     edge_count := r64(data, pos); pos = pos + 8;

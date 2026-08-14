@@ -253,6 +253,39 @@ fn e2_jae(b: string, p: int, rel: int) -> int {
     e2_w8(b, p, 15); e2_w8(b, p+1, 131); e2_w32(b, p+2, rel); return 6;
 }
 
+fn e2_ptr_bounds_check(b: string, p: int, base_var: int, alloc_sz: int, access_width: int) -> int {
+    if base_var < 0 || alloc_sz <= 0 { return 0; }
+    width : ., mut = access_width;
+    if width <= 0 { width = 8; }
+    limit : ., mut = alloc_sz - width + 1;
+    if limit < 0 { limit = 0; }
+
+    cp : ., mut = 0;
+    cp = cp + e2_load_var(b, p+cp, 11, base_var);
+    // rax = pointer - allocation base; keep r10 intact for the access.
+    cp = cp + emit_rex(b, p+cp, 1, 10/8, 0, 0);
+    e2_w8(b, p+cp, 137); cp = cp + 1;
+    cp = cp + emit_modrm(b, p+cp, 3, 10%8, 0);
+    cp = cp + emit_rex(b, p+cp, 1, 11/8, 0, 0);
+    e2_w8(b, p+cp, 41); cp = cp + 1;
+    cp = cp + emit_modrm(b, p+cp, 3, 11%8, 0);
+    cp = cp + emit_rex(b, p+cp, 1, 0, 0, 0);
+    e2_w8(b, p+cp, 129); cp = cp + 1;
+    cp = cp + emit_modrm(b, p+cp, 3, 7, 0);
+    e2_w32(b, p+cp, limit); cp = cp + 4;
+    crash_jmp_pos := p+cp;
+    cp = cp + e2_jae(b, p+cp, 0);
+    cp = cp + emit_rex(b, p+cp, 1, 10/8, 0, 10/8);
+    e2_w8(b, p+cp, 133); cp = cp + 1;
+    cp = cp + emit_modrm(b, p+cp, 3, 10%8, 10%8);
+    safe_jmp_pos := p+cp;
+    e2_w8(b, p+cp, 117); e2_w8(b, p+cp+1, 0); cp = cp + 2;
+    e2_w8(b, p+cp, 15); e2_w8(b, p+cp+1, 11); cp = cp + 2;
+    e2_w32(b, crash_jmp_pos + 2, (p+cp) - (crash_jmp_pos + 6) - 2);
+    w8(b, safe_jmp_pos + 1, (p+cp) - (safe_jmp_pos + 2));
+    return cp;
+}
+
 fn e2_alu(b: string, p: int, op: int) -> int {
     // ALU r/m, r: REX.W + REX.RB (r11, r10) + opcode + ModRM reg=11, rm=10
     cp := p;
@@ -987,47 +1020,9 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
 
     if op == IR_DEREF && d >= 0 {
         do2 := g2_slot(d);
-        // s3 encodes bounds info from ProvenanceVerify:
-        //   s3 == 0: no check needed (provenance known)
-        //   s3 != 0: load ptr into r10, then:
-        //     1. page_offset = r10 & 0xFFF
-        //     2. if page_offset >= alloc_size → crash (SIGILL)
-        //     3. if r10 == 0 → crash
-        //     4. safe deref: mov r10, [r10]
         cp = cp + e2_load_var(buf, pos+cp, 10, s1);
         if s3 != 0 {
-            alloc_sz := s3;  // encoded alloc_size from ProvenanceVerify
-            // --- cmp + jae + ud2 sequence (doc §ProvenanceVerify) ---
-            // Copy r10 to r11 for offset computation
-            cp = cp + emit_rex(buf, pos+cp, 1, 11/8, 0, 10/8);
-            e2_w8(buf, pos+cp, 137); cp = cp + 1;  // 0x89 MOV r/m, r
-            cp = cp + emit_modrm(buf, pos+cp, 3, 10%8, 11%8);  // mov r11, r10
-            // and r11, 0xFFF (page offset)
-            cp = cp + emit_rex(buf, pos+cp, 1, 0, 0, 11/8);
-            e2_w8(buf, pos+cp, 129); cp = cp + 1;  // 0x81 AND r/m, imm32
-            cp = cp + emit_modrm(buf, pos+cp, 3, 4, 11%8);  // /4 = AND
-            e2_w32(buf, pos+cp, 4095); cp = cp + 4;  // mask 0xFFF
-            // cmp r11, alloc_size
-            cp = cp + emit_rex(buf, pos+cp, 1, 0, 0, 11/8);
-            e2_w8(buf, pos+cp, 129); cp = cp + 1;  // 0x81 CMP r/m, imm32
-            cp = cp + emit_modrm(buf, pos+cp, 3, 7, 11%8);  // /7 = CMP
-            e2_w32(buf, pos+cp, alloc_sz); cp = cp + 4;
-            // jae .crash (2-byte near jae: 0F 83)
-            crash_jmp_pos := pos+cp;
-            cp = cp + e2_jae(buf, pos+cp, 0);  // placeholder
-            // test r10, r10 (null check)
-            cp = cp + emit_rex(buf, pos+cp, 1, 10/8, 0, 10/8); e2_w8(buf, pos+cp, 133); cp = cp + 1; cp = cp + emit_modrm(buf, pos+cp, 3, 10%8, 10%8);
-            // jne .safe (skip ud2 if non-null)
-            safe_jmp_pos := pos+cp;
-            e2_w8(buf, pos+cp, 117); e2_w8(buf, pos+cp+1, 0); cp = cp + 2;  // placeholder
-            // .crash: ud2（必须写 pos+cp 绝对位置——修复前写 buf[cp] 污染函数头）
-            e2_w8(buf, pos+cp, 15); e2_w8(buf, pos+cp+1, 11); cp = cp + 2;
-            // Patch jae to jump to ud2 (crash): target = crash_jmp_pos+6+3+2
-            // (jae 6 + test 3 + jne 2 = ud2 起点)。修复前跳到 .safe，越界不崩溃。
-            e2_w32(buf, crash_jmp_pos + 2, (pos+cp) - (crash_jmp_pos + 6) - 2);
-            // Patch jne to jump past ud2 to .safe（修复前多 +2，跳到指令中间）
-            w8(buf, safe_jmp_pos + 1, (pos+cp) - (safe_jmp_pos + 2));
-            // .safe: deref
+            cp = cp + e2_ptr_bounds_check(buf, pos+cp, s2, s3, ti);
         }
         // mov r10, [r10]
         cp = cp + emit_rex(buf, pos+cp, 1, 10/8, 0, 10/8); e2_w8(buf, pos+cp, 139); cp = cp + 1; cp = cp + emit_modrm(buf, pos+cp, 0, 10%8, 10%8);
@@ -1053,6 +1048,9 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
     if op == IR_STORE_PTR {
         // load pointer (handles local and global)
         cp = cp + e2_load_var(buf, pos+cp, 10, s1);
+        if s3 != 0 {
+            cp = cp + e2_ptr_bounds_check(buf, pos+cp, d, s3, ti);
+        }
         // load value to store (handles local and global)
         cp = cp + e2_load_var(buf, pos+cp, 11, s2);
         // mov [r10], r11 — REX.WRB + 0x89

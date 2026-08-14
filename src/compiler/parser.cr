@@ -323,7 +323,22 @@ fn parse_postfix() -> int {
             if is_enum_con == 1 {
                 node = alloc_node(EXPR_ENUM_CONSTRUCTOR, name_idx, af, ac, 0, 0, 0, tok_ln(t), tok_cl(t));
             } else {
-                node = alloc_node(EXPR_CALL, node, af, ac, 0, 0, 0, tok_ln(t), tok_cl(t));
+                call_func := node;
+                call_flags : ., mut = 0;
+                // @inline(fn)(args) is a hinted call, not a call through the
+                // value returned by @inline(fn).
+                if ast_kind(node) == EXPR_CALL && ast_c(node) == 1 {
+                    wrapper := ast_a(node);
+                    wrapper_arg := ast_b(node);
+                    if ast_kind(wrapper) == EXPR_AT && wrapper_arg >= 0 {
+                        wrapper_name := istr_get(ast_a(wrapper));
+                        if str_eq(wrapper_name, "inline") != 0 {
+                            call_func = ast_a(wrapper_arg);
+                            call_flags = CALL_FLAG_INLINE;
+                        }
+                    }
+                }
+                node = alloc_node(EXPR_CALL, call_func, af, ac, 0, call_flags, 0, tok_ln(t), tok_cl(t));
             }
             continue;
         }
@@ -753,7 +768,8 @@ fn parse_stmt() -> int {
     }
     if tok_k(t) == T_YIELD {
         advance_tok();
-        val := parse_expr();
+        val : ., mut = -1;
+        if !check(T_SEMI) && !check(T_RBRACE) { val = parse_expr(); }
         if check(T_SEMI) { advance_tok(); }
         return alloc_node(EXPR_YIELD, val, 0, 0, 0, 0, 0, tok_ln(t), tok_cl(t));
     }
