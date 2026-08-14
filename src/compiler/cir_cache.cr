@@ -5,10 +5,9 @@
 // compiler's global arrays.
 
 // Magic header for .cir cache files
-// v5: edges serialized as 4×8B (from/to/next/kind) so cache hits restore
-// state edges; v4 cache files are rejected by the version check.
+// v12: invalidate older call flags, generic cloning/indexing, and yield ASTs.
 CIR_CACHE_MAGIC : int = 0xC1C1C1C1C1C1C1C1;
-CIR_CACHE_VER   : int = 5;
+CIR_CACHE_VER   : int = 12;
 
 g_cir_write_buf : string, mut;
 g_cir_write_pos : int, mut;
@@ -16,26 +15,27 @@ g_cir_write_cap : int, mut;
 
 // Save one function's DFG state to a .cir cache file.
 // path: full file path (including .core/cache/cir/ prefix)
-// func_idx: function index in g_ir_func_*
+// source_fi: source FuncInfo index used for AST fingerprints
+// ir_fi: compact IR function index used for IR/DFG ranges
 // Returns 0 on success, -1 on failure.
-fn save_cir_cache(path: string, func_idx: int) -> int {
+fn save_cir_cache(path: string, source_fi: int, ir_fi: int) -> int {
     fd := syscall3(2, path, 577, 420);  // O_WRONLY|O_CREAT|O_TRUNC, 0644
     if fd < 0 { return -1; }
 
     // Compute fingerprint
-    fn_node := fi_ast_node(func_idx);
+    fn_node := fi_ast_node(source_fi);
     fp := func_fingerprint(fn_node);
     sig := sig_fingerprint(fn_node);
-    name_ni := r64(g_ir_func_name_idx, func_idx * 8);
+    name_ni := r64(g_ir_func_name_idx, ir_fi * 8);
     name := istr_get(name_ni);
     name_len := str_len(name);
 
-    var_start := r64(g_ir_func_var_start, func_idx * 8);
-    var_count := r64(g_ir_func_var_count, func_idx * 8);
-    node_start := r64(g_df_func_node_start, func_idx * 8);
-    node_count := r64(g_df_func_node_count, func_idx * 8);
-    instr_start := r64(g_ir_func_instr_start, func_idx * 8);
-    instr_count := r64(g_ir_func_instr_count, func_idx * 8);
+    var_start := r64(g_ir_func_var_start, ir_fi * 8);
+    var_count := r64(g_ir_func_var_count, ir_fi * 8);
+    node_start := r64(g_df_func_node_start, ir_fi * 8);
+    node_count := r64(g_df_func_node_count, ir_fi * 8);
+    instr_start := r64(g_ir_func_instr_start, ir_fi * 8);
+    instr_count := r64(g_ir_func_instr_count, ir_fi * 8);
 
     // Serialize in memory and issue one write. The previous per-field writes
     // made a full self-host build perform millions of syscalls on its cache.

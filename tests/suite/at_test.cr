@@ -44,7 +44,7 @@ fn test_inline_hint() -> int {
 
 fn test_fields_basic() -> int {
     flds := @fields(Point);
-    if str_len(flds) < 4 { return 1; }  // at least contains field names
+    if str_len(flds) < 3 { return 1; }  // "x,y"
     return 0;
 }
 

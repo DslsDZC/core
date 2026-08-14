@@ -401,9 +401,7 @@ fn res_type_node(node: int) -> int {
     if ast_kind(node) == EXPR_PTRTYPE {
         // Pointer type *T
         inner := res_type_node(ast_a(node));
-        asp : ., mut = 0;
-        if g_unsafe_depth > 0 { asp = 1; }  // unsafe block → external address space
-        return alloc_type(TYP_PTR, inner, asp);
+        return alloc_type(TYP_PTR, inner, 0);
     }
     if ast_kind(node) == EXPR_GENERIC_APPLY {
         // Generic application: Box[int]
@@ -1440,17 +1438,24 @@ fn infer_expr(node: int) -> int {
         }
         if op == UOP_REF {
             operand := ast_a(node);
+            is_mut := ast_int_val(node);
             inner : ., mut = TI_UNIT;
             if ast_kind(operand) == EXPR_IDENT {
                 vi := ast_int_val(operand);
+                if !check_borrow(vi, is_mut) {
+                    name := istr_get(vi);
+                    if is_mut != 0 {
+                        check_error(EC_B_BORROW_MUT, "Cannot borrow '" + name + "' as mutable, already borrowed", ast_line(node), ast_col(node));
+                    } else {
+                        check_error(EC_B_BORROW_IMMUT, "Cannot borrow '" + name + "' as immutable, already mutably borrowed", ast_line(node), ast_col(node));
+                    }
+                }
                 si := find_sym(vi);
                 if si >= 0 { inner = sym_type(si); }
             } else {
                 inner = infer_expr(operand);
             }
-            asp : ., mut = 0;
-            if g_unsafe_depth > 0 { asp = 1; }
-            return alloc_type(TYP_PTR, inner, asp);
+            return alloc_type(TYP_PTR, inner, 0);
         }
         if op == UOP_DEREF {
             inner := infer_expr(ast_a(node));
@@ -1494,7 +1499,12 @@ fn infer_expr(node: int) -> int {
                         if r64(g_mod_func_fileids, mfi * 8) == fileid_ni && r64(g_mod_func_names, mfi * 8) == method_ni {
                             func_ni = r64(g_mod_func_names, mfi * 8);
                             ast_set_data(node, func_ni);
-                            ast_set_type_val(node, 1);  // mark as module call
+                            call_flags := ast_type_val(node);
+                            if call_flags == CALL_FLAG_INLINE {
+                                ast_set_type_val(node, CALL_FLAG_MODULE + CALL_FLAG_INLINE);
+                            } else {
+                                ast_set_type_val(node, CALL_FLAG_MODULE);
+                            }
                             mod_call_done = 1;
                             mod_found_mfi = mfi;
                             break;
@@ -2189,7 +2199,18 @@ fn infer_expr(node: int) -> int {
         // expr as Type — type cast
         inner_ti := infer_expr(ast_a(node));
         type_node := ast_b(node);
-        return res_type_node(type_node);
+        target_ti := res_type_node(type_node);
+        if get_type_kind(target_ti) == TYP_PTR {
+            inner_kind := get_type_kind(inner_ti);
+            asp : ., mut = 1;
+            if inner_kind == TYP_PTR {
+                asp = get_type_extra(inner_ti);
+            } else if inner_kind == TYP_REF {
+                asp = 0;
+            }
+            return alloc_type(TYP_PTR, get_type_data(target_ti), asp);
+        }
+        return target_ti;
     }
     if ast_kind(node) == EXPR_STMT {
         infer_expr(ast_a(node));

@@ -209,7 +209,9 @@ EXPR_BOOL : int = 3;     // int_val = 0/1
 EXPR_IDENT : int = 4;    // int_val = name str table index
 EXPR_BINARY : int = 5;   // a=left, b=right, c=opcode
 EXPR_UNARY : int = 6;    // a=operand, c=opcode
-EXPR_CALL : int = 7;     // a=func, b=first arg idx, c=arg count
+EXPR_CALL : int = 7;     // a=func, b=first arg idx, c=arg count, type_val=CALL_FLAG_*
+CALL_FLAG_MODULE : int = 1;
+CALL_FLAG_INLINE : int = 2;
 EXPR_BLOCK : int = 8;    // a=g_block_stmts start, b=stmt count
 EXPR_IF : int = 9;       // a=cond, b=then, c=else (-1 if none)
 EXPR_LOOP : int = 10;    // a=body
@@ -548,8 +550,8 @@ IR_LABEL : int = 21;
 IR_PHI : int = 22;
 IR_LOAD_ENUM_TAG : int = 23;
 IR_SLICE : int = 24;   // dest=slice_var, s1=arr_var, s2=low_var, src3=high_var — create slice ptr from range
-IR_DEREF : int = 25;   // dest=loaded_val, s1=ref_var — load value through pointer stored in ref_var
-IR_STORE_PTR : int = 26; // dest=val_var, s1=ptr_var, s2=val_var — store value through pointer
+IR_DEREF : int = 25;   // dest=loaded_val, s1=ptr, s2=runtime_base, s3=alloc_size, type_kind=width
+IR_STORE_PTR : int = 26; // dest=runtime_base, s1=ptr, s2=value, s3=alloc_size, type_kind=width
 IR_ADDR_INDEX : int = 31; // dest=addr, s1=arr_var, s2=index_var, s3=scale — compute &arr[index] without loading
 IR_SPAWN : int = 27;     // dest=result_var, s1=fn_name_ni, s2=first_arg, src3=arg_count, type_kind=spawn_count (-1=dynamic)
 IR_YIELD : int = 28;     // s1=value_var — emit value from flow to consumer channel

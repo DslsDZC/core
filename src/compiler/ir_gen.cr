@@ -137,6 +137,11 @@ fn pop_ir_scope() {
 
 fn is_ptr_var(var_idx: int) -> int {
     if var_idx < 0 { return 0; }
+    ti := irv_type(var_idx);
+    if ti >= 0 {
+        tk := get_type_kind(ti);
+        if tk == TYP_PTR || tk == TYP_REF { return 1; }
+    }
     prod := r64(g_df_var_producer, var_idx * 8);
     if prod < 0 { return 0; }
     prod_op := r64(g_df_nodes, prod * ESZ_DFNODE + OFF_DF_OPCODE);
@@ -159,10 +164,15 @@ fn is_byte_buf_var(var_idx: int) -> int {
     // Core `string`) are byte-addressed: `buf + n` must NOT scale n by
     // the 8-byte element size.
     if var_idx < 0 { return 0; }
+    if irv_type(var_idx) != TI_UNIT { return 0; }
     prod := r64(g_df_var_producer, var_idx * 8);
     if prod < 0 { return 0; }
     prod_op := r64(g_df_nodes, prod * ESZ_DFNODE + OFF_DF_OPCODE);
     if prod_op == IR_ALLOC { return 1; }
+    if prod_op == IR_CALL {
+        func_ni := r64(g_df_nodes, prod * ESZ_DFNODE + OFF_DF_S3);
+        if func_ni >= 0 && istr_get(func_ni) == "alloc" { return 1; }
+    }
     return 0;
 }
 
@@ -313,8 +323,33 @@ fn type_size(ti: int) -> int {
     }
     if k == TYP_PTR || k == TYP_REF { return 8; }
     if k == TYP_SLICE { return 16; }
-    if k == TYP_NAMED { return 64; }
+    if k == TYP_NAMED {
+        name_ni := get_type_data(ti);
+        si : ., mut = 0;
+        loop {
+            if si >= g_struct_count { break; }
+            if si_name(si) == name_ni { return si_field_count(si) * 8; }
+            si = si + 1;
+        }
+        return 8;
+    }
     return 8;
+}
+
+fn ptr_pointee_type(var_idx: int) -> int {
+    if var_idx < 0 { return TI_INT; }
+    ti := irv_type(var_idx);
+    if ti >= 0 {
+        k := get_type_kind(ti);
+        if k == TYP_PTR || k == TYP_REF { return get_type_data(ti); }
+    }
+    return TI_INT;
+}
+
+fn ptr_access_width(var_idx: int) -> int {
+    width := type_size(ptr_pointee_type(var_idx));
+    if width <= 0 { return 8; }
+    return width;
 }
 
 // Type alignment in bytes
@@ -626,8 +661,8 @@ fn gen_expr(node: int) -> int {
                 return v;
             }
         }
-        // Pointer arithmetic: use PTR_ADD/PTR_SUB/PTR_DIFF instead of standard opcodes
-        // Detection uses the producer node's opcode since irv_type stores TI_UNIT for pointers.
+        fti : int = TI_INT;
+        // Pointer arithmetic: use PTR_ADD/PTR_SUB/PTR_DIFF instead of standard opcodes.
         // Raw byte buffers from alloc() are byte-addressed — plain ADD/SUB, no scaling.
         if is_ptr_var(left_var) != 0 || is_ptr_var(right_var) != 0 {
             buf_left := is_byte_buf_var(left_var);
@@ -643,9 +678,12 @@ fn gen_expr(node: int) -> int {
                 }
             }
         }
+        if op == OP_PTR_ADD || op == OP_PTR_SUB {
+            if is_ptr_var(left_var) != 0 { fti = irv_type(left_var); }
+            else if is_ptr_var(right_var) != 0 { fti = irv_type(right_var); }
+        }
         // float 运算：类型标记 TI_FLOAT（后端按 ti 分派 SSE2，IEEE 754 标准）
         // int 操作数隐式转换（cvtsi2sd）——阶段 4
-        fti : int = 0;
         if lt == TI_FLOAT || rt == TI_FLOAT {
             fti = TI_FLOAT;
             if lt != TI_FLOAT {
@@ -717,7 +755,7 @@ fn gen_expr(node: int) -> int {
         if ast_kind(target) == EXPR_UNARY && ast_c(target) == UOP_DEREF {
             ptr_var := gen_expr(ast_a(target));
             ptr_var = force_if_thunk(ptr_var);
-            emit(IR_STORE_PTR, -1, ptr_var, val_var, 0, 0);
+            emit(IR_STORE_PTR, -1, ptr_var, val_var, 0, ptr_access_width(ptr_var));
             return val_var;
         }
         return val_var;
@@ -734,21 +772,29 @@ fn gen_expr(node: int) -> int {
                 arr_var = force_if_thunk(arr_var);
                 idx_var := gen_expr(ast_b(inner));
                 idx_var = force_if_thunk(idx_var);
-                v := new_ir_var("addr", TI_UNIT);
+                elem_ti : ., mut = TI_INT;
+                arr_ti := irv_type(arr_var);
+                if arr_ti >= 0 {
+                    arr_kind := get_type_kind(arr_ti);
+                    if arr_kind == TYP_ARRAY || arr_kind == TYP_SLICE {
+                        elem_ti = get_type_data(arr_ti);
+                    }
+                }
+                v := new_ir_var("addr", alloc_type(TYP_PTR, elem_ti, 0));
                 emit(IR_ADDR_INDEX, v, arr_var, idx_var, 3, 0);
                 return v;
             }
             op_var := gen_expr(ast_a(node));
             op_var = force_if_thunk(op_var);
-            v := new_ir_var("ref", TI_UNIT);
+            v := new_ir_var("ref", alloc_type(TYP_PTR, irv_type(op_var), 0));
             emit(IR_REF, v, op_var, ast_int_val(node), 0, 0);
             return v;
         }
         if op == UOP_DEREF {
             inner_var := gen_expr(ast_a(node));
             inner_var = force_if_thunk(inner_var);
-            dv := new_ir_var("deref", TI_UNIT);
-            emit(IR_DEREF, dv, inner_var, 0, 0, 0);
+            dv := new_ir_var("deref", ptr_pointee_type(inner_var));
+            emit(IR_DEREF, dv, inner_var, -1, 0, ptr_access_width(inner_var));
             return dv;
         }
         op_var := gen_expr(ast_a(node));
@@ -833,6 +879,9 @@ fn gen_expr(node: int) -> int {
         func_node := ast_a(node);
         first_arg := ast_b(node);
         arg_count := ast_c(node);
+        call_flags := ast_type_val(node);
+        is_module_call := call_flags == CALL_FLAG_MODULE || call_flags == CALL_FLAG_MODULE + CALL_FLAG_INLINE;
+        is_inline_call := call_flags == CALL_FLAG_INLINE || call_flags == CALL_FLAG_MODULE + CALL_FLAG_INLINE;
         arg_vars : string, mut;    arg_vars_cap : int, mut;
         ac : ., mut = 0;
     arg_vars = alloc(64 * 8); arg_vars_cap = 64;
@@ -1002,7 +1051,7 @@ fn gen_expr(node: int) -> int {
         // Module or method call: obj.method(args)
         if ast_kind(func_node) == EXPR_FIELD {
             func_ni = ast_data(node); // function name (set by checker for module calls)
-            if ast_type_val(node) != 1 {
+            if !is_module_call {
                 // Method call: self is first arg
                 obj_node := ast_a(func_node);
                 self_var := gen_expr(obj_node);
@@ -1047,12 +1096,15 @@ fn gen_expr(node: int) -> int {
                     ai = ai + 1;
                 }
                 // Find or create specialized function instance
-                spec_ni := gen_find_or_create(func_ni, type_args);
+                spec_ni := gen_find_or_create(gen_fi, type_args);
                 if spec_ni >= 0 {
                     func_ni = fi_name(spec_ni);
                     // Fall through to normal IR_CALL emission
                 }
             }
+        }
+        if is_inline_call && func_ni >= 0 {
+            emit(IR_INLINE, -1, func_ni, 0, 0, 0);
         }
         // Check SO function dispatch (variadic expansion, auto_str, etc.)
         handled := dispatch_call(func_ni, ac, arg_vars);
@@ -1553,6 +1605,7 @@ fn gen_expr(node: int) -> int {
     if ast_kind(node) == EXPR_ARRAY {
         v := new_ir_var("arr", TI_UNIT);
         emit(IR_ALLOC_ARRAY, v, ast_b(node), 0, 0, 0);
+        elem_ti : ., mut = TI_INT;
         ei : ., mut = 0;
         en : ., mut = ast_a(node);
         loop {
@@ -1560,11 +1613,13 @@ fn gen_expr(node: int) -> int {
             if en >= 0 {
                 e_var := gen_expr(en);
                 e_var = force_if_thunk(e_var);
+                if ei == 0 { elem_ti = irv_type(e_var); }
                 emit(IR_STORE_INDEX, -1, v, e_var, ei, 0);
                 en = en + 1;
             }
             ei = ei + 1;
         }
+        irv_set_type(v, alloc_type(TYP_ARRAY, elem_ti, ast_b(node)));
         return v;
     }
 
@@ -1609,8 +1664,23 @@ fn gen_expr(node: int) -> int {
         return ret;
     }
     if ast_kind(node) == EXPR_AS {
-        // Type cast: emit inner expr, result type handled by checker
-        return gen_expr(ast_a(node));
+        inner_var := gen_expr(ast_a(node));
+        inner_var = force_if_thunk(inner_var);
+        target_ti := ti_from_type_expr(ast_b(node));
+        if get_type_kind(target_ti) == TYP_PTR {
+            source_ti := irv_type(inner_var);
+            source_kind := get_type_kind(source_ti);
+            asp : ., mut = 1;
+            if source_kind == TYP_PTR {
+                asp = get_type_extra(source_ti);
+            } else if source_kind == TYP_REF || is_byte_buf_var(inner_var) != 0 {
+                asp = 0;
+            }
+            target_ti = alloc_type(TYP_PTR, get_type_data(target_ti), asp);
+        }
+        cast_var := new_ir_var("_cast", target_ti);
+        emit(IR_LOAD, cast_var, inner_var, 0, 0, target_ti);
+        return cast_var;
     }
     if ast_kind(node) == EXPR_TRY {
         // Try: unwrap Result/Option, just emit the inner expr for now
@@ -1976,9 +2046,11 @@ fn ir_gen_all() {
     i : ., mut = 0;
     loop {
         if i >= g_func_count { break; }
-        df_begin_func(i);
+        if fi_generic_count(i) > 0 { i = i + 1; continue; }
+        ir_func_idx := g_ir_func_count;
+        df_begin_func(ir_func_idx);
         ir_gen_func(i);
-        df_end_func(i);
+        df_end_func(ir_func_idx);
         i = i + 1;
     }
 }

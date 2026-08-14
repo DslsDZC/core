@@ -140,13 +140,13 @@ RegionCheck 为每个子图分配递增的序号（由控制流决定，不是�
 
 ### 算法
 
-ProvenanceVerify 从每个 DEREF 节点出发，沿指针来源倒推，找到最初的 ALLOC 节点，比较偏移量。
+ProvenanceVerify 从每个 DEREF/STORE_PTR 节点出发，沿指针来源倒推，找到最初的 ALLOC 节点，比较偏移量与访问宽度。
 
 ```
 输入: 带有 points-to 信息的完整数据流图
 
 处理:
-  对每个 DEREF 节点:
+  对每个 DEREF/STORE_PTR 节点:
     1. 沿 pointer 的 def 链倒推到 ALLOC 节点
        (经过 COPY、ADD、SUB、LOAD 等中间节点)
 
@@ -156,10 +156,10 @@ ProvenanceVerify 从每个 DEREF 节点出发，沿指针来源倒推，找到�
        - LOAD:     偏移重置（解引用一个指针，取其指向的成员的偏移）
        - COPY:     偏移不变，沿来源继续
 
-    3. 获取 ALLOC 节点的大小 alloc_size
+    3. 获取 ALLOC 节点的大小 alloc_size 和本次访问宽度 width
 
     if alloc_size 是编译期已知的:
-      if 0 <= offset < alloc_size:
+      if 0 <= offset && offset + width <= alloc_size:
         → 安全（编译期证明，零运行时开销）
       else:
         → 编译错误
@@ -169,14 +169,15 @@ ProvenanceVerify 从每个 DEREF 节点出发，沿指针来源倒推，找到�
 
 ### 运行时边界检查
 
-当 ALLOC 的大小不是编译期可知时（如运行时决定的数组大小），编译器在 DEREF 之前插入一条条件指令：
+当 allocation 大小已知、但指针偏移由运行时索引决定时，编译器为 DEREF/STORE_PTR 编码 allocation base、size 和 access width：
 
 ```
-check offset >= 0 && offset < alloc_size
+offset = pointer - allocation_base
+check offset >= 0 && offset + width <= alloc_size
 fail → panic
 ```
 
-后端将其编译为 `cmp` + `jae` + `ud2` 序列，约 10 字节，无其他运行时开销。
+后端将其编译为 `sub` + `cmp` + `jae` + `ud2` 序列。points-to 只有一个 allocation 目标时可生成精确基址检查；多目标且偏移无法静态证明时保守拒绝编译。
 
 ### ALLOC_AT：声明式放置（2026-08-13）
 
@@ -205,13 +206,11 @@ p := mmio + 4096;        // 越界 → 编译错误或运行时 check
 
 `*(float*)&i` **不需要 unsafe**。图的内存模型是"字节序列 + 宽度 + 边界"——provenance
 （alloc 归属）、offset（字节偏移）、alloc_size（字节大小）全部与类型无关，类型只是
-DEREF 处的"视图"。cast 在图里无节点（ir_gen 透传），provenance 边不断：
+DEREF 处的"视图"。cast 以有类型的 `IR_LOAD` 保留值流，provenance 边不断：
 
-- 双关合法判据 = 边界 + 宽度：`offset ∈ [0, alloc_size)` 且访问宽度不超出分配
-- 越界双关由现有 DEREF 边界检查拦截
-- 宽度检查（`off + width <= alloc_size`）待补，见 TODO 预存 bug 7
-- 编译器内部 `asp`（外部地址空间）标志在 checker 写入 TYP_PTR 但全仓库无消费点——
-  `0x... as *int` 在 safe 代码同样放行，归属待定，见 TODO 预存 bug 7
+- 双关合法判据 = 边界 + 宽度：`offset >= 0` 且 `offset + width <= alloc_size`
+- 越界双关由 DEREF/STORE_PTR 的统一边界检查拦截
+- 整数转指针产生 `asp=1`；该外部地址空间的解引必须在 `unsafe` 边界内
 
 ### 字节权限层（2026-08-13）
 
@@ -226,13 +225,14 @@ Freeable > Writable > Readable > Nonempty > Empty
 - 分配后默认 Freeable；`drop_perm` 可收窄（如 const 数据降为 Readable）
 - 权限与 provenance/offset/size 一样是**图数据**——验证器消费图即获得每字节控制
 
-`unsafe` 块内部的指针操作仍然被三点 pass 追踪。`unsafe` 不是"关掉验证"——是"标注图边界入口"。一旦进入 safe 代码，编译器重新获得追踪权。
+`unsafe` 是外部地址空间的显式边界。整数转指针会保留 `asp=1`，因此该指针即使流出块外，后续解引仍需要另一个 `unsafe` 边界；需要在 safe 代码中持续验证的固定地址应通过 `alloc_at` 声明式进图。
 
 ```core
 unsafe {
     p := 0x7fff0000 as *int;  // 入口，编译器接受用户保证
+    *p = 42;
 }
-// 之后编译器可以追踪 p 的 provenance
+// 块外再次解引 p 仍需要 unsafe
 ```
 
 ## 与其它语言的对比
@@ -253,12 +253,12 @@ Core 编译器已有数据流图（`src/compiler/dataflow.cr`）和线性扫描�
 
 **更新（2026-07-28）**：三个 pass 已全部实现——
 `src/compiler/ptr_analysis.cr`（PointerAnalysis）、`src/compiler/region_check.cr`（RegionCheck）、
-`src/compiler/provenance_verify.cr`（ProvenanceVerify）。DEREF 后端发射 cmp+jae+ud2
-边界检查序列（s3 编码 alloc_size），运行时 prov_table 维护堆边界并 patch DEREF 检查点，
-配合 2026-07-28 的 Arena 内存模型（`src/stdlib/arena.cr`）。细节见 `TODO.md`。
+`src/compiler/provenance_verify.cr`（ProvenanceVerify）。DEREF/STORE_PTR 后端发射
+allocation-base-relative 的 `sub+cmp+jae+ud2` 边界检查，配合 2026-07-28 的 Arena 内存模型
+（`src/stdlib/arena.cr`）。细节见 `TODO.md`。
 
 **更新（2026-08-10）**：设计定论——
-1. 类型双关由图自动验证（见上"类型双关"节），不需要 unsafe；宽度检查待补（TODO 预存 bug 7）
+1. 类型双关由图自动验证（见上"类型双关"节），不需要 unsafe
 2. **不扩展"程序内部地址直接指"（0x 字面量指内部对象）**——YAGNI：内部对象用 `&` 取址
    更优（无漂移、类型全、验证无条件）；外部契约地址 unsafe 已够用。0x 字面量仅保留
    unsafe 外部入口角色（上表前三行），详见 TODO 预存 bug 7
@@ -268,6 +268,9 @@ Core 编译器已有数据流图（`src/compiler/dataflow.cr`）和线性扫描�
    与 2026-08-10 定论不冲突（0x 字面量仍是 unsafe 入口）
 2. **跨区域引用放宽**：从"禁止"改为 outlives 顺序判定（RegionCheck 图活性判定即该检查）
 3. **字节权限层**：每字节 Freeable/Writable/Readable/Nonempty/Empty（见上节）
+
+**更新（2026-08-16）**：访问宽度、store 边界检查和 `asp` 外部地址约束已落地。
+动态偏移检查使用 points-to 定位的实际 allocation base，不再使用页内偏移近似。
 
 设计依据：`docs/superpowers/specs/2026-08-13-graph-anchored-regions-design.md` + `docs/memory-model.md`。
 

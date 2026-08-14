@@ -391,6 +391,16 @@ fn corec_main() -> int {
     // Incremental cache: ensure cache directory exists
     make_cir_cache_dir();
 
+    // A cached caller does not replay monomorphization, so its specialized
+    // callee FuncInfo entries would be missing on the next compile.
+    cache_enabled : int, mut = 1;
+    cache_scan : ., mut = 0;
+    loop {
+        if cache_scan >= g_func_count { break; }
+        if fi_generic_count(cache_scan) > 0 { cache_enabled = 0; break; }
+        cache_scan = cache_scan + 1;
+    }
+
     // Generate IR for each function, checking cache first
     fi : ., mut = 0;
     loop {
@@ -398,14 +408,14 @@ fn corec_main() -> int {
 
         // Skip generic functions — they are monomorphized at call sites
         if fi_generic_count(fi) > 0 {
-            df_begin_func(fi);
-            df_end_func(fi);
             fi = fi + 1;
             continue;
         }
 
-        // Begin function boundary in DFG
-        df_begin_func(fi);
+        // DFG metadata uses the compact IR function index. Source FuncInfo
+        // indices diverge as soon as a generic function is skipped.
+        ir_func_idx := g_ir_func_count;
+        df_begin_func(ir_func_idx);
 
         // Build cache key from source path + function name
         fn_node := fi_ast_node(fi);
@@ -430,7 +440,8 @@ fn corec_main() -> int {
         var_start := g_ir_var_count;
 
         // Try loading from cache (pass func_idx for signature verification)
-        cached := load_cir_cache(cache_path, fi);
+        cached : int, mut = -1;
+        if cache_enabled != 0 { cached = load_cir_cache(cache_path, fi); }
         if cached == 0 {
             // Cache hit: setup function metadata for restored data
             func_idx := g_ir_func_count;
@@ -444,14 +455,14 @@ fn corec_main() -> int {
             w64(g_ir_func_var_count, func_idx * 8, g_ir_var_count - var_start);
             g_ir_func_count = func_idx + 1;
 
-            df_end_func(fi);
+            df_end_func(ir_func_idx);
         } else {
             // Cache miss: do full frontend IR gen
             ir_gen_func(fi);
-            df_end_func(fi);
+            df_end_func(ir_func_idx);
 
             // Save cache for future compilations
-            save_cir_cache(cache_path, fi);
+            if cache_enabled != 0 { save_cir_cache(cache_path, fi, ir_func_idx); }
         }
 
         fi = fi + 1;
