@@ -1603,18 +1603,33 @@ emit(IR_STORE, -1, lv, val_var, 0, 0);
         header_lbl := new_label();
         body_lbl := new_label();
         exit_lbl := new_label();
+        // Keep while loops on the same SG_LOOP protocol as loop/for: the
+        // region owns the condition, body, back-edge, and exit label so sg_pop
+        // can add the termination dependency and advance the state chain.
+        sg_push(SG_LOOP);
+        arena_var := new_ir_var("_arena", TI_INT);
+        w64(g_sg_arena_var, (g_sg_count - 1) * 8, arena_var);
         emit(IR_LABEL, -1, header_lbl, 0, 0, 0);
         cond_var := gen_expr(cond);
         cond_var = force_if_thunk(cond_var);
         emit(IR_BRANCH, -1, cond_var, body_lbl, exit_lbl, 0);
         emit(IR_LABEL, -1, body_lbl, 0, 0, 0);
+        emit(IR_ARENA_NEW, arena_var, 0, 0, 0, 0);
+        arena_instr := g_ir_instr_count - 1;
         push_ir_scope();
-        push_loop_labels(header_lbl, exit_lbl);
+        // Continue must pass through the reset point before rechecking cond.
+        post_lbl := new_label();
+        push_loop_labels(post_lbl, exit_lbl);
         gen_expr(body);
         pop_loop_labels();
         pop_ir_scope();
+        total := r64(g_sg_alloc_total, g_sg_count - 1);
+        if total > 0 { iri_set_s1(arena_instr, total); }
+        emit(IR_LABEL, -1, post_lbl, 0, 0, 0);
+        emit(IR_ARENA_RESET, -1, arena_var, 0, 0, 0);
         emit(IR_JUMP, -1, header_lbl, 0, 0, 0);
         emit(IR_LABEL, -1, exit_lbl, 0, 0, 0);
+        sg_pop();  // close loop region (arena already reset above)
         return -1;
     }
 

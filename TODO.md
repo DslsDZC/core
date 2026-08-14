@@ -88,9 +88,10 @@
 - state edges（副作用链 + 循环终止依赖）+ .ccr v5（SG 段 24B + edge kind + v4 兼容）
 
 ### 已知缺口（region 化相关，待修）
-- 缓存命中路径 SG 段不完整（load_cir_cache 不恢复嵌套 region——仅函数级 region）
-- while 循环无终止依赖（while 不生成 region）
+- 缓存命中路径 SG 段不完整（已修复，2026-08-18：CIR v13 保存/恢复嵌套 region 与 node→region 映射；`test_nested_regions_cache_persist` 覆盖）
+- while 循环无终止依赖（已修复，2026-08-18：while 使用 SG_LOOP、arena reset 与终止 state edge；`test_while_region_and_termination_edge` / `test_while_break_continue_run` 覆盖）
 - 终止边源边界与链头推进（已修复，2026-08-08——final review Important #1：sg_pop 终止边源须在 region 内 + 链头推进到 exit 节点，test_termination_edge_source_guard 覆盖）
+- 解释器内联 callee 循环不更新局部状态（已修复，2026-08-18：补齐 callee `ALLOC/STORE/LOAD`、arena 与立即 return 语义；`test_inline_callee_while_run` 覆盖）
 - callee inline 执行中的循环崩溃（解释器限制，预存）
 
 ## 预存 Bug（不阻塞开发，待修复）

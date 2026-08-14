@@ -308,7 +308,6 @@ fn e2_ptr_null_check(b: string, p: int) -> int {
 fn e2_movabs_rdi(b: string, p: int, v: int) -> int {
     e2_w8(b, p, 72); e2_w8(b, p+1, 191); e2_w64(b, p+2, v); return 10;
 }
-
 fn e2_alu(b: string, p: int, op: int) -> int {
     // ALU r/m, r: REX.W + REX.RB (r11, r10) + opcode + ModRM reg=11, rm=10
     cp := p;

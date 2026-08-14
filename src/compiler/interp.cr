@@ -454,7 +454,21 @@ fn ir_interpret() -> int {
                                     ov2 := r64(g_ir_vals, t1 * 8);
                                     if t3 == 1 { w64(g_ir_vals, d2 * 8, -ov2); }
                                     else if t3 == 2 { if ov2 == 0 { w64(g_ir_vals, d2 * 8, 1); } else { w64(g_ir_vals, d2 * 8, 0); } } }
-                                if op2 == 5 { if t1 >= 0 { w64(g_ir_vals, 0, r64(g_ir_vals, t1 * 8)); } }  // IR_RETURN
+                                // Keep callee locals in the shared value store.
+                                // The old inline path skipped these opcodes, so
+                                // loop-carried assignments never changed state.
+                                if op2 == 6 && d2 >= 0 { w64(g_ir_vals, d2 * 8, 0); }  // IR_ALLOC
+                                if op2 == 9 && t1 >= 0 && t2 >= 0 { w64(g_ir_vals, t1 * 8, r64(g_ir_vals, t2 * 8)); }  // IR_STORE
+                                if op2 == 10 && d2 >= 0 && t1 >= 0 { w64(g_ir_vals, d2 * 8, r64(g_ir_vals, t1 * 8)); }  // IR_LOAD
+                                if op2 == 32 && d2 >= 0 { w64(g_ir_vals, d2 * 8, 0); }  // IR_ARENA_NEW
+                                if op2 == 33 { }  // IR_ARENA_RESET
+                                if op2 == 46 || op2 == 47 {
+                                    if d2 >= 0 && t1 >= 0 { w64(g_ir_vals, d2 * 8, r64(g_ir_vals, t1 * 8)); }
+                                }
+                                if op2 == 5 {
+                                    if t1 >= 0 { w64(g_ir_vals, 0, r64(g_ir_vals, t1 * 8)); }
+                                    ip2 = f_count;  // return exits the callee immediately
+                                }  // IR_RETURN
                                 if op2 == 19 && t1 >= 0 {
                                     cv2 := r64(g_ir_vals, t1 * 8);
                                     if cv2 != 0 { if t2 >= 0 && t2 < g_label_count { ip2 = r64(g_label_poses, t2 * 8); } }
