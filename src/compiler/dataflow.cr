@@ -403,8 +403,12 @@ fn df_end_func(func_idx: int) {
 // --- DOT output ---
 
 fn df_graph_to_dot() -> string {
-    dot : ., mut = "digraph G {\n";
-    dot = dot + "    rankdir=TB;\n";
+    // Build the graph in a growable buffer.  Repeated string concatenation
+    // allocates and copies the whole prefix for every fragment, exhausting
+    // the native bump heap on medium/large graphs before the dump is written.
+    dump_buf_reset();
+    dump_buf_append("digraph G {\n");
+    dump_buf_append("    rankdir=TB;\n");
 
     // Region clusters: group each subgraph's nodes into a DOT cluster
     si : ., mut = 0;
@@ -417,17 +421,19 @@ fn df_graph_to_dot() -> string {
         if skind == SG_FOR    { sname = "for"; }
         if skind == SG_FLOW   { sname = "flow"; }
         if skind == SG_UNSAFE { sname = "unsafe"; }
-        dot = dot + "  subgraph cluster_" + sname + int_str(si) + " { label=\"" + sname + "\";\n";
+        dump_buf_append("  subgraph cluster_"); dump_buf_append(sname);
+        dump_buf_append(int_str(si)); dump_buf_append(" { label=\"");
+        dump_buf_append(sname); dump_buf_append("\";\n");
         // Nodes in this region:
         n0 := r64(g_sgs, si * ESZ_SG + OFF_SG_NSTART);
         n1 := r64(g_sgs, si * ESZ_SG + OFF_SG_EXIT);
         if n1 >= 0 {  // skip unclosed (EXIT<0) entries
             ni : ., mut = n0;
             loop { if ni >= n1 { break; }
-                dot = dot + "    n" + int_str(ni) + ";\n";
+                dump_buf_append("    n"); dump_buf_append(int_str(ni)); dump_buf_append(";\n");
                 ni = ni + 1; }
         }
-        dot = dot + "  }\n";
+        dump_buf_append("  }\n");
         si = si + 1;
     }
 
@@ -445,7 +451,9 @@ fn df_graph_to_dot() -> string {
                 label = vname + ":" + label;
             }
         }
-        dot = dot + "    n" + int_str(ni) + " [label=\"" + label + "\", shape=box];\n";
+        dump_buf_append("    n"); dump_buf_append(int_str(ni));
+        dump_buf_append(" [label=\""); dump_buf_append(label);
+        dump_buf_append("\", shape=box];\n");
         ni = ni + 1;
     }
 
@@ -456,15 +464,17 @@ fn df_graph_to_dot() -> string {
         e_from := r64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_FROM);
         e_to := r64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_TO);
         if r64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_KIND) != 0 {
-            dot = dot + "    n" + int_str(e_from) + " -> n" + int_str(e_to) + " [style=dashed,color=red];\n";
+            dump_buf_append("    n"); dump_buf_append(int_str(e_from)); dump_buf_append(" -> n");
+            dump_buf_append(int_str(e_to)); dump_buf_append(" [style=dashed,color=red];\n");
         } else {
-            dot = dot + "    n" + int_str(e_from) + " -> n" + int_str(e_to) + ";\n";
+            dump_buf_append("    n"); dump_buf_append(int_str(e_from)); dump_buf_append(" -> n");
+            dump_buf_append(int_str(e_to)); dump_buf_append(";\n");
         }
         ei = ei + 1;
     }
 
-    dot = dot + "}\n";
-    return dot;
+    dump_buf_append("}\n");
+    return dump_buf_finish();
 }
 
 fn df_opcode_name(opcode: int, s3: int) -> string {

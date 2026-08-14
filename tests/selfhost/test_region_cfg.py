@@ -21,6 +21,8 @@ def cir_dump(src: str) -> str:
     r = subprocess.run(['./build/corec', 'cir', path], capture_output=True, text=True,
                        cwd=BASE, timeout=120)
     os.unlink(path)
+    assert r.returncode == 0, \
+        f"cir failed with {r.returncode}: stdout={r.stdout!r} stderr={r.stderr!r}"
     out = r.stdout
     try:
         with open(cir_path) as f:
@@ -195,7 +197,10 @@ def ccr_walk(path: str):
         sl = u32()
         pos += sl
     pos += func_cnt * 28
-    pos += instr_cnt * 24
+    # Each instruction stores opcode/dest (8B), 64-bit s1 (8B), s2/s3/tk
+    # (12B): 28 bytes total.  Keep this walk in sync with ccr_io.cr's wire
+    # format so malformed offsets do not masquerade as a serializer failure.
+    pos += instr_cnt * 28
     pos += var_cnt * 12
     pos += str_const_cnt * 4
     for _ in range(struct_cnt):
