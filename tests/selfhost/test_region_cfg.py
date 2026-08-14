@@ -144,6 +144,30 @@ def test_termination_edge_source_in_region():
         assert a <= f < b, \
             f"termination edge source {f} outside for region {a}..{b} (exit {t}):\n{out}"
 
+def test_while_region_and_termination_edge():
+    """while 也必须有 SG_LOOP 区域，并把循环退出接入 state 链。"""
+    out = cir_dump("fn main() -> int {\n"
+                   "    n : ., mut = 0;\n"
+                   "    while n < 5 { n = n + 1; }\n"
+                   "    n = n + 1;\n"
+                   "    return n;\n"
+                   "}\n")
+    main_match = re.search(r'Function: main\n(.*?)(?=\nFunction: |\Z)', out, re.S)
+    assert main_match, f"main function missing in cir dump:\n{out}"
+    main_out = main_match.group(1)
+    regs = parse_regions(main_out)
+    assert 'loop' in regs, f"while loop region missing in cir dump:\n{out}"
+    a, b = regs['loop'][0]
+    assert_region_within_func(main_out, 'loop')
+    exit_node = b - 1
+    states = _state_edges(out)
+    term = [(f, t) for f, t in states if t == exit_node]
+    assert term, f"while termination edge into exit node {exit_node} missing:\n{out}"
+    assert all(a <= f < b for f, _ in term), \
+        f"while termination edge source outside loop region {a}..{b}:\n{out}"
+    assert any(f == exit_node for f, _ in states), \
+        f"post-while side effect does not depend on loop exit node {exit_node}:\n{out}"
+
 # --- Interpreter loop execution (TODO#3) ---
 # `corec run` compiles and interprets inline code; main()'s return value
 # becomes the process exit code.
@@ -160,6 +184,34 @@ def test_while_loop_run():
                         'fn main() -> int { n : ., mut = 0; while n < 5 { n = n + 1; } return n; }'],
                        capture_output=True, text=True, cwd=BASE, timeout=30)
     assert r.returncode == 5, f"while loop expected 5, got exit={r.returncode} stdout={r.stdout!r} stderr={r.stderr!r}"
+
+def test_while_break_continue_run():
+    r = subprocess.run(['./build/corec', 'run',
+                        'fn main() -> int { n : ., mut = 0; s : ., mut = 0; '
+                        'while n < 10 { n = n + 1; if n < 3 { continue; } '
+                        'if n == 6 { break; } s = s + n; } return s; }'],
+                       capture_output=True, text=True, cwd=BASE, timeout=30)
+    assert r.returncode == 12, \
+        f"while break/continue expected 12, got exit={r.returncode} stdout={r.stdout!r} stderr={r.stderr!r}"
+
+def test_inline_callee_while_run():
+    """内联 callee 的 while 必须更新局部状态并正常返回。"""
+    r = subprocess.run(['./build/corec', 'run',
+                        'fn sum(n: int) -> int { s : ., mut = 0; '
+                        'while n > 0 { s = s + n; n = n - 1; } return s; } '
+                        'fn main() -> int { return sum(3); }'],
+                       capture_output=True, text=True, cwd=BASE, timeout=10)
+    assert r.returncode == 6, \
+        f"inline callee while expected 6, got exit={r.returncode} stdout={r.stdout!r} stderr={r.stderr!r}"
+
+def test_inline_callee_for_run():
+    r = subprocess.run(['./build/corec', 'run',
+                        'fn sum() -> int { s : ., mut = 0; '
+                        'for i in 0..4 { s = s + i; } return s; } '
+                        'fn main() -> int { return sum(); }'],
+                       capture_output=True, text=True, cwd=BASE, timeout=10)
+    assert r.returncode == 6, \
+        f"inline callee for expected 6, got exit={r.returncode} stdout={r.stdout!r} stderr={r.stderr!r}"
 
 def test_break_continue_run():
     r = subprocess.run(['./build/corec', 'run',
@@ -300,6 +352,40 @@ def test_region_check_cache_hit():
         except FileNotFoundError:
             pass
 
+def test_nested_regions_cache_persist():
+    """增量 .cir 命中必须恢复函数内的嵌套 SG，而不是只恢复 func region。"""
+    src = ("fn main() -> int {\n"
+           "    s : ., mut = 0;\n"
+           "    for i in 0..3 {\n"
+           "        for j in 0..2 { s = s + i + j; }\n"
+           "    }\n"
+           "    return s;\n"
+           "}\n")
+    with tempfile.NamedTemporaryFile('w', suffix='.cr', delete=False) as f:
+        f.write(src)
+        path = f.name
+    cir_path = os.path.splitext(path)[0] + '.cir'
+    outs = []
+    try:
+        clean = subprocess.run(['./build/corec', 'clean-cache'],
+                               capture_output=True, text=True, cwd=BASE, timeout=30)
+        assert clean.returncode == 0, f"clean-cache failed: {clean.stderr}"
+        for run in (1, 2):
+            r = subprocess.run(['./build/corec', 'cir', path],
+                               capture_output=True, text=True, cwd=BASE, timeout=120)
+            assert r.returncode == 0, f"cir failed on run {run}: {r.stderr}"
+            outs.append(r.stdout)
+            try:
+                os.unlink(cir_path)
+            except FileNotFoundError:
+                pass
+    finally:
+        os.unlink(path)
+    for out in outs:
+        regs = parse_regions(out)
+        assert len(regs.get('for', [])) == 2, \
+            f"nested for regions not preserved across cache hit:\n{out}"
+
 def test_state_edges_cache_persist():
     """缓存命中路径不丢 state 边：同路径第二次 cir dump（cache hit）必须仍显示
     state 边（cir_cache v2 边序列化带 kind 的回归守卫）"""
@@ -329,11 +415,14 @@ if __name__ == '__main__':
     tests = [test_if_region, test_loop_region, test_node_region_mapping,
              test_state_edges, test_loop_termination_edge,
              test_termination_edge_source_guard, test_termination_edge_source_in_region,
-             test_for_loop_run, test_while_loop_run, test_break_continue_run,
+             test_while_region_and_termination_edge,
+             test_for_loop_run, test_while_loop_run, test_while_break_continue_run,
+             test_inline_callee_while_run, test_inline_callee_for_run,
+             test_break_continue_run,
              test_nested_loop_run,
              test_ccr_v2_sg_section, test_ccr_roundtrip_v2,
              test_region_check_pointer_escape, test_region_check_cache_hit,
-             test_state_edges_cache_persist]
+             test_nested_regions_cache_persist, test_state_edges_cache_persist]
     failed = 0
     for t in tests:
         try:
