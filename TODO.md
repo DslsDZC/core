@@ -62,6 +62,16 @@
 - **Python bootstrap 词法修复**：`old` 不再被错误保留，可作为普通标识符
 - **自举依赖补全**：bootstrap 构建纳入并发运行时依赖、共享 arena 全局和 fiber 声明
 
+### 首次堆扩展与动态字符串修复（2026-08-14）
+- **分配器状态保留**：`heap_expand` 在设置 `mmap` 参数前保存并恢复对齐分配跨度、原始请求长度和当前 arena ID，扩容重试不再重叠后续分配或写入 0 长度头
+- **整数转字符串修复**：`int_str(7)` / `int_str(567)` 的内容和隐藏长度头稳定正确
+- **字符串拼接修复**：`println("AB" + "CD")` 正常输出，不再因首次动态分配的长度头损坏而崩溃
+- **float 舍入修复**：六位小数舍入支持连续 9 的进位传播，`1.9999996` / `9.9999996` / `-1.9999996` 正确输出 `2` / `10` / `-2`
+- **CIR/DOT 输出堆耗尽修复**：`df_graph_to_dot()` 与 `cir_text_dump()` 改用 growable buffer，消除逐片段拼接造成的二次方临时分配；`corec cir` 不再在固定 1 GiB 堆耗尽后 SIGSEGV
+- **CCR v5 格式回归修复**：测试 walker 按实际 28 字节 instruction 记录前进，SG 段布局检查恢复为有效断言
+- **arena 回归确认**：`arena_test.cr` 的基本分配、嵌套和 free-list 复用均通过
+- **完整自举确认**：`corec build src/compiler` 在 O0/O1 下均成功，三代后端输出逐字节一致
+
 ## Region 化控制流（2026-08-08 完成）
 
 RVSDG 式嵌套 region 已落地（规格 docs/superpowers/specs/2026-08-08-region-cfg-design.md）：
@@ -74,28 +84,22 @@ RVSDG 式嵌套 region 已落地（规格 docs/superpowers/specs/2026-08-08-regi
 - while 循环无终止依赖（while 不生成 region）
 - 终止边源边界与链头推进（已修复，2026-08-08——final review Important #1：sg_pop 终止边源须在 region 内 + 链头推进到 exit 节点，test_termination_edge_source_guard 覆盖）
 - callee inline 执行中的循环崩溃（解释器限制，预存）
-- P5 验收"自举 O0/O1 全绿"未达成——被预存 SIGSEGV 阻塞（TODO.md bug 1：corec build src/compiler 崩溃），归属自举修复分支
 
 ## 预存 Bug（不阻塞开发，待修复）
 
-### 1. 完整编译器自举内存峰值
-- 目录导入、冷缓存写入和 `corec check src/compiler` 已通过；目录构建逻辑本身不再崩溃
-- `corec build src/compiler` 在约 477 个函数完成 IR/缓存后耗尽 `rt.s` 的固定 1 GiB bump heap
-- 仅增加 mmap 扩容会让热缓存路径增长到约 7.6 GiB RSS 并触发 WSL OOM；需要按函数回收临时 IR/缓存数据，而不是继续扩大堆
-
-### 2. 并发集成：单 M 已端到端验证，多 M 未验证
+### 1. 并发集成：单 M 已端到端验证，多 M 未验证
 -  `go f(args)` 端到端已通：`sched_go(@addr(f), arg)` → g_new 存 saved_fn/saved_arg → 静态构建由 ELF 后端内联发射 fiber_init/fiber_switch/goroutine_entry_wrapper（不再依赖 rt.s 链接）→ wrapper 调用 saved_fn(saved_arg) → 结果经 result_ch 回传
 -  主线程注册为 G 0，可经 channel 阻塞/唤醒；sched_yield 不再重排 Gwaiting
 -  M 线程 worker loop（m_start_workers）未连到调度器完整测试——静态构建尚未内联发射 m_start_workers（rt.s 符号）
 -  channel wait queue 链表操作未在多线程并发下验证
 - 注意：G 结构 offset 56 同时用作 saved_fn（goroutine.cr）与 temp_val（chan.cr 等待队列 handoff）——单 G 流程可用（wrapper 在 chan 操作前读取 saved_fn），但字段语义重叠，重构时需拆分
 
-### 3. 解释器局限
+### 2. 解释器局限
 - **for 循环**: label/branch 与 dataflow 顺序执行不兼容
 - **递归/跨函数调用**: inline 执行不支持 IR_CALL
 - **泛型函数**: 类型检查通过但解释器返回 255
 
-### 4. 标准库补全
+### 3. 标准库补全
 - math.cr / collections.cr 均为 stub
 - 字符串操作、JSON 序列化待补
 
@@ -114,12 +118,6 @@ RVSDG 式嵌套 region 已落地（规格 docs/superpowers/specs/2026-08-08-regi
 - `docs/pointer-model.md` — 指针安全完整设计
 - `docs/language-syntax.md` — 指针、@ 内建语法已更新
 - `docs/at-intrinsics.md` — @ 内建原语完整规格
-
-### 5. arena bump 分配运行时死循环（2026-08-09 发现）
-- 症状：启用 arena（`arena_init` + `arena_new` 后调用 `alloc`）的程序运行时挂起（无输出、CPU 占用）
-- 已排除：ELF 后端 arena 相关编码全部 objdump 验证正确（`mov [r8],r10d` 的 44 89 00 错误已修复回 45 89 10）
-- 定位方向：`emit_alloc_body` 生成的运行时逻辑（g_current_arena 检查 / bump 推进 / .Lretry 循环 / OOM 链式扩展）
-- 复现：`arena_init(1<<20, 65536); arena_new(); alloc(64);`（/tmp/t_arena.cr）
 
 ### 6. 同步源码修改到伪代码文档（2026-08-09 记）
 - 背景：伪代码（docs/pseudocode/）基于源码快照翻译；以下源码变更后对应文档未同步
@@ -181,10 +179,7 @@ RVSDG 式嵌套 region 已落地（规格 docs/superpowers/specs/2026-08-08-regi
 
 ### 对照 CompCert 审查发现的未修复 bug（2026-08-11 记，详见 docs/compcert-reference.md）
 
-- **int_str 空字符串 bug**：`int_str(7)` 恒返回空、`int_str(567)` 随编译产物不稳定——打印链问题（预先存在，修复 .ccr s1 64 位后被大数路径暴露）。影响：float 打印精度（`float_str_bits(3.14)` 显示 "3.4"）、大 int 常量打印
-- **字符串拼接 + println 崩溃**：`println("AB" + "CD")` 程序核心转储（预先存在，concat 相关）。影响：check_error 的拼接错误信息不可读
 - **region_check 误报（B11）**：deref 读出的 int 值被当作指针做区域逃逸检查——`v := *p; return v;` 被拦（预先存在，pts 语义需按类型过滤）
-- **float 打印精度**：float_str_bits 的舍入为简单实现（第 7 位 ≥5 时第 6 位 +1，无进位传播）——±1ulp 显示误差可接受，但依赖 int_str 修复后重新验证
 
 ### float 支持实现记录（2026-08-11，对照 IEEE 754 / SysV 标准实现）
 
@@ -192,5 +187,5 @@ RVSDG 式嵌套 region 已落地（规格 docs/superpowers/specs/2026-08-08-regi
 - 算术：addsd/subsd/mulsd/divsd（F2 0F 5x C1）；比较：comisd + setcc 无符号标志
 - 转换：IR_I2F/IR_F2I（cvtsi2sd/cvttsd2si）+ float 运算 int 操作数隐式转换
 - 参数/返回：SysV XMM0-7（int/float 独立编号）+ XMM0 返回 + 栈参数（float 超 8）
-- 打印：float_str_bits（位模式 → 十进制，长除 + 去尾零）
-- 验证：O0/O1/O2 运行全部通过；待办：float 打印精度（int_str 修复后）、f32 单精度、printf 风格最短表示
+- 打印：float_str_bits（位模式 → 十进制，长除 + 去尾零 + 跨位进位舍入）
+- 验证：O0/O1/O2 运行全部通过；待办：f32 单精度、printf 风格最短表示

@@ -20,7 +20,7 @@ fn w8_signed(buf: string, pos: int, val: int) {
 
 // Emit arena-aware dual-path allocator function body
 // Checks g_current_arena: if >=0 uses arena bump, otherwise global bump.
-// Returns bytes written (now ~271 with zero-init + chain-expand fix).
+// Returns bytes written.
 fn emit_alloc_body(buf: string, pos: int, bss_va: int, globals_size: int) -> int {
     // When arena globals aren't registered (e.g. non-static builds), emit the
     // original simple bump allocator to avoid relying on unpatched rip-relatives.
@@ -267,9 +267,8 @@ fn emit_alloc_body(buf: string, pos: int, bss_va: int, globals_size: int) -> int
     }
     // cmp rdx, [rcx] -- 48 3B 11
     w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 59); w8(buf, pos+cp+2, 17); cp = cp + 3;
-    // jbe +17 (skip call+reload+rdi+jmp if within bounds)
-    // 修复：原 +14 漏了 mov rdi,r9（3 字节）→ 跳到指令中间（0xf9）→ 死循环
-    w8(buf, pos+cp, 118); w8(buf, pos+cp+1, 17); cp = cp + 2;
+    // jbe +14 (skip call+reload+jmp if within bounds)
+    w8(buf, pos+cp, 118); w8(buf, pos+cp+1, 14); cp = cp + 2;
     // call heap_expand -- E8 xx xx xx xx (patched in elf_gen after heap_expand emitted)
     g_heap_expand_call_pos = pos + cp;
     e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;
@@ -285,10 +284,6 @@ fn emit_alloc_body(buf: string, pos: int, bss_va: int, globals_size: int) -> int
         rel_hr := bss_va - (fva + cp + 7);
         w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 29); w8_signed(buf, pos+cp+3, rel_hr); cp = cp + 7;
     }
-    // mov rdi, r9 -- 49 8B F9 (restore the original size: heap_expand clobbers
-    // rdi with the mmap args; without this the retry bumps heap_ptr by 0 and
-    // every later alloc carves into the arena pool's 1MB region)
-    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 249); cp = cp + 3;
     // jmp .Lretry -- EB xx (short backwards jump to mov r8, r11)
     jmp_off_val := retry_cp - (cp + 2);
     w8(buf, pos+cp, 235); w8(buf, pos+cp+1, jmp_off_val % 256); cp = cp + 2;
@@ -436,6 +431,11 @@ fn emit_alloc_body_simple(buf: string, pos: int, bss_va: int, globals_size: int)
 fn emit_heap_expand(buf: string, pos: int, bss_va: int) -> int {
     cp := 0;
     fva := TEXT_BASE + pos;
+    // Private allocator helper: preserve the live allocation span, original
+    // request size, and current arena index across mmap argument setup.
+    w8(buf, pos+cp, 87); cp = cp + 1;  // push rdi
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 81); cp = cp + 2;  // push r9
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 82); cp = cp + 2;  // push r10
     // xor edi, edi -- 31 FF (addr = NULL, let kernel choose)
     w8(buf, pos+cp, 49); w8(buf, pos+cp+1, 255); cp = cp + 2;
     // mov esi, 1073741824 -- BE xx xx xx xx (length = 1 GiB)
@@ -455,8 +455,8 @@ fn emit_heap_expand(buf: string, pos: int, bss_va: int) -> int {
     // test rax, rax -- 48 85 C0 (check if mmap returned negative error)
     w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 133); w8(buf, pos+cp+2, 192); cp = cp + 3;
     // js .Lhf -- 78 XX (skip success path if mmap failed, rax has -errno)
-    // Success path: 7+7+7+2+1 = 24 bytes
-    w8(buf, pos+cp, 120); w8(buf, pos+cp+1, 24); cp = cp + 2;
+    // Success path: 7+7+7+2+5+1 = 29 bytes
+    w8(buf, pos+cp, 120); w8(buf, pos+cp+1, 29); cp = cp + 2;
     // mov [rip + g_heap_ptr], rax — store via rip_patch
     if gv_heap_ptr >= 0 {
         rip_hp_ex := pos + cp + 3;
@@ -485,11 +485,18 @@ fn emit_heap_expand(buf: string, pos: int, bss_va: int) -> int {
     }
     // xor eax, eax -- 31 C0 (return 0 for success)
     w8(buf, pos+cp, 49); w8(buf, pos+cp+1, 192); cp = cp + 2;
+    // Restore allocator state.
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 90); cp = cp + 2;  // pop r10
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 89); cp = cp + 2;  // pop r9
+    w8(buf, pos+cp, 95); cp = cp + 1;  // pop rdi
     // ret -- C3
     w8(buf, pos+cp, 195); cp = cp + 1;
     // .Lhf: mmap failed, return -1
     // mov rax, -1 -- 48 C7 C0 FF FF FF FF
     w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 199); w8(buf, pos+cp+2, 192); e2_w32(buf, pos+cp+3, -1); cp = cp + 7;
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 90); cp = cp + 2;  // pop r10
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 89); cp = cp + 2;  // pop r9
+    w8(buf, pos+cp, 95); cp = cp + 1;  // pop rdi
     // ret -- C3
     w8(buf, pos+cp, 195); cp = cp + 1;
     return cp;
@@ -1123,7 +1130,7 @@ fn elf_gen(buf: string) -> int {
     w64(g_x86_func_offsets, g_x86_func_off_count * 16, str_intern("heap_expand"));
     w64(g_x86_func_offsets, g_x86_func_off_count * 16 + 8, total_code);
     g_x86_func_off_count = g_x86_func_off_count + 1;
-    total_code = total_code + 80;  // heap_expand size estimate (~71 bytes)
+    total_code = total_code + 86;  // heap_expand with allocator-state save/restore
     // sched_call trampolines (0..4)
     grow_func_offsets(g_x86_func_off_count * 2 + 2);
     w64(g_x86_func_offsets, g_x86_func_off_count * 16, str_intern("sched_call_0"));
