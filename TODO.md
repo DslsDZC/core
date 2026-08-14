@@ -74,7 +74,7 @@
 
 ## Region 化控制流（2026-08-08 完成）
 
-RVSDG 式嵌套 region 已落地（规格 docs/superpowers/specs/2026-08-08-region-cfg-design.md）：
+嵌套 region 已落地（HDFG 结构；规格 docs/superpowers/specs/2026-08-08-region-cfg-design.md——该规格中的"RVSDG 式"为当时路线记录，结构后定名 HDFG）：
 - SG_IF + g_df_node_region 显式映射 + sg_pop close 语义修复
 - 解释器 region 迭代（回跳经 SG 表）+ lexer float/`..` 修复（`0..4` 的 `..` 被 float 扫描吃掉——for 循环 bug 真根因）
 - state edges（副作用链 + 循环终止依赖）+ .ccr v5（SG 段 24B + edge kind + v4 兼容）
@@ -106,12 +106,12 @@ RVSDG 式嵌套 region 已落地（规格 docs/superpowers/specs/2026-08-08-regi
 ## 架构规划
 
 ### 指针安全模型
-见 `docs/pointer-model.md`。裸指针 + 数据流图 provenance 推导，编译器自动验证，退路 `unsafe`。
+见 `docs/pointer-model.md`。裸指针 + HDFG provenance 推导，编译器自动验证，退路 `unsafe`。
 三 pass：PointerAnalysis、RegionCheck、ProvenanceVerify — 全部实现。
 
 ### Arena 内存模型
-见 `docs/memory-model.md`。已完整实现。堆按数据流子图划分独立 Arena，指针碰撞分配，
-游标重置回收。Arena 边界对应数据流子图边界。
+见 `docs/memory-model.md`。已完整实现。堆按 HDFG 子图划分独立 Arena，指针碰撞分配，
+游标重置回收。Arena 边界对应 HDFG 子图边界。
 
 ### 文档更新
 - `docs/memory-model.md` — 设计文档（待同步实现细节）

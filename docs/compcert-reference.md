@@ -16,7 +16,7 @@
 ```
 compcert/
 ├── backend/          ← 后端核心（Coq 源码 + 证明并排）
-│   ├── RTL.v         ← 3 地址中间表示（CFG，接近 Core 的 .cir 数据流图）
+│   ├── RTL.v         ← 3 地址中间表示（CFG，接近 Core 的 .cir HDFG）
 │   ├── Allocation.v  ← 寄存器分配（图着色）
 │   ├── Allocproof.v  ← 分配正确性证明（最著名的证明之一）
 │   ├── Linearize.v   ← CFG → 线性指令序列
@@ -37,7 +37,7 @@ compcert/
 
 | CompCert 文件 | 内容 | 对照 Core 的 |
 |---|---|---|
-| `backend/RTL.v` | 3 地址 IR | `src/compiler/dataflow.cr`（数据流图） |
+| `backend/RTL.v` | 3 地址 IR | `src/compiler/dataflow.cr`（HDFG） |
 | `backend/Allocation.v` + `Allocproof.v` | 寄存器分配 + 正确性证明 | `src/compiler/opt.cr`（寄存器分配器） |
 | `backend/Linearize.v` | 图 → 线性序列 | `src/compiler/ccr_io.cr` 的线性 CFG |
 | `x86/Asm.v` | 每条机器指令的语义模型 | `src/arch/linux/ld/instr.cr`（指令编码） |

@@ -2,9 +2,9 @@
 
 ## 概述
 
-Core 采用**图锚定区域**的统一内存管理方案：区域（Region）锚定在数据流图上——**区域是子图节点的字节域**，不是词法作用域的影子。堆内存划分为与数据流子图绑定的独立区域，每个区域内部使用线性指针碰撞分配（bump allocation），回收直接将整个区域游标重置回起始地址（格式化清空）。
+Core 采用**图锚定区域**的统一内存管理方案：区域（Region）锚定在HDFG上——**区域是子图节点的字节域**，不是词法作用域的影子。堆内存划分为与 HDFG 子图绑定的独立区域，每个区域内部使用线性指针碰撞分配（bump allocation），回收直接将整个区域游标重置回起始地址（格式化清空）。
 
-本设计是 2026-07-28 多 Arena 模型（`docs/superpowers/specs/2026-07-28-arena-model-design.md`）的**概念升级**：Arena 保留为分配器面实现，语义面升级为图锚定区域。传统区域内存管理（Tofte-Talpin 区域栈、Cyclone、Verona）全部锚定词法作用域（LIFO 嵌套）；Core 的执行模型是数据流图，区域与图同构。
+本设计是 2026-07-28 多 Arena 模型（`docs/superpowers/specs/2026-07-28-arena-model-design.md`）的**概念升级**：Arena 保留为分配器面实现，语义面升级为图锚定区域。传统区域内存管理（Tofte-Talpin 区域栈、Cyclone、Verona）全部锚定词法作用域（LIFO 嵌套）；Core 的执行模型是HDFG，区域与图同构。
 
 **不可放弃的两个核心价值**（放弃它们的代价）：
 
@@ -78,7 +78,7 @@ fn alloc(size: usize) -> *mut u8 {
 
 ### 图锚定：区域 = 子图节点的字节域
 
-每个数据流图节点（DFNode）可关联一个区域。执行器在激活节点时将其区域设为当前区域，节点内所有分配均来自该区域。
+每个HDFG节点（DFNode）可关联一个区域。执行器在激活节点时将其区域设为当前区域，节点内所有分配均来自该区域。
 
 ```
 DFGraph                    Arena Pool（区域的实现）
@@ -98,7 +98,7 @@ DFGraph                    Arena Pool（区域的实现）
 
 **推论 A：生命周期 = 图活性，不是 LIFO。** RegionCheck 的 `cur_seq < exit_seq` 判定（见 `docs/pointer-model.md`）就是图版本的生命周期定义。这天然支持 flow/go 的独立区域（区域栈做不到非 LIFO 生命周期），也天然给出跨区域引用的合法性判据（outlives 的图形式）。
 
-**推论 B：区域操作沿图边。** 区域不仅嵌套（树），还能沿数据流边操作：
+**推论 B：区域操作沿图边。** 区域不仅嵌套（树），还能沿 HDFG 边操作：
 
 - **split**：一块字节沿边划给子消费者（= 字节块独立回收；子区域 = 图边的子块，自己的游标 + 自己的重置点）
 - **merge**：汇合点两个子区域的数据汇入（拷贝或区域合并）
@@ -205,11 +205,11 @@ mmio := alloc_at(0x7fff0000, 4096, align(4096));
 
 ### 例外：图边界
 
-编译器无法追踪 provenance 的入口点（外部地址、FFI 返回值、inline asm）仍需要 `unsafe`，和所有数据流图无法追踪 provenance 的情况一样。详见 `docs/pointer-model.md`。`unsafe` 块在此处的作用不是"关掉检查"，而是"标注图边界入口"。
+编译器无法追踪 provenance 的入口点（外部地址、FFI 返回值、inline asm）仍需要 `unsafe`，和所有HDFG无法追踪 provenance 的情况一样。详见 `docs/pointer-model.md`。`unsafe` 块在此处的作用不是"关掉检查"，而是"标注图边界入口"。
 
 ---
 
-## 与数据流图的集成
+## 与HDFG的集成
 
 ### 子图类型与区域策略
 

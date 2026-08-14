@@ -1,6 +1,6 @@
 # AST 数组（ast）.cr 伪代码
 > 源文件：src/compiler/AST 数组（ast）.cr（629 行）
-> 功能概要：编译器共享常量定义与数据结构声明。包含词法单元类别常量、类型常量、AST（语法树）节点类别常量与结构体、IR（中间表示）操作码、数据流图结构体、错误码定义，以及跨模块共享的全局数组变量。
+> 功能概要：编译器共享常量定义与数据结构声明。包含词法单元类别常量、类型常量、AST（语法树）节点类别常量与结构体、IR（中间表示）操作码、HDFG结构体、错误码定义，以及跨模块共享的全局数组变量。
 
 ## 标识符对照表
 
@@ -338,16 +338,16 @@
 | 行计数（g_line_count） | 已注册的行数 | 0 |
 | 行数组容量（g_line_cap） | 行数组的当前容量 | 0 |
 | 源码目录（g_source_dir） | 主源文件所在目录（用于查找 _import.cr） | 空 |
-| 数据流节点数组（g_df_nodes） | 数据流图节点 | 空 |
-| 数据流节点计数（g_df_node_count） | 数据流图节点数 | 0 |
+| 数据流节点数组（g_df_nodes） | HDFG节点 | 空 |
+| 数据流节点计数（g_df_node_count） | HDFG节点数 | 0 |
 | 数据流节点容量（g_df_node_cap） | 数据流节点数组容量 | 0 |
-| 数据流边数组（g_df_edges） | 数据流图边 | 空 |
-| 数据流边计数（g_df_edge_count） | 数据流图边数 | 0 |
+| 数据流边数组（g_df_edges） | HDFG边 | 空 |
+| 数据流边计数（g_df_edge_count） | HDFG边数 | 0 |
 | 数据流边容量（g_df_edge_cap） | 数据流边数组容量 | 0 |
 | 变量生产者节点映射（g_df_var_producer） | IR 变量到生产者数据流节点的映射 | 空 |
-| 数据流图各函数节点起始索引（g_df_func_node_start） | 各函数在数据流节点数组中的起始索引 | 空 |
-| 数据流图各函数节点计数（g_df_func_node_count） | 各函数的数据流节点数 | 空 |
-| 数据流图数组容量（g_df_cap） | 数据流图数组总容量 | 0 |
+| HDFG各函数节点起始索引（g_df_func_node_start） | 各函数在数据流节点数组中的起始索引 | 空 |
+| HDFG各函数节点计数（g_df_func_node_count） | 各函数的数据流节点数 | 空 |
+| HDFG数组容量（g_df_cap） | HDFG数组总容量 | 0 |
 | 变量使用计数数组（g_var_use_count） | 每个 IR 变量被多少消费者使用 | 空 |
 | 变量使用计数容量（g_var_use_count_cap） | 变量使用计数数组容量 | 0 |
 
@@ -986,7 +986,7 @@
     字段：类型类别（type_kind），类型：整数 （类型信息）
 `
 
-## 数据流图结构（Dataflow Graph structures）
+## HDFG结构（Dataflow Graph structures）
 
 ### 数据流节点
 `

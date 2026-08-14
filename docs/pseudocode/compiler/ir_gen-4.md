@@ -17,9 +17,9 @@
 | 函数指纹 | func_fingerprint | 函数指纹（func_fingerprint） |
 | 签名指纹 | sig_fingerprint | 签名指纹（sig_fingerprint） |
 | 代码块语句数组 | g_block_stmts | 生成表达式（gen_expr） |
-| 初始化数据流图 | init_df | IR 生成全部（ir_gen_all） |
-| 数据流图：开始函数 | df_begin_func | IR 生成全部（ir_gen_all） |
-| 数据流图：结束函数 | df_end_func | IR 生成全部（ir_gen_all） |
+| 初始化 HDFG | init_df | IR 生成全部（ir_gen_all） |
+| HDFG：开始函数 | df_begin_func | IR 生成全部（ir_gen_all） |
+| HDFG：结束函数 | df_end_func | IR 生成全部（ir_gen_all） |
 | IR 函数名索引数组 | g_ir_func_name_idx | IR 生成函数（ir_gen_func） |
 | IR 函数返回类型数组 | g_ir_func_ret_type | IR 生成函数（ir_gen_func） |
 | IR 函数指令起始索引数组 | g_ir_func_instr_start | IR 生成函数（ir_gen_func） |
@@ -680,7 +680,7 @@
             跳出循环
         令 当前参数节点 = 当前参数节点 + 1
 
-（函数级竞技场——数据流图：开始函数（df_begin_func） 已压入 SG_FUNC）
+（函数级竞技场——HDFG：开始函数（df_begin_func） 已压入 SG_FUNC）
 扩展 SG 分配数组（grow_sg_alloc）（结构图计数（g_sg_count） + 1）
 扩展 SG 竞技场变量数组（grow_sg_arena_var）（结构图计数 + 1）
 在 SG 分配槽总数（g_sg_alloc_total）偏移（（结构图计数 - 1） * 8）处写入 64 位值：0
@@ -789,7 +789,7 @@
 ## 函数 IR 生成全局变量（ir_gen_globals）
 
 ### 作用
-将 解析器（parser） 收集的所有文件级 令（let） 声明（存储在 全局声明数组（g_global_lets）中）注册为 IR 全局变量，同时手动补充 解析器 未自动检测到的编译器自身全局变量（如 SG 竞技场跟踪、数据流图（CIR） 写缓冲、运行时堆/arena 全局等），确保 ELF 后端 BSS 段中有对应空间。
+将 解析器（parser） 收集的所有文件级 令（let） 声明（存储在 全局声明数组（g_global_lets）中）注册为 IR 全局变量，同时手动补充 解析器 未自动检测到的编译器自身全局变量（如 SG 竞技场跟踪、HDFG（CIR） 写缓冲、运行时堆/arena 全局等），确保 ELF 后端 BSS 段中有对应空间。
 
 ### 逻辑
 （遍历 解析器（parser） 收集的文件级声明——仅 全局声明数组 中的记录，不扫描 变量声明表达式（EXPR_LET））
@@ -826,7 +826,7 @@
 
 ### 测试要点
 1. 文件级声明的全局变量通过 全局声明数组 遍历注册
-2. 手动补充的全局变量列表涵盖了 SG/数据流图（CIR）/运行时核心变量
+2. 手动补充的全局变量列表涵盖了 SG/HDFG（CIR）/运行时核心变量
 3. 重复注册（如已在 全局声明数组 中 + 手动）被 注册单个全局变量 的去重逻辑处理
 4. 运行时全局变量确保每个可执行文件都有 BSS 空间
 
@@ -1078,7 +1078,7 @@
 ## 函数 IR 生成全部（ir_gen_all）
 
 ### 作用
-主入口函数：重置所有 IR 全局计数器、初始化数据流图、注册全局变量，然后遍历所有函数（非泛型函数在 IR 生成函数（ir_gen_func）内部跳过），每个函数包裹在 数据流图：开始函数（df_begin_func）/数据流图：结束函数（df_end_func） 调用中以生成函数级 SG 区域。
+主入口函数：重置所有 IR 全局计数器、初始化 HDFG、注册全局变量，然后遍历所有函数（非泛型函数在 IR 生成函数（ir_gen_func）内部跳过），每个函数包裹在 HDFG：开始函数（df_begin_func）/HDFG：结束函数（df_end_func） 调用中以生成函数级 SG 区域。
 
 ### 逻辑
 （重置全局计数器）
@@ -1092,8 +1092,8 @@
 令 IR 循环嵌套深度（g_ir_loop_depth） = 0
 令 IR 字符串常量计数（g_ir_str_const_count） = 0
 
-（初始化数据流图）
-初始化数据流图（init_df）（）
+（初始化 HDFG）
+初始化 HDFG（init_df）（）
 
 （初始化全局变量）
 IR 生成全局变量（ir_gen_globals）（）
@@ -1103,15 +1103,15 @@ IR 生成全局变量（ir_gen_globals）（）
 循环：
     如果 函数扫描位置 大于等于 函数计数（g_func_count），那么：
         跳出循环
-    数据流图：开始函数（df_begin_func）（函数扫描位置）
+    HDFG：开始函数（df_begin_func）（函数扫描位置）
     IR 生成函数（ir_gen_func）（函数扫描位置）
-    数据流图：结束函数（df_end_func）（函数扫描位置）
+    HDFG：结束函数（df_end_func）（函数扫描位置）
     令 函数扫描位置 = 函数扫描位置 + 1
 
 ### 测试要点
 1. 每次调用重置所有全局计数器（9 个全局变量归零/归 1）
-2. 先初始化数据流图和全局变量，再遍历函数
-3. 每个函数包裹在 数据流图：开始函数（df_begin_func）/数据流图：结束函数（df_end_func） 中
+2. 先初始化 HDFG和全局变量，再遍历函数
+3. 每个函数包裹在 HDFG：开始函数（df_begin_func）/HDFG：结束函数（df_end_func） 中
 4. 泛型函数在 IR 生成函数（ir_gen_func） 内部跳过（fi_generic_count > 0 时直接返回）
 
 ---

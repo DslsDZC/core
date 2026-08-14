@@ -1,4 +1,4 @@
-# Core IR Schema — 数据流图 (.cir / .csr)
+# Core IR Schema — HDFG (.cir / .csr)
 
 ## 概述
 
@@ -6,19 +6,19 @@ Core 编译器使用两种中间表示：
 
 | 格式 | 全称 | 用途 | 生产者 | 消费者 |
 |------|------|------|--------|--------|
-| `.cir` | Core IR Graph | 数据流图 + 规约约束（验证 IR） | `corec`（前端） | 验证工具 / `corearch` / 解释器 |
+| `.cir` | Core IR Graph | HDFG + 规约约束（验证 IR） | `corec`（前端） | 验证工具 / `corearch` / 解释器 |
 | `.ccr` | Core Control-flow Representation | 线性 CFG IR（前后端接口） | `corec`（前端） | `corearch`（后端） |
 
-**`.cir` 是 Core 的验证核心。** 它承载程序的完整语义（数据流图）。验证工具消费 `.cir` + `.csr`（规约约束元数据）进行验证。
+**`.cir` 是 Core 的验证核心。** 它承载程序的完整语义（HDFG）。验证工具消费 `.cir` + `.csr`（规约约束元数据）进行验证。
 
-自托管编译器在 IR 生成期间同时构建数据流图（`.cir`）和线性 IR（`.ccr`），然后 `lower_to_ccr()` 将图节点拷贝为线性指令数组供 x86-64 后端消费。
+自托管编译器在 IR 生成期间同时构建HDFG（`.cir`）和线性 IR（`.ccr`），然后 `lower_to_ccr()` 将图节点拷贝为线性指令数组供 x86-64 后端消费。
 
 ---
 
 ## 一、核心设计：图即验证
 
 ```
-.cir = 程序的数据流图 + 规约约束
+.cir = 程序的HDFG + 规约约束
          ↓
 验证工具消费 .cir：
   1. 编译器已证明的约束（自动推导标签）标注为 
@@ -33,7 +33,7 @@ Core 编译器使用两种中间表示：
 
 ## 二、二进制 `.csr` 格式（v1）
 
-`.csr` 是规约约束的二进制序列化格式——将内存中的 TagNode（约束元数据）数组序列化为文件，与 `.cir`（DFNode 数据流图）配套。
+`.csr` 是规约约束的二进制序列化格式——将内存中的 TagNode（约束元数据）数组序列化为文件，与 `.cir`（DFNode HDFG）配套。
 
 > 注：本节描述 `.csr`（规约约束元数据）格式。`.ccr` 二进制格式（CCR1 文件）的 v5 变更见「六、线性化」中的 `.ccr` 二进制序列化小节。
 
@@ -217,7 +217,7 @@ struct 类型关联布局描述符。**默认由编译器推导自然布局**（
 
 ---
 
-## 五、数据流图构建规则
+## 五、HDFG构建规则
 
 ### 辅助数组
 
@@ -246,9 +246,9 @@ struct 类型关联布局描述符。**默认由编译器推导自然布局**（
 
 ---
 
-## 六、线性化（数据流图 → `.ccr`）
+## 六、线性化（HDFG → `.ccr`）
 
-`lower_to_ccr()` 将数据流图线性化为线性 IR 指令数组供后端消费。规约约束节点（opcode ≥ 30）照常线性化，但 `corearch` 后端在代码生成时跳过它们。
+`lower_to_ccr()` 将HDFG线性化为线性 IR 指令数组供后端消费。规约约束节点（opcode ≥ 30）照常线性化，但 `corearch` 后端在代码生成时跳过它们。
 
 ### `.ccr` 二进制序列化（v5，2026-08）
 
@@ -340,4 +340,4 @@ corec build file.cr -s
 | `src/compiler/ccr_io.cr` | `.ccr` / `.csr` 二进制读写 |
 | `src/compiler/ir_gen.cr` | AST → IR 生成，含规约约束节点生成 |
 | `src/compiler/dump.cr` | 文本 `.cir` 转储（含规约标注） |
-| `src/compiler/interp.cr` | 数据流图解释器（跳过约束节点） |
+| `src/compiler/interp.cr` | HDFG解释器（跳过约束节点） |
