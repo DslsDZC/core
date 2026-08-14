@@ -1,5 +1,8 @@
 # 增量缓存设计
 
+
+> **术语注记（2026-08-15）**：本规格为历史设计记录，其中「数据流图」（及「RVSDG 式」）为当时术语；该结构后定名为 **HDFG（Holographic Dataflow Graph，全息数据流图）**，术语演进见 docs/project-book.md。正文保留历史原样。
+
 ## 概述
 
 Core 编译器的函数级增量缓存。默认开启，编译无感知——每次编译自动检查缓存，命中时跳过 tokenize→parse→check→IR gen，直接从数据流图（`.cir`）快照恢复。

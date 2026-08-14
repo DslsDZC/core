@@ -8,15 +8,15 @@ Core 的目标：**指针和 C 一样自由，安全保障不依赖用户标注�
 
 ## 方案
 
-Core 的编译器内部维护一张完整的数据流图（dataflow graph）。图中每个值的出生节点记录了它的来源（provenance），每个解引用操作记录在 DEREF 节点中。编译器通过分析图上的路径自动验证指针安全，不需要类型系统层面的 borrow 规则。
+Core 的编译器内部维护一张完整的HDFG（dataflow graph）。图中每个值的出生节点记录了它的来源（provenance），每个解引用操作记录在 DEREF 节点中。编译器通过分析图上的路径自动验证指针安全，不需要类型系统层面的 borrow 规则。
 
 验证逻辑由三个编译期 pass 完成，全部是图上的稀疏分析：
 
 | Pass | 功能 | 输入 | 输出 |
 |------|------|------|------|
-| PointerAnalysis | 建 points-to 关系 | 数据流图 | pointer-induced flow 的边 |
-| RegionCheck | 子图存活检查 | 数据流图 + 子图边界 | 每个 DEREF 的存活判定 |
-| ProvenanceVerify | 越界检查 | 数据流图 + points-to | 每个 DEREF 的偏移判定 |
+| PointerAnalysis | 建 points-to 关系 | HDFG | pointer-induced flow 的边 |
+| RegionCheck | 子图存活检查 | HDFG + 子图边界 | 每个 DEREF 的存活判定 |
+| ProvenanceVerify | 越界检查 | HDFG + points-to | 每个 DEREF 的偏移判定 |
 
 ## 术语
 
@@ -26,7 +26,7 @@ Core 的编译器内部维护一张完整的数据流图（dataflow graph）。�
 | points-to | 指针可能指向哪些内存位置 |
 | direct flow | 值通过赋值直接传递：`a = b` |
 | pointer-induced flow | 值通过指针间接传递：`*p = x`，需要 points-to 才能追踪 |
-| 子图 | 数据流图上与一个执行上下文（函数、loop、flow）对应的连通子图 |
+| 子图 | HDFG上与一个执行上下文（函数、loop、flow）对应的连通子图 |
 | DEREF 节点 | 表示一次指针解引用操作的图节点 |
 | 图边界 | 编译器无法追踪 provenance 的入口点（外部地址、FFI 返回值等） |
 
@@ -51,14 +51,14 @@ unsafe {
 
 ### 解决的问题
 
-数据流图天然记录了 direct flow。`a = b`、`a = &x`、`a = a + n` 这些操作在图上有直接的边。但 pointer-induced flow（`*p = x`）需要通过 points-to 关系才能追踪：编译器必须先知道 `*p` 可能指向哪些分配块，才能建立 p→target 的边。
+HDFG天然记录了 direct flow。`a = b`、`a = &x`、`a = a + n` 这些操作在图上有直接的边。但 pointer-induced flow（`*p = x`）需要通过 points-to 关系才能追踪：编译器必须先知道 `*p` 可能指向哪些分配块，才能建立 p→target 的边。
 
 ### 算法
 
-PointerAnalysis 遍历数据流图，收集每个指针变量的 points-to 信息。分析是流敏感的，按图上的拓扑序进行。
+PointerAnalysis 遍历HDFG，收集每个指针变量的 points-to 信息。分析是流敏感的，按图上的拓扑序进行。
 
 ```
-输入: 数据流图
+输入: HDFG
 处理:
   1. 对每个 ADDR 节点 (p = &x):
      record points-to(p) ∪= {x}
@@ -84,7 +84,7 @@ PointerAnalysis 遍历数据流图，收集每个指针变量的 points-to 信�
      保守处理：假设函数可能修改任何通过参数可达的内存
      （内联后可精确化）
 
-输出: 补充了 pointer-induced flow 边的数据流图
+输出: 补充了 pointer-induced flow 边的HDFG
 ```
 
 ### 复杂度
@@ -104,7 +104,7 @@ O(N × P)，其中 N 为指针变量数，P 为 points-to 集平均大小。Core
 RegionCheck 为每个子图分配递增的序号（由控制流决定，不是运行时值）。每个 ALLOC 节点标记它所属的子图 ID。每个 DEREF 节点检查目标子图是否存活。
 
 ```
-输入: 带有子图边界标记的数据流图
+输入: 带有子图边界标记的HDFG
 
 处理:
   为每个子图分配范围 [enter_seq, exit_seq]
@@ -143,7 +143,7 @@ RegionCheck 为每个子图分配递增的序号（由控制流决定，不是�
 ProvenanceVerify 从每个 DEREF 节点出发，沿指针来源倒推，找到最初的 ALLOC 节点，比较偏移量。
 
 ```
-输入: 带有 points-to 信息的完整数据流图
+输入: 带有 points-to 信息的完整HDFG
 
 处理:
   对每个 DEREF 节点:
@@ -249,7 +249,7 @@ unsafe {
 
 ## 当前状态
 
-Core 编译器已有数据流图（`src/compiler/dataflow.cr`）和线性扫描寄存器分配器（`src/compiler/opt.cr`）。
+Core 编译器已有HDFG（`src/compiler/dataflow.cr`）和线性扫描寄存器分配器（`src/compiler/opt.cr`）。
 
 **更新（2026-07-28）**：三个 pass 已全部实现——
 `src/compiler/ptr_analysis.cr`（PointerAnalysis）、`src/compiler/region_check.cr`（RegionCheck）、
@@ -273,6 +273,6 @@ Core 编译器已有数据流图（`src/compiler/dataflow.cr`）和线性扫描�
 
 ## 参考
 
-- **SVF** (SVF-tools): LLVM 上的值流图框架，自动检测 use-after-free、double-free、buffer overflow。Core 的数据流图是更统一的形式——同一张图同时做 regalloc、调度、验证。
+- **SVF** (SVF-tools): LLVM 上的值流图框架，自动检测 use-after-free、double-free、buffer overflow。Core 的HDFG是更统一的形式——同一张图同时做 regalloc、调度、验证。
 - **Fridtjof Siebert** (2006): 全程序 context-sensitive flow-sensitive 指针分析，静态检测区域内存中的悬垂指针。RegionCheck 的直接参考。
 - **Prov-GC** (Banerjee 2020): 动态 pointer provenance 追踪，实现 C 的声浪 GC。ProvenanceVerify 的 provenance 追踪概念来源。

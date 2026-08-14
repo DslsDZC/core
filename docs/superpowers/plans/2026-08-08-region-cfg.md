@@ -1,5 +1,7 @@
 # RVSDG Region 化控制流 Implementation Plan
 
+> **术语注记（2026-08-15）**：本计划中的"RVSDG 式"为当时路线的真实记录；该结构后定名为 **HDFG（Holographic Dataflow Graph）**，术语演进见 docs/project-book.md。正文保留历史原样。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把现有 SG 子图树升级为 RVSDG 式嵌套 region（新增 SG_IF、显式 node→region 映射、解释器 region 迭代执行、state edges、序列化 v2），根治解释器 for 循环 bug 并为验证工具铺路。

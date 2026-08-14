@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 .claude/hooks/block-git.py"
+            "command": "python3 /home/DslsDZC/core/.claude/hooks/block-git.py"
           }
         ]
       }

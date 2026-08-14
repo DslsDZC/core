@@ -1,6 +1,6 @@
 # ptr_analysis.cr 伪代码
 > 源文件：源指针集（src）/compiler/ptr_analysis.cr（283 行）
-> 功能概要：指针分析（Pointer Analysis）pass。基于 安德森风格（Andersen）的包含约束（inclusion constraints）在数据流图上执行过程间指针分析（points-to analysis）。实现规则：Addr（分配/引用 → 自指）、Copy（加载/存储沿定义-使用链传播指针集）、Store（指针变量→值变量（v） → 将 值变量 的指针集合并到 p 指向的每个分配的 分配指针集）、Load（结果→指针变量（r=*p） → 将 指针变量 指向的每个分配的 分配指针集 合并到 r）、PHI（合并两个前驱的指针集）、Call（保守处理）。采用不动点迭代至收敛（上限 10 次）。
+> 功能概要：指针分析（Pointer Analysis）pass。基于 安德森风格（Andersen）的包含约束（inclusion constraints）在 HDFG上执行过程间指针分析（points-to analysis）。实现规则：Addr（分配/引用 → 自指）、Copy（加载/存储沿定义-使用链传播指针集）、Store（指针变量→值变量（v） → 将 值变量 的指针集合并到 p 指向的每个分配的 分配指针集）、Load（结果→指针变量（r=*p） → 将 指针变量 指向的每个分配的 分配指针集 合并到 r）、PHI（合并两个前驱的指针集）、Call（保守处理）。采用不动点迭代至收敛（上限 10 次）。
 
 ## 标识符对照表
 
@@ -46,9 +46,9 @@
 - 偏移量数组（g_offsets）：每个 IR 变量的偏移量。
 - 偏移量容量（g_offsets_cap）：偏移量数组的容量。
 - 结构图数组（g_sgs）、结构图计数（g_sg_count）：用于 不安全块判断。
-- 数据流节点数组（g_df_nodes）：待分析的数据流图指令。
+- 数据流节点数组（g_df_nodes）：待分析的 HDFG指令。
 - 变量生产者节点映射（g_df_var_producer）：每个变量的生产数据流节点序号。
-- IR 函数个数（g_ir_func_count）、数据流图各函数节点起始索引（g_df_func_node_start）、数据流图各函数节点计数（g_df_func_node_count）、IR 函数变量起始索引数组（g_ir_func_var_start）、IR 函数变量计数数组（g_ir_func_var_count）。
+- IR 函数个数（g_ir_func_count）、HDFG各函数节点起始索引（g_df_func_node_start）、HDFG各函数节点计数（g_df_func_node_count）、IR 函数变量起始索引数组（g_ir_func_var_start）、IR 函数变量计数数组（g_ir_func_var_count）。
 
 领域专名保留：数据流节点条目大小（ESZ_DFNODE）、操作码字段偏移（OFF_DF_OPCODE）/ 目标字段偏移（OFF_DF_DEST）/ 操作数1字段偏移（OFF_DF_S1）/ 操作数2字段偏移（OFF_DF_S2）/ 操作数3字段偏移（OFF_DF_S3）、不安全区域（SG_UNSAFE）、类别字段偏移（OFF_SG_KIND）/ 节点起始字段偏移（OFF_SG_NSTART）/ 节点计数字段偏移（OFF_SG_NCOUNT）、标量分配（IR_ALLOC）/ 结构体分配（IR_ALLOC_STRUCT）/ 数组分配（IR_ALLOC_ARRAY）/ 引用（IR_REF）/ 索引地址（IR_ADDR_INDEX）/ 二元运算（IR_BINARY）/ 加载（IR_LOAD）/ 存储（IR_STORE）/ 合并节点（IR_PHI）/ 调用（IR_CALL）/ 指针存储（IR_STORE_PTR）/ 解引用（IR_DEREF）/ 常量（IR_CONST）、指针加法（OP_PTR_ADD）/ 指针减法（OP_PTR_SUB）。
 
@@ -446,8 +446,8 @@
         循环：
             如果 函数序号 大于等于 IR 函数个数，那么：
                 跳出循环
-            令 节点起始（nstart） = 读 64 位（r64）（源 = 数据流图各函数节点起始索引，偏移 = 函数序号 * 8）
-            令 节点计数（ncount） = 读 64 位（r64）（源 = 数据流图各函数节点计数，偏移 = 函数序号 * 8）
+            令 节点起始（nstart） = 读 64 位（r64）（源 = HDFG各函数节点起始索引，偏移 = 函数序号 * 8）
+            令 节点计数（ncount） = 读 64 位（r64）（源 = HDFG各函数节点计数，偏移 = 函数序号 * 8）
             令 变量起始（vstart） = 读 64 位（r64）（源 = IR 函数变量起始索引数组，偏移 = 函数序号 * 8）
             令 变量计数（vcount） = 读 64 位（r64）（源 = IR 函数变量计数数组，偏移 = 函数序号 * 8）
             指针分析函数（ptr_analysis_func）（节点起始，节点计数，变量起始，变量计数）

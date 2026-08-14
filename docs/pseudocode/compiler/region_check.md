@@ -28,15 +28,15 @@
 
 ## 全局状态
 
-本文件读取以下全局状态（由指针分析和数据流图填充）：
+本文件读取以下全局状态（由指针分析和 HDFG填充）：
 
-- 数据流节点数组（g_df_nodes）：数据流图指令。
+- 数据流节点数组（g_df_nodes）：HDFG指令。
 - 数据流节点计数（g_df_node_count）：数据流节点总数。
-- 数据流节点所属 region（g_df_node_region）：每个数据流节点归属的子图序号（由 数据流图：创建节点（df_create_node） 写入的 常时（1）显式映射）。
+- 数据流节点所属 region（g_df_node_region）：每个数据流节点归属的子图序号（由 HDFG：创建节点（df_create_node） 写入的 常时（1）显式映射）。
 - 指针集数组（g_pts）：每个变量的指针集位图。
 - 结构图数组（g_sgs）：region 结构图，含 类别（OFF_SG_KIND）、节点起始（OFF_SG_NSTART）、节点计数（OFF_SG_NCOUNT）、出口节点序号（OFF_SG_EXIT）等字段。
 - 结构图计数（g_sg_count）：结构图总数。
-- IR 函数个数（g_ir_func_count）、数据流图各函数节点起始索引（g_df_func_node_start）、数据流图各函数节点计数（g_df_func_node_count）。
+- IR 函数个数（g_ir_func_count）、HDFG各函数节点起始索引（g_df_func_node_start）、HDFG各函数节点计数（g_df_func_node_count）。
 
 领域专名保留：数据流节点条目大小（ESZ_DFNODE）、操作码字段偏移（OFF_DF_OPCODE）/ 目标字段偏移（OFF_DF_DEST）/ 操作数1字段偏移（OFF_DF_S1）/ 操作数2字段偏移（OFF_DF_S2）、不安全区域（SG_UNSAFE）/ 函数区域（SG_FUNC）、类别字段偏移（OFF_SG_KIND）/ 节点起始字段偏移（OFF_SG_NSTART）/ 节点计数字段偏移（OFF_SG_NCOUNT）/ 出口字段偏移（OFF_SG_EXIT）、解引用（IR_DEREF）/ 返回（IR_RETURN）/ 指针存储（IR_STORE_PTR）、生命周期错误（EC_B_LIFETIME）。
 
@@ -48,7 +48,7 @@
 ### 逻辑
 
     函数 包含节点的子图（节点序号 node_seq：整数）-> 整数：
-        // 显式映射：常时（1）归属查询（数据流节点所属 region 由 数据流图：创建节点（df_create_node） 写入）
+        // 显式映射：常时（1）归属查询（数据流节点所属 region 由 HDFG：创建节点（df_create_node） 写入）
         如果 节点序号 大于等于 0 且 节点序号 小于 数据流节点计数，那么：
             返回 读 64 位（r64）（源 = 数据流节点所属 region，偏移 = 节点序号 * 8）
         返回 -1
@@ -276,8 +276,8 @@
         循环：
             如果 函数序号 大于等于 IR 函数个数，那么：
                 跳出循环
-            令 节点起始（nstart） = 读 64 位（r64）（源 = 数据流图各函数节点起始索引，偏移 = 函数序号 * 8）
-            令 节点计数（ncount） = 读 64 位（r64）（源 = 数据流图各函数节点计数，偏移 = 函数序号 * 8）
+            令 节点起始（nstart） = 读 64 位（r64）（源 = HDFG各函数节点起始索引，偏移 = 函数序号 * 8）
+            令 节点计数（ncount） = 读 64 位（r64）（源 = HDFG各函数节点计数，偏移 = 函数序号 * 8）
             区域检查函数（region_check_func）（节点起始，节点计数）
             令 函数序号 = 函数序号 + 1
 

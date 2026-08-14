@@ -34,7 +34,7 @@
 | **变量** | `:=` / `: type` 声明，`mut` / `pub` 标签，批量声明 | 完成 |
 | **函数** | 函数定义、调用、单行函数体、`pub fn` 可见性 | 完成 |
 | **控制流** | `if` / `else` / `elif`、`while`、`loop` + `break`/`continue`、`for` 区间和数组迭代 | 完成 |
-| | RVSDG 式嵌套 region（SG_IF/LOOP/FOR/FLOW/UNSAFE + state edges + .ccr v5） | 完成 |
+| | region 嵌套式（SG_IF/LOOP/FOR/FLOW/UNSAFE + state edges + .ccr v5，即 HDFG 结构） | 完成 |
 | **并发** | `go f(args)` / `go var start..end expr` 协程生成 | 完成（单 M 端到端） |
 | | 协作式 Fiber 调度器、缓冲通道（阻塞） | 完成（单 M 验证） |
 | | 多 M worker 线程 | 未完成（TODO bug 2） |
@@ -56,7 +56,7 @@
 | | `math.cr` / `collections.cr` | 部分（stub，TODO bug 4） |
 | **编译器基础设施** | 自举编译器（Core 写编译器）、x86-64 ELF 直接输出 | 完成 |
 | | `build`/`check`/`ccr`/`cir`/`run`/`clean-cache` 子命令 | 完成 |
-| | CIR 数据流图（带完整类型/语义信息）、`.ccr` 线性 CFG | 完成 |
+| | CIR HDFG（带完整类型/语义信息）、`.ccr` 线性 CFG | 完成 |
 | **形式化验证** | 规约层 IR / 验证条件生成 / SMT 求解器接口 | 占位 |
 | **发布与治理** | Arch Linux PKGBUILD | 完成 |
 | | GitFlow 治理：双 ruleset（main 仅维护者合入 / develop 集成分支）+ 签名提交 + merge queue（免费计划降级为手动合入） | 完成 |
@@ -89,12 +89,12 @@ python3 build_selfhost_native.py
 
 # 编译文件
 ./build/corec ccr hello.cr              # → hello.ccr
-./build/corec cir hello.cr              # → hello.cir（数据流图）
+./build/corec cir hello.cr              # → hello.cir（HDFG）
 ./build/corec build hello.cr --static   # → a.out（ELF，无需 as/ld）
 as -o hello.o hello.s && ld ...          # 或用传统路径
 
 # 通过引导编译器（Python）编译
-python3 tools/corec ir hello.cr      # → .cir 数据流图
+python3 tools/corec ir hello.cr      # → .cir HDFG
 python3 tools/corec cir hello.cr     # → .ccr 线性 IR
 ```
 
@@ -125,7 +125,7 @@ core/
 ├── bootstrap/corec/         # 引导编译器（Python）
 │   ├── syntax/              # AST 定义、Token、关键字
 │   ├── frontend/            # 词法/语法/语义分析/IR 生成
-│   ├── ir/                  # IR 数据结构（CIR 数据流图 / CCR 线性 CFG）
+│   ├── ir/                  # IR 数据结构（CIR HDFG / CCR 线性 CFG）
 │   ├── backend/             # 解释器、ARM64/x86-64 代码生成
 │   └── verifier/            # 形式化验证（占位）
 ├── src/
@@ -134,7 +134,7 @@ core/
 │   │   ├── lexer.cr          # 词法分析器
 │   │   ├── parser.cr         # 语法分析器
 │   │   ├── checker.cr        # 类型检查 + 借用检查
-│   │   ├── ir_gen.cr, dataflow.cr  # IR 生成 + 数据流图
+│   │   ├── ir_gen.cr, dataflow.cr  # IR 生成 + HDFG
 │   │   ├── main.cr           # 前端入口（corec）
 │   │   ├── corearch.cr       # 后端入口（corearch）
 │   │   ├── ccr_io.cr         # .ccr 二进制序列化

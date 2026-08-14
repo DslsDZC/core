@@ -5,10 +5,10 @@ Core 语言语法
 ## 设计哲学
 
 - `dyn` 动态类型：图全量已知所有分支，编译器自动插转换代码，不需要用户写 cast。
-- 裸指针，和 C 一样自由，编译器通过数据流图自动验证安全。
-- 编译时执行由数据流图自动推导，无需关键字。`@comptime` 提供"算不了就报错"的保证。
+- 裸指针，和 C 一样自由，编译器通过HDFG自动验证安全。
+- 编译时执行由HDFG自动推导，无需关键字。`@comptime` 提供"算不了就报错"的保证。
 - requires / ensures 规约与函数体并列，可选编写，参与静态检查。
-- 同步调用与 go/await 并发构造统一映射为数据流图。
+- 同步调用与 go/await 并发构造统一映射为HDFG。
 
 ---
 
@@ -31,7 +31,7 @@ auto fileid move in None Some unit
 注：`comptime` 不是关键字（`@comptime` 是 @ 内建原语）；`requires/ensures/old/result/self/Self`
 亦非词法关键字（规约语法见 `docs/spec-design.md` 与 `corespec.ebnf`，`self` 按标识符解析）。
 
-注意：* 用于解引用指针，-> 仅用于返回类型，& 取地址。指针安全由数据流图自动验证，详见 `docs/pointer-model.md`。
+注意：* 用于解引用指针，-> 仅用于返回类型，& 取地址。指针安全由HDFG自动验证，详见 `docs/pointer-model.md`。
 
 `@` 开头的是编译器内建原语，不通过标准库实现：
 - `@typeInfo` `@field` `@hasField` `@fields` `@sizeOf` `@alignOf` — 类型内省
@@ -218,7 +218,7 @@ count := 100_i32;
 
 ### 3.3 指针
 
-Core 的指针是裸地址，和 C 一样自由，但编译器通过数据流图自动验证安全。
+Core 的指针是裸地址，和 C 一样自由，但编译器通过HDFG自动验证安全。
 
 ```core
 p := &arr[0];      // 取地址，编译器记下 provenance
@@ -227,11 +227,11 @@ x := *p;           // 解引用，编译器验证 offset ∈ [0, len)
 ptr := cast<int*>(addr);  // 显式转换
 ```
 
-指针安全基于数据流图的 provenance 推导，详见 `docs/pointer-model.md`。
+指针安全基于HDFG的 provenance 推导，详见 `docs/pointer-model.md`。
 
 ### 3.4 编译时执行
 
-Core 的编译时执行以`数据流图的自动推导为主，`@comptime` 兜底为辅。
+Core 的编译时执行以`HDFG的自动推导为主，`@comptime` 兜底为辅。
 
 ```core
 // 自动推导——图看见输入全是常量，自动编译期执行
@@ -612,9 +612,9 @@ RawRef<T> 无法逃逸到安全代码。
 
 ---
 
-## 十二、数据流图视图（设计）
+## 十二、HDFG视图（设计）
 
-编写顺序代码时，后台自动构建数据流图：
+编写顺序代码时，后台自动构建HDFG：
 
 - 每个 flow / go 映射为图节点
 - yield / recv 定义连续的数据边
