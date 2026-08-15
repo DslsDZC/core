@@ -2,9 +2,10 @@
 """
 Build native x86-64 binaries of the self-hosted Core compiler.
 
-Produces two binaries:
+Produces three binaries:
   build/corec      — frontend: .cr → .ccr/.cir
   build/corearch   — backend:  .ccr → binary/asm
+  build/corelsp    — LSP server: frontend + json + rpc
 
 Pipeline (fast path — no interpreter bottleneck, no gcc dependency):
 1. Concatenate sources for each binary
@@ -224,6 +225,7 @@ def main():
             'src/compiler/module.cr',
             'src/lsp/_import.cr',
             'src/lsp/json.cr',
+            'src/lsp/rpc.cr',
             'src/lsp/main.cr',
         ], wrapper_fn='lsp_main'),
         label='corelsp',
