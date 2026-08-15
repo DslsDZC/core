@@ -828,3 +828,225 @@ fn analysis_document_symbol() -> string {
     out = out + "]";
     return out;
 }
+
+// ── semanticTokens（Task 6）──────────────────────────────────
+// 快照 g_tokens → LSP semanticTokens/full 的 data 差分编码（相对上一令牌
+// 的 delta_line / delta_start / length / tokenType / tokenModifiers，每组 5
+// 个整数，首令牌相对 (0,0)）。不触发检查（同 hover/definition 快照语义）。
+//
+// 范围：仅主文件（LSP 文档即主文件，与 documentSymbol 同约定）。res_imports
+// 会把 stdlib/import 的文件拼接进 g_source（段 1 起），故用令牌起始字节偏移
+// < g_seg_starts[1]（首段 = 主文件，段偏移即拼接坐标下的字节偏移）过滤。
+//
+// 令牌长度：不能取 lexeme——运算符与 int/float 字面量令牌的 lexeme = -1
+// （lexer add_tok/add_tok_int），字符串令牌的 lexeme 是解码后的值（转义使
+// 源长度 ≠ 词素长度）。正确长度 = 按 kind 从源文本扫描出的字节跨度
+// （analysis_tok_span，逐一镜像 lexer 各分支的消耗规则——含运算符定长表）。
+//
+// 定位：单遍扫 g_source 求每个令牌的起始字节偏移（列按字节计——与 lexer
+// skip_ws 的 g_col 口径一致；令牌按源顺序，跨行推进）。
+//
+// tokenType 映射表（token kind → legend 下标；legend 在 rpc.cr
+// rpc_send_initialize 声明，顺序必须与这里一致）：
+//   keyword  (0): T_FN T_MUT T_IF T_ELSE T_LOOP T_FOR T_IN T_RETURN
+//                 T_BREAK T_CONTINUE T_STRUCT T_ENUM T_IMPL T_PUB
+//                 T_TRUE T_FALSE T_MOVE T_SELF T_MATCH T_TYPE T_MOD
+//                 T_IMPORT T_AS T_GO T_AWAIT T_FLOW T_YIELD T_UNSAFE
+//                 T_INTERFACE T_AUTO T_FILEID T_NONE T_SOME T_EXTERN
+//   type     (1): T_UNIT（unit 关键字令牌——parser 产 TY_UNIT）
+//                 T_INT_I8..T_FLOAT_F64 T_INT_TYPE..T_AUTO_TYPE
+//                 T_REF T_DYN；以及 T_IDENT 且（内置类型名 int/float/
+//                 bool/string/char/never/dyn——parser.cr parse_type
+//                 T_IDENT 分支字面量清单，唯一真源——或 find_struct_by_
+//                 name / find_enum 命中的结构体/枚举名）
+//   function (2): T_IDENT 且 find_func 命中（g_funcs 快照）
+//   variable (3): T_IDENT 兜底（局部/全局/参数/未知标识符）
+//   comment  (4): 无令牌——lexer 完全跳过 // 与 /* */ 注释，该类保留仅
+//                 为对齐 LSP legend（客户端按 legend 建主题）
+//   string   (5): T_STRING T_CHAR
+//   operator (6): T_LPAREN T_RPAREN T_LBRACE T_RBRACE T_COMMA T_SEMI
+//                 T_COLON T_DOT T_ARROW T_EQ T_EQEQ T_BANG T_BANGEQ
+//                 T_LT T_GT T_LTEQ T_GTEQ T_PLUS T_MINUS T_STAR
+//                 T_SLASH T_ANDAND T_PIPEPIPE T_AMPERSAND T_UNDERSCORE
+//                 T_PATHSEP T_LBRACKET T_RBRACKET T_FATARROW T_PERCENT
+//                 T_DOTDOT T_DOTDOTDOT T_COLON_EQ T_AT T_QUESTION
+//                 T_PLUS_EQ T_MINUS_EQ T_STAR_EQ T_SLASH_EQ
+//   number   (7): T_INT T_FLOAT（字面量令牌）
+
+// kind → legend 下标；T_IDENT 返回 -1（需按名字分类，见 analysis_token_type）
+fn analysis_kind_type(k: int) -> int {
+    if k == T_FN || k == T_MUT || k == T_IF || k == T_ELSE || k == T_LOOP ||
+       k == T_FOR || k == T_IN || k == T_RETURN || k == T_BREAK ||
+       k == T_CONTINUE || k == T_STRUCT || k == T_ENUM || k == T_IMPL ||
+       k == T_PUB || k == T_TRUE || k == T_FALSE || k == T_MOVE ||
+       k == T_SELF || k == T_MATCH || k == T_TYPE || k == T_MOD ||
+       k == T_IMPORT || k == T_AS || k == T_GO || k == T_AWAIT ||
+       k == T_FLOW || k == T_YIELD || k == T_UNSAFE || k == T_INTERFACE ||
+       k == T_AUTO || k == T_FILEID || k == T_NONE || k == T_SOME ||
+       k == T_EXTERN { return 0; }
+    if k == T_UNIT || (k >= T_INT_I8 && k <= T_FLOAT_F64) ||
+       (k >= T_INT_TYPE && k <= T_AUTO_TYPE) || k == T_REF || k == T_DYN {
+        return 1;
+    }
+    if k == T_STRING || k == T_CHAR { return 5; }
+    if k == T_INT || k == T_FLOAT { return 7; }
+    if k == T_IDENT { return -1; }
+    return 6;   // 运算符/分隔符：其余全部 kind
+}
+
+// 名字是否为内置类型名（parser.cr parse_type 的 T_IDENT 分支字面量清单）
+fn analysis_is_builtin_type(ni: int) -> int {
+    s := istr_get(ni);
+    if str_eq(s, "int") != 0 || str_eq(s, "float") != 0 ||
+       str_eq(s, "bool") != 0 || str_eq(s, "string") != 0 ||
+       str_eq(s, "char") != 0 || str_eq(s, "never") != 0 ||
+       str_eq(s, "dyn") != 0 { return 1; }
+    return 0;
+}
+
+// 令牌索引 → legend 下标（T_IDENT 按符号表/内置类型名分类）
+fn analysis_token_type(ti: int) -> int {
+    k := r64(g_tokens, ti * ESZ_TOKEN + OFF_TK_KIND);
+    if k != T_IDENT { return analysis_kind_type(k); }
+    ni := r64(g_tokens, ti * ESZ_TOKEN + OFF_TK_LEXEME);
+    if analysis_is_builtin_type(ni) != 0 { return 1; }
+    if find_func(ni) >= 0 { return 2; }
+    if find_struct_by_name(ni) >= 0 { return 1; }
+    if find_enum(ni) >= 0 { return 1; }
+    return 3;
+}
+
+// 令牌索引 → 源文本字节跨度（从起始偏移 st 起按 kind 镜像 lexer 消耗规则）
+fn analysis_tok_span(ti: int, st: int, sl: int) -> int {
+    k := r64(g_tokens, ti * ESZ_TOKEN + OFF_TK_KIND);
+    // 字符串/字符：开引号 → 未转义闭合引号（镜像 lexer：\x 转义 4 字节、
+    // 插值 ${...} 跳至 '}' 并多吃一字节、换行终止未闭合串）
+    if k == T_STRING || k == T_CHAR {
+        q := load8(g_source, st);
+        p : ., mut = st + 1;
+        loop {
+            if p >= sl { break; }
+            c := load8(g_source, p);
+            if c == 92 { p = p + 2; }
+            else if c == q { p = p + 1; break; }
+            else if c == 10 { break; }
+            else if c == 36 && load8(g_source, p + 1) == 123 {
+                p = p + 2;
+                loop {
+                    if p >= sl { break; }
+                    if load8(g_source, p) == 125 { p = p + 1; break; }
+                    p = p + 1;
+                }
+                if p < sl { p = p + 1; }   // 镜像 lexer 循环尾 _pos+1
+            }
+            else { p = p + 1; }
+        }
+        return p - st;
+    }
+    // 数字：镜像 lexer 数字分支（'.' 起始、hex/oct/bin 前缀、小数、字母后缀）
+    if k == T_INT || k == T_FLOAT {
+        p : ., mut = st;
+        if load8(g_source, p) == 46 && is_digit(load8(g_source, p + 1)) != 0 { p = p + 1; }
+        loop { if is_digit(load8(g_source, p)) != 0 { p = p + 1; } else { break; } }
+        if p - st == 1 && load8(g_source, st) == 48 {
+            nx := load8(g_source, p);
+            if nx == 120 || nx == 88 {
+                p = p + 1;
+                loop { hc := load8(g_source, p); if is_digit(hc) != 0 || (hc >= 65 && hc <= 70) || (hc >= 97 && hc <= 102) { p = p + 1; } else { break; } }
+            } else if nx == 111 || nx == 79 {
+                p = p + 1;
+                loop { oc := load8(g_source, p); if oc >= 48 && oc <= 55 { p = p + 1; } else { break; } }
+            } else if nx == 98 || nx == 66 {
+                p = p + 1;
+                loop { bc := load8(g_source, p); if bc == 48 || bc == 49 { p = p + 1; } else { break; } }
+            }
+        }
+        if load8(g_source, p) == 46 && load8(g_source, p + 1) != 46 {
+            p = p + 1;
+            loop { if is_digit(load8(g_source, p)) != 0 { p = p + 1; } else { break; } }
+        }
+        loop { if is_alpha(load8(g_source, p)) != 0 { p = p + 1; } else { break; } }
+        return p - st;
+    }
+    // 标识符/关键字/类型关键字：lexeme 即源文本（add_tok_str）
+    lex := r64(g_tokens, ti * ESZ_TOKEN + OFF_TK_LEXEME);
+    if lex >= 0 { return str_len(istr_get(lex)); }
+    // 运算符/分隔符（lexeme = -1）：lexer 定长表（其余单字符）
+    if k == T_EQEQ || k == T_BANGEQ || k == T_LTEQ || k == T_GTEQ ||
+       k == T_ANDAND || k == T_PIPEPIPE || k == T_ARROW || k == T_FATARROW ||
+       k == T_COLON_EQ || k == T_PATHSEP || k == T_PLUS_EQ || k == T_MINUS_EQ ||
+       k == T_STAR_EQ || k == T_SLASH_EQ || k == T_DOTDOT { return 2; }
+    if k == T_DOTDOTDOT { return 3; }
+    return 1;
+}
+
+// 令牌流（至 T_EOF 止）→ {"data":[...]} 差分编码 JSON；无令牌 → 空数组
+fn analysis_semantic_tokens() -> string {
+    // 实际令牌数（T_EOF 前）
+    n : ., mut = 0;
+    loop {
+        if n >= g_token_count { break; }
+        if r64(g_tokens, n * ESZ_TOKEN + OFF_TK_KIND) == T_EOF { break; }
+        n = n + 1;
+    }
+    if n == 0 { return "{\"data\":[]}"; }
+    // pass 1：令牌起始字节偏移（单遍扫 g_source；列按字节计，与 lexer 一致）
+    offs : string, mut = alloc(n * 8);
+    pos : ., mut = 0;
+    ln : ., mut = 1;
+    cl : ., mut = 1;
+    sl := str_len(g_source);
+    i : ., mut = 0;
+    loop {
+        if i >= n { break; }
+        tline := r64(g_tokens, i * ESZ_TOKEN + OFF_TK_LINE);
+        tcol := r64(g_tokens, i * ESZ_TOKEN + OFF_TK_COL);
+        loop {   // 跨行到 tline
+            if ln >= tline { break; }
+            if pos >= sl { break; }
+            if load8(g_source, pos) == 10 { ln = ln + 1; cl = 1; }
+            else { cl = cl + 1; }
+            pos = pos + 1;
+        }
+        loop {   // 行内前进到 tcol
+            if cl >= tcol { break; }
+            if pos >= sl { break; }
+            pos = pos + 1;
+            cl = cl + 1;
+        }
+        w64(offs, i * 8, pos);
+        i = i + 1;
+    }
+    // pass 2：差分编码（相对上一令牌；首令牌相对 (0,0)；modifiers 恒 0）。
+    // 仅主文件令牌（起始偏移 < 段 1 偏移；无导入时 g_seg_count == 1 → 全源）
+    main_limit : ., mut = sl;
+    if g_seg_count > 1 { main_limit = r64(g_seg_starts, 8); }
+    out : string, mut = "{\"data\":[";
+    prev_line : ., mut = 0;
+    prev_col : ., mut = 0;
+    first : ., mut = 1;
+    j : ., mut = 0;
+    loop {
+        if j >= n { break; }
+        st := r64(offs, j * 8);
+        if st < main_limit {
+            line0 : ., mut = r64(g_tokens, j * ESZ_TOKEN + OFF_TK_LINE) - 1;
+            col0 : ., mut = r64(g_tokens, j * ESZ_TOKEN + OFF_TK_COL) - 1;
+            if first == 0 { out = out + ","; }
+            out = out + int_str(line0 - prev_line);
+            out = out + ",";
+            out = out + int_str(col0 - prev_col);
+            out = out + ",";
+            out = out + int_str(analysis_tok_span(j, st, sl));
+            out = out + ",";
+            out = out + int_str(analysis_token_type(j));
+            out = out + ",0";
+            prev_line = line0;
+            prev_col = col0;
+            first = 0;
+        }
+        j = j + 1;
+    }
+    out = out + "]}";
+    return out;
+}

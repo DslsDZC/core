@@ -343,3 +343,20 @@ fn lsp_document_symbol(root: int) {
     }
     lsp_send_def_resp(root, analysis_document_symbol());
 }
+
+// ── semanticTokens（Task 6）──────────────────────────────────
+// textDocument/semanticTokens/full：params.textDocument.uri 只需存在即可
+// （令牌来自快照，与 uri 具体值无关——与 documentSymbol 同模式）；result
+// 为 {"data":[...]}（差分编码见 analysis.cr）。坏参数 → 空 data。
+fn lsp_semantic_tokens(root: int) {
+    params := json_obj_get(root, "params");
+    td : ., mut = -1;
+    if params >= 0 { td = json_obj_get(params, "textDocument"); }
+    if td < 0 { lsp_send_def_resp(root, "{\"data\":[]}"); return; }
+    uri_node := json_obj_get(td, "uri");
+    if uri_node < 0 || json_get(uri_node, 0) != J_STR {
+        lsp_send_def_resp(root, "{\"data\":[]}");
+        return;
+    }
+    lsp_send_def_resp(root, analysis_semantic_tokens());
+}

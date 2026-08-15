@@ -173,10 +173,55 @@ def test_completion_and_document_symbol():
     send(proc, {"jsonrpc": "2.0", "id": 9, "method": "shutdown"})
     proc.stdin.close(); proc.wait(timeout=5)
 
+def test_semantic_tokens():
+    proc = subprocess.Popen([BIN], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    send(proc, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+    uri = "file:///tmp/semantic_test.cr"
+    src = "fn main() -> int { return 42; }"
+    body = json.dumps({"jsonrpc": "2.0", "method": "textDocument/didOpen",
+                       "params": {"textDocument": {"uri": uri, "version": 1,
+                                                   "text": src}}}).encode()
+    proc.stdin.write(f"Content-Length: {len(body)}\r\n\r\n".encode() + body)
+    proc.stdin.flush()
+    read_frame(proc)  # 丢弃 publishDiagnostics 通知
+    r = send(proc, {"jsonrpc": "2.0", "id": 2, "method": "textDocument/semanticTokens/full",
+                    "params": {"textDocument": {"uri": uri}}})
+    assert "error" not in r, r
+    data = r["result"]["data"]
+    assert data, r                                   # 非空
+    assert len(data) % 5 == 0, r                     # 5 的倍数（差分编码格式）
+    assert data[0] == 0 and data[1] == 0, r          # 首令牌 delta_line/delta_start == 0
+    # 源码 "fn main() -> int { return 42; }"（尾空格 + 收尾 }）应为 11 个
+    # 主文件令牌（不含 EOF；res_imports 拼接的 stdlib 令牌被范围过滤排除）
+    groups = [data[i:i+5] for i in range(0, len(data), 5)]
+    assert len(groups) == 11, r
+    # 差分重建位置（delta 恒相对上一令牌起点）→ 与源码肉眼核对
+    line = col = 0
+    toks = []
+    for g in groups:
+        line += g[0]
+        col += g[1]
+        toks.append((line, col, g[2], g[3]))
+    # fn=keyword(0)@0:0 len2 | main=function(2)@0:3 len4 | ( @0:7 |
+    # ) @0:8 | -> @0:10 len2 | int=type(1)@0:13 len3 | { @0:17 |
+    # return=keyword(0)@0:19 len6 | 42=number(7)@0:26 len2 | ; @0:28 |
+    # } @0:30
+    assert toks[0] == (0, 0, 2, 0), toks
+    assert toks[1] == (0, 3, 4, 2), toks
+    assert toks[2] == (0, 7, 1, 6), toks
+    assert toks[5] == (0, 13, 3, 1), toks
+    assert toks[7] == (0, 19, 6, 0), toks
+    assert toks[8] == (0, 26, 2, 7), toks
+    assert toks[9] == (0, 28, 1, 6), toks
+    assert toks[10] == (0, 30, 1, 6), toks
+    send(proc, {"jsonrpc": "2.0", "id": 9, "method": "shutdown"})
+    proc.stdin.close(); proc.wait(timeout=5)
+
 if __name__ == "__main__":
     test_lifecycle()
     test_jsonrpc_error_codes()
     test_diagnostics_and_reset()
     test_hover_and_definition()
     test_completion_and_document_symbol()
+    test_semantic_tokens()
     print("lsp lifecycle: ALL PASS")

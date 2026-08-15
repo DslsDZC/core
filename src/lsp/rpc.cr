@@ -169,7 +169,11 @@ fn rpc_send_initialize(id: int) {
     out = out + int_str(id);
     // Task 5：声明 completion（@ 触发）/ documentSymbol 能力——客户端据此
     // 才发送对应请求；textDocumentSync 保持 1（全量同步，Task 3 契约）。
-    out = out + ",\"result\":{\"capabilities\":{\"textDocumentSync\":1,\"completionProvider\":{\"triggerCharacters\":[\"@\"]},\"documentSymbolProvider\":true}}}";
+    // Task 6：semanticTokensProvider/full——legend 顺序与 analysis.cr
+    // analysis_kind_type 的下标严格一致（keyword/type/function/variable/
+    // comment/string/operator/number）；comment 类无令牌（lexer 跳过注释），
+    // 保留仅为客户端主题对齐。
+    out = out + ",\"result\":{\"capabilities\":{\"textDocumentSync\":1,\"completionProvider\":{\"triggerCharacters\":[\"@\"]},\"documentSymbolProvider\":true,\"semanticTokensProvider\":{\"legend\":{\"tokenTypes\":[\"keyword\",\"type\",\"function\",\"variable\",\"comment\",\"string\",\"operator\",\"number\"],\"tokenModifiers\":[]},\"full\":true}}}}";
     rpc_send(out);
 }
 
@@ -290,6 +294,8 @@ fn rpc_dispatch(req: int) -> int {
     // 语义查询（Task 5）：completion / documentSymbol——同一快照模式
     if rpc_method_eq(mnode, "textDocument/completion") != 0 { lsp_completion(req); return 0; }
     if rpc_method_eq(mnode, "textDocument/documentSymbol") != 0 { lsp_document_symbol(req); return 0; }
+    // 语义查询（Task 6）：semanticTokens/full——快照令牌流 → 差分编码
+    if rpc_method_eq(mnode, "textDocument/semanticTokens/full") != 0 { lsp_semantic_tokens(req); return 0; }
     // 未知方法 → -32601（通知静默忽略）
     if has_id != 0 { rpc_send_error(id_val, -32601); }
     return 0;
