@@ -194,9 +194,46 @@ def main():
         out_name='corearch',
     )
 
+    # corelsp — LSP server: frontend modules + src/lsp
+    # 文件清单 = corec 段的编译器前端依赖闭包（剔除 IR 生成/后端/优化模块），
+    # 保留 lsp 需要的 lexer/parser/checker/diag/module/globals + 其依赖
+    # （ast/dyn_arr/toml/os/hotpatch——hotpatch 为 rt.s 的 SIGHUP 处理器必需）。
+    # 注意：不含 src/compiler/main.cr 与 entry.cr——corec_main 未被 lsp 使用，
+    # 且 entry.cr 的 fn main() 与 concat 追加的 wrapper 冲突。
+    compile_and_assemble(
+        concat([
+            'src/runtime/arena_globals.cr',
+            'src/runtime/rt.cr',
+            'src/stdlib/io.cr',
+            'src/stdlib/fmt.cr',
+            'src/stdlib/toml.cr',
+            'src/stdlib/os.cr',
+            'src/stdlib/hotpatch.cr',
+            'src/stdlib/panic.cr',
+            'src/stdlib/arena.cr',
+            'src/stdlib/goroutine.cr',
+            'src/stdlib/chan.cr',
+            'src/stdlib/sched.cr',
+            'src/compiler/ast.cr',
+            'src/compiler/globals.cr',
+            'src/compiler/dyn_arr.cr',
+            'src/compiler/lexer.cr',
+            'src/compiler/parser.cr',
+            'src/compiler/checker.cr',
+            'src/compiler/diag.cr',
+            'src/compiler/module.cr',
+            'src/lsp/_import.cr',
+            'src/lsp/json.cr',
+            'src/lsp/main.cr',
+        ], wrapper_fn='lsp_main'),
+        label='corelsp',
+        out_name='corelsp',
+    )
+
     print("=== BUILD SUCCESS ===")
     print("  build/corec     — frontend:  .cr → .ccr/.cir")
     print("  build/corearch  — backend:   .ccr → binary")
+    print("  build/corelsp   — LSP server: frontend + json")
 
 
 if __name__ == '__main__':
