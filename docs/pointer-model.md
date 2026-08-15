@@ -223,7 +223,7 @@ DEREF 处的"视图"。cast 在图里无节点（ir_gen 透传），provenance �
 
 ### 字节权限层（2026-08-13）
 
-记忆模型在"字节序列 + 宽度 + 边界"之上补充**每字节权限**（CompCert v2 范式）：
+经典映射在"字节序列 + 宽度 + 边界"之上补充**每字节权限**（CompCert v2 范式——经典机器的权限投影，见 `docs/memory-model.md` §一 条款 7）：
 
 ```
 Freeable > Writable > Readable > Nonempty > Empty
