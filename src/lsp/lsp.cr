@@ -304,3 +304,42 @@ fn lsp_definition(root: int) {
     }
     lsp_send_def_resp(root, analysis_definition(json_get(line_node, 1), json_get(col_node, 1)));
 }
+
+// ── completion / documentSymbol（Task 5）────────────────────────
+// 请求（带 id）→ 响应。查询基于最后一次成功检查的快照（analysis.cr），
+// 不触发检查。响应体复用 lsp_send_def_resp 的 "result":<json> 形状。
+
+// textDocument/completion：params.position（0-based）+ context（当前仅
+// 忽略——触发类型不影响候选）；result 为 {"items":[...]}，坏参数 → 空 items。
+fn lsp_completion(root: int) {
+    params := json_obj_get(root, "params");
+    pos : ., mut = -1;
+    if params >= 0 { pos = json_obj_get(params, "position"); }
+    if pos < 0 || json_get(pos, 0) != J_OBJ {
+        lsp_send_def_resp(root, "{\"items\":[]}");
+        return;
+    }
+    line_node := json_obj_get(pos, "line");
+    col_node := json_obj_get(pos, "character");
+    if line_node < 0 || col_node < 0 ||
+       json_get(line_node, 0) != J_NUM || json_get(col_node, 0) != J_NUM {
+        lsp_send_def_resp(root, "{\"items\":[]}");
+        return;
+    }
+    lsp_send_def_resp(root, analysis_completion(json_get(line_node, 1), json_get(col_node, 1)));
+}
+
+// textDocument/documentSymbol：params.textDocument.uri 只需存在即可
+// （符号来自快照，与 uri 具体值无关）；result 为 JSON 数组。
+fn lsp_document_symbol(root: int) {
+    params := json_obj_get(root, "params");
+    td : ., mut = -1;
+    if params >= 0 { td = json_obj_get(params, "textDocument"); }
+    if td < 0 { lsp_send_def_resp(root, "[]"); return; }
+    uri_node := json_obj_get(td, "uri");
+    if uri_node < 0 || json_get(uri_node, 0) != J_STR {
+        lsp_send_def_resp(root, "[]");
+        return;
+    }
+    lsp_send_def_resp(root, analysis_document_symbol());
+}

@@ -102,9 +102,81 @@ def test_hover_and_definition():
     send(proc, {"jsonrpc": "2.0", "id": 9, "method": "shutdown"})
     proc.stdin.close(); proc.wait(timeout=5)
 
+def test_completion_and_document_symbol():
+    proc = subprocess.Popen([BIN], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    send(proc, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+    uri = "file:///tmp/symbols_test.cr"
+    #       0: fn add(a: int, b: int) -> int {
+    #       1:     return a + b;
+    #       2: }
+    #       3: (空行)
+    #       4: struct Point { x: int, y: int }
+    #       5: (空行)
+    #       6: enum Color { Red, Green, Blue }
+    #       7: (空行)
+    #       8: fn main() -> int {
+    #       9:     poi := add(1, 2);
+    #      10:     return @sizeOf(int);
+    #      11: }
+    src = ("fn add(a: int, b: int) -> int {\n    return a + b;\n}\n\n"
+           "struct Point { x: int, y: int }\n\n"
+           "enum Color { Red, Green, Blue }\n\n"
+           "fn main() -> int {\n    poi := add(1, 2);\n    return @sizeOf(int);\n}\n")
+    body = json.dumps({"jsonrpc": "2.0", "method": "textDocument/didOpen",
+                       "params": {"textDocument": {"uri": uri, "version": 1,
+                                                   "text": src}}}).encode()
+    proc.stdin.write(f"Content-Length: {len(body)}\r\n\r\n".encode() + body)
+    proc.stdin.flush()
+    read_frame(proc)  # 丢弃 publishDiagnostics 通知
+    # completion 在空行（line 3）→ 全候选：关键字 + 已声明符号
+    r = send(proc, {"jsonrpc": "2.0", "id": 2, "method": "textDocument/completion",
+                    "params": {"textDocument": {"uri": uri},
+                               "position": {"line": 3, "character": 0},
+                               "context": {"triggerKind": 1}}})
+    assert "error" not in r, r
+    labels = {it["label"]: it["kind"] for it in r["result"]["items"]}
+    assert labels["fn"] == 14, r
+    assert labels["add"] == 3 and labels["main"] == 3, r
+    assert labels["Point"] == 23 and labels["Color"] == 23, r
+    # 符号候选前缀过滤（大小写不敏感）：line 9 的 "po"（character 6）→ 仅 Point
+    r = send(proc, {"jsonrpc": "2.0", "id": 3, "method": "textDocument/completion",
+                    "params": {"textDocument": {"uri": uri},
+                               "position": {"line": 9, "character": 6},
+                               "context": {"triggerKind": 1}}})
+    assert "error" not in r, r
+    labels = [it["label"] for it in r["result"]["items"]]
+    assert labels == ["Point"], r
+    # 关键字前缀过滤："fn" 只匹配关键字 fn（无符号以 fn 开头）
+    r = send(proc, {"jsonrpc": "2.0", "id": 4, "method": "textDocument/completion",
+                    "params": {"textDocument": {"uri": uri},
+                               "position": {"line": 8, "character": 2},
+                               "context": {"triggerKind": 1}}})
+    assert "error" not in r, r
+    labels = [it["label"] for it in r["result"]["items"]]
+    assert labels == ["fn"], r
+    # completion 在 "@size" 后（line 10，character 16）→ @ 内建过滤
+    r = send(proc, {"jsonrpc": "2.0", "id": 5, "method": "textDocument/completion",
+                    "params": {"textDocument": {"uri": uri},
+                               "position": {"line": 10, "character": 16},
+                               "context": {"triggerKind": 1}}})
+    assert "error" not in r, r
+    assert [it["label"] for it in r["result"]["items"]] == ["sizeOf"], r
+    # documentSymbol → 顶层 4 个符号，源顺序 + kind
+    r = send(proc, {"jsonrpc": "2.0", "id": 6, "method": "textDocument/documentSymbol",
+                    "params": {"textDocument": {"uri": uri}}})
+    assert "error" not in r, r
+    syms = r["result"]
+    assert [s["name"] for s in syms] == ["add", "Point", "Color", "main"], r
+    kinds = {s["name"]: s["kind"] for s in syms}
+    assert kinds["add"] == 12 and kinds["main"] == 12, r
+    assert kinds["Point"] == 23 and kinds["Color"] == 23, r
+    send(proc, {"jsonrpc": "2.0", "id": 9, "method": "shutdown"})
+    proc.stdin.close(); proc.wait(timeout=5)
+
 if __name__ == "__main__":
     test_lifecycle()
     test_jsonrpc_error_codes()
     test_diagnostics_and_reset()
     test_hover_and_definition()
+    test_completion_and_document_symbol()
     print("lsp lifecycle: ALL PASS")

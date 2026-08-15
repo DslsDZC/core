@@ -476,3 +476,355 @@ fn analysis_definition(line: int, col: int) -> string {
     }
     return "";
 }
+
+// ── completion（Task 5）──────────────────────────────────────
+// 位置 → 前缀（光标前最近标识符；@ 后为 @ 内建上下文）→ 候选过滤 → JSON。
+// 候选来源（唯一真源）：lexer.cr lookup_keyword() 关键字、checker.cr
+// EXPR_AT 分发 14 个 @ 内建 + parser.cr @ffi、g_syms（函数/全局/类型）、
+// g_funcs / g_structs / g_enums。kind 按 brief：Keyword=14 / Function=3 /
+// Variable=6 / Struct=23 / Enum=23。
+//
+// 注意：前缀直接回扫快照 g_source（不依赖令牌——半截标识符不成令牌）；
+// 与 hover/definition 同为「最后一次成功检查的快照」语义。
+
+// (line, col)（0-based）→ g_source 字节偏移（跳过 line 个换行再前进 col；
+// 越界 col 截断到源末尾——回扫前缀时防越界读）
+fn analysis_pos_of(line: int, col: int) -> int {
+    sl := str_len(g_source);
+    ln : ., mut = 0;
+    i : ., mut = 0;
+    loop {
+        if ln >= line { break; }
+        if i >= sl { break; }
+        if load8(g_source, i) == 10 { ln = ln + 1; }
+        i = i + 1;
+    }
+    p : ., mut = i + col;
+    if p > sl { p = sl; }
+    return p;
+}
+
+// pos 前连续标识符字符（字母/数字/_）的起点偏移
+fn analysis_prefix_start(pos: int) -> int {
+    s : ., mut = pos;
+    loop {
+        if s <= 0 { break; }
+        if is_ident_char(load8(g_source, s - 1)) == 0 { break; }
+        s = s - 1;
+    }
+    return s;
+}
+
+// g_source 字节段 → 稳定堆字符串（前缀是暂态字节范围，需复制）
+fn analysis_sub_copy(start: int, end: int) -> string {
+    n := end - start;
+    s := alloc(n + 1);
+    i : ., mut = 0;
+    loop {
+        if i >= n { break; }
+        store8(s, i, load8(g_source, start + i));
+        i = i + 1;
+    }
+    store8(s, n, 0);
+    return s;
+}
+
+// name 是否以 prefix 开头（空前缀恒真；大小写不敏感——LSP 惯例）
+fn analysis_has_prefix(name: string, prefix: string) -> int {
+    pl := str_len(prefix);
+    if pl == 0 { return 1; }
+    if str_len(name) < pl { return 0; }
+    i : ., mut = 0;
+    loop {
+        if i >= pl { break; }
+        nc := load8(name, i);
+        pc := load8(prefix, i);
+        if nc >= 65 && nc <= 90 { nc = nc + 32; }
+        if pc >= 65 && pc <= 90 { pc = pc + 32; }
+        if nc != pc { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+// 单条补全项 JSON：{"label":..., "kind":N}
+fn analysis_citem(name: string, kind: int) -> string {
+    out : string, mut = "{\"label\":";
+    out = out + lsp_json_escape_str(name);
+    out = out + ",\"kind\":";
+    out = out + int_str(kind);
+    out = out + "}";
+    return out;
+}
+
+// 关键字候选 JSON（lexer.cr lookup_keyword() 字面量清单，唯一真源；kind=14）。
+// 命中的项以逗号连接（无命中返回空串——调用方拼进 items 数组）。
+fn analysis_kw_items(prefix: string) -> string {
+    out : string, mut = "";
+    first : ., mut = 1;
+    if analysis_has_prefix("fn", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("fn", 14); first = 0; }
+    if analysis_has_prefix("mut", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("mut", 14); first = 0; }
+    if analysis_has_prefix("return", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("return", 14); first = 0; }
+    if analysis_has_prefix("if", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("if", 14); first = 0; }
+    if analysis_has_prefix("else", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("else", 14); first = 0; }
+    if analysis_has_prefix("loop", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("loop", 14); first = 0; }
+    if analysis_has_prefix("while", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("while", 14); first = 0; }
+    if analysis_has_prefix("for", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("for", 14); first = 0; }
+    if analysis_has_prefix("break", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("break", 14); first = 0; }
+    if analysis_has_prefix("continue", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("continue", 14); first = 0; }
+    if analysis_has_prefix("true", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("true", 14); first = 0; }
+    if analysis_has_prefix("false", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("false", 14); first = 0; }
+    if analysis_has_prefix("struct", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("struct", 14); first = 0; }
+    if analysis_has_prefix("enum", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("enum", 14); first = 0; }
+    if analysis_has_prefix("extern", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("extern", 14); first = 0; }
+    if analysis_has_prefix("impl", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("impl", 14); first = 0; }
+    if analysis_has_prefix("match", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("match", 14); first = 0; }
+    if analysis_has_prefix("import", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("import", 14); first = 0; }
+    if analysis_has_prefix("pub", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("pub", 14); first = 0; }
+    if analysis_has_prefix("go", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("go", 14); first = 0; }
+    if analysis_has_prefix("await", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("await", 14); first = 0; }
+    if analysis_has_prefix("unsafe", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("unsafe", 14); first = 0; }
+    if analysis_has_prefix("flow", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("flow", 14); first = 0; }
+    if analysis_has_prefix("yield", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("yield", 14); first = 0; }
+    if analysis_has_prefix("interface", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("interface", 14); first = 0; }
+    if analysis_has_prefix("type", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("type", 14); first = 0; }
+    if analysis_has_prefix("mod", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("mod", 14); first = 0; }
+    if analysis_has_prefix("as", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("as", 14); first = 0; }
+    if analysis_has_prefix("auto", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("auto", 14); first = 0; }
+    if analysis_has_prefix("fileid", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("fileid", 14); first = 0; }
+    if analysis_has_prefix("move", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("move", 14); first = 0; }
+    if analysis_has_prefix("in", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("in", 14); first = 0; }
+    if analysis_has_prefix("None", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("None", 14); first = 0; }
+    if analysis_has_prefix("Some", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("Some", 14); first = 0; }
+    if analysis_has_prefix("unit", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("unit", 14); first = 0; }
+    return out;
+}
+
+// @ 内建候选 JSON（checker.cr EXPR_AT 分发 14 个 + parser.cr @ffi，唯一真源；
+// kind=3 Function——均以内建函数方式调用）。label 不含 '@'。
+fn analysis_at_items(prefix: string) -> string {
+    out : string, mut = "";
+    first : ., mut = 1;
+    if analysis_has_prefix("sizeOf", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("sizeOf", 3); first = 0; }
+    if analysis_has_prefix("addr", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("addr", 3); first = 0; }
+    if analysis_has_prefix("alignOf", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("alignOf", 3); first = 0; }
+    if analysis_has_prefix("fields", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("fields", 3); first = 0; }
+    if analysis_has_prefix("hasField", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("hasField", 3); first = 0; }
+    if analysis_has_prefix("field", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("field", 3); first = 0; }
+    if analysis_has_prefix("typeInfo", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("typeInfo", 3); first = 0; }
+    if analysis_has_prefix("comptime", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("comptime", 3); first = 0; }
+    if analysis_has_prefix("inline", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("inline", 3); first = 0; }
+    if analysis_has_prefix("no_bounds_check", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("no_bounds_check", 3); first = 0; }
+    if analysis_has_prefix("fast", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("fast", 3); first = 0; }
+    if analysis_has_prefix("unroll", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("unroll", 3); first = 0; }
+    if analysis_has_prefix("section", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("section", 3); first = 0; }
+    if analysis_has_prefix("hotpatch", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("hotpatch", 3); first = 0; }
+    if analysis_has_prefix("ffi", prefix) != 0 { if first == 0 { out = out + ","; } out = out + analysis_citem("ffi", 3); first = 0; }
+    return out;
+}
+
+// 候选缓冲追加（去重：str_intern 保证同名同 name_ni）；已存在返回 0
+fn analysis_cand_add(cand: string, count: int, ni: int, kind: int) -> int {
+    i : ., mut = 0;
+    loop {
+        if i >= count { break; }
+        if r64(cand, i * 16) == ni { return 0; }
+        i = i + 1;
+    }
+    w64(cand, count * 16, ni);
+    w64(cand, count * 16 + 8, kind);
+    return 1;
+}
+
+// SYM_* 种类 → CompletionItemKind（FN/SO_FN→3 函数、GLOBAL/LOCAL/PARAM→6
+// 变量、TYPE→23 结构体、MODULE→9 模块）
+fn analysis_sym_item_kind(sk: int) -> int {
+    if sk == SYM_FN || sk == SYM_SO_FN { return 3; }
+    if sk == SYM_GLOBAL || sk == SYM_LOCAL || sk == SYM_PARAM { return 6; }
+    if sk == SYM_TYPE { return 23; }
+    return 9;
+}
+
+// 位置 → completion JSON {"items":[...]}（快照查询，不触发检查）
+fn analysis_completion(line: int, col: int) -> string {
+    pos := analysis_pos_of(line, col);
+    pstart := analysis_prefix_start(pos);
+    at_ctx : ., mut = 0;
+    if pstart > 0 && load8(g_source, pstart - 1) == 64 { at_ctx = 1; }
+    prefix := analysis_sub_copy(pstart, pos);
+    out : string, mut = "{\"items\":[";
+    if at_ctx != 0 {
+        out = out + analysis_at_items(prefix);
+    } else {
+        out = out + analysis_kw_items(prefix);
+        // 符号候选：g_syms（check_all 后剩顶层：函数/全局/类型/内建）
+        // + g_funcs + g_structs + g_enums（按候选总数精确分配，无需扩容）
+        total := g_sym_count + g_func_count + g_struct_count + g_enum_count;
+        if total < 1 { total = 1; }   // 防 alloc(0)
+        cand : string, mut = alloc(total * 16);
+        cnt : ., mut = 0;
+        i : ., mut = 0;
+        loop {
+            if i >= g_sym_count { break; }
+            cnt = cnt + analysis_cand_add(cand, cnt, sym_name(i), analysis_sym_item_kind(sym_kind(i)));
+            i = i + 1;
+        }
+        i = 0;
+        loop {
+            if i >= g_func_count { break; }
+            cnt = cnt + analysis_cand_add(cand, cnt, fi_name(i), 3);
+            i = i + 1;
+        }
+        i = 0;
+        loop {
+            if i >= g_struct_count { break; }
+            cnt = cnt + analysis_cand_add(cand, cnt, si_name(i), 23);
+            i = i + 1;
+        }
+        i = 0;
+        loop {
+            if i >= g_enum_count { break; }
+            cnt = cnt + analysis_cand_add(cand, cnt, ei_name(i), 23);
+            i = i + 1;
+        }
+        j : ., mut = 0;
+        loop {
+            if j >= cnt { break; }
+            ni := r64(cand, j * 16);
+            if analysis_has_prefix(istr_get(ni), prefix) != 0 {
+                if str_len(out) > 10 { out = out + ","; }
+                out = out + analysis_citem(istr_get(ni), r64(cand, j * 16 + 8));
+            }
+            j = j + 1;
+        }
+    }
+    out = out + "]}";
+    return out;
+}
+
+// ── documentSymbol（Task 5）────────────────────────────────────
+// 顶层符号 JSON 数组。g_ast 无 STRUCT_DEF/ENUM_DEF 声明节点（Task 4 已确认），
+// 故：函数经 g_funcs → fi_ast_node（EXPR_FN/EXPR_EXTERN 节点 line/col）；
+// 结构体/枚举经 g_structs/g_enums → 令牌反查 T_STRUCT/T_ENUM 声明
+// （analysis_decl_tok，与 definition 同路径）。条目按 (line,col) 源顺序
+// 插入排序输出。跨文件：仅主文件（段偏移 0）符号——LSP 文档即主文件。
+
+// 1-based (line,col) → LSP range JSON（0-based 减 1，起点到名字后一字符）
+fn analysis_range_json(ln1: int, cl1: int) -> string {
+    out : string, mut = "{\"start\":{\"line\":";
+    out = out + int_str(ln1 - 1);
+    out = out + ",\"character\":";
+    out = out + int_str(cl1 - 1);
+    out = out + "},\"end\":{\"line\":";
+    out = out + int_str(ln1 - 1);
+    out = out + ",\"character\":";
+    out = out + int_str(cl1);
+    out = out + "}}";
+    return out;
+}
+
+// 顶层符号 → JSON 数组（无符号 → "[]"）
+fn analysis_document_symbol() -> string {
+    total := g_func_count + g_struct_count + g_enum_count;
+    if total <= 0 { return "[]"; }
+    // 条目缓冲：{name_ni, kind, line(1-based), col(1-based)} = 32 字节
+    ent : string, mut = alloc(total * 32);
+    cnt : ., mut = 0;
+    i : ., mut = 0;
+    loop {
+        if i >= g_func_count { break; }
+        ni := fi_name(i);
+        fn_node := fi_ast_node(i);
+        ln : ., mut = 0; cl : ., mut = 0;
+        if fn_node >= 0 && fn_node < g_ast_count { ln = ast_line(fn_node); cl = ast_col(fn_node); }
+        if ln > 0 && analysis_line_offset(ln) == 0 {
+            w64(ent, cnt * 32, ni);
+            w64(ent, cnt * 32 + 8, 12);        // SymbolKind.Function = 12
+            w64(ent, cnt * 32 + 16, ln);
+            w64(ent, cnt * 32 + 24, cl);
+            cnt = cnt + 1;
+        }
+        i = i + 1;
+    }
+    i = 0;
+    loop {
+        if i >= g_struct_count { break; }
+        ni := si_name(i);
+        d := analysis_decl_tok(T_STRUCT, ni);
+        if d >= 0 {
+            ln := r64(g_tokens, d * ESZ_TOKEN + OFF_TK_LINE);
+            if analysis_line_offset(ln) == 0 {
+                w64(ent, cnt * 32, ni);
+                w64(ent, cnt * 32 + 8, 23);    // SymbolKind.Struct = 23
+                w64(ent, cnt * 32 + 16, ln);
+                w64(ent, cnt * 32 + 24, r64(g_tokens, d * ESZ_TOKEN + OFF_TK_COL));
+                cnt = cnt + 1;
+            }
+        }
+        i = i + 1;
+    }
+    i = 0;
+    loop {
+        if i >= g_enum_count { break; }
+        ni := ei_name(i);
+        d := analysis_decl_tok(T_ENUM, ni);
+        if d >= 0 {
+            ln := r64(g_tokens, d * ESZ_TOKEN + OFF_TK_LINE);
+            if analysis_line_offset(ln) == 0 {
+                w64(ent, cnt * 32, ni);
+                w64(ent, cnt * 32 + 8, 23);    // SymbolKind.Enum = 23（按 brief）
+                w64(ent, cnt * 32 + 16, ln);
+                w64(ent, cnt * 32 + 24, r64(g_tokens, d * ESZ_TOKEN + OFF_TK_COL));
+                cnt = cnt + 1;
+            }
+        }
+        i = i + 1;
+    }
+    // 按 (line, col) 升序插入排序（源顺序输出）
+    j : ., mut = 1;
+    loop {
+        if j >= cnt { break; }
+        key_ni := r64(ent, j * 32);
+        key_kind := r64(ent, j * 32 + 8);
+        key_ln := r64(ent, j * 32 + 16);
+        key_cl := r64(ent, j * 32 + 24);
+        k : ., mut = j;
+        loop {
+            if k <= 0 { break; }
+            pln := r64(ent, (k - 1) * 32 + 16);
+            pcl := r64(ent, (k - 1) * 32 + 24);
+            if pln < key_ln || (pln == key_ln && pcl <= key_cl) { break; }
+            w64(ent, k * 32, r64(ent, (k - 1) * 32));
+            w64(ent, k * 32 + 8, r64(ent, (k - 1) * 32 + 8));
+            w64(ent, k * 32 + 16, pln);
+            w64(ent, k * 32 + 24, pcl);
+            k = k - 1;
+        }
+        w64(ent, k * 32, key_ni);
+        w64(ent, k * 32 + 8, key_kind);
+        w64(ent, k * 32 + 16, key_ln);
+        w64(ent, k * 32 + 24, key_cl);
+        j = j + 1;
+    }
+    out : string, mut = "[";
+    q : ., mut = 0;
+    loop {
+        if q >= cnt { break; }
+        if q > 0 { out = out + ","; }
+        ni := r64(ent, q * 32);
+        ln1 := r64(ent, q * 32 + 16);
+        cl1 := r64(ent, q * 32 + 24);
+        out = out + "{\"name\":";
+        out = out + lsp_json_escape_str(istr_get(ni));
+        out = out + ",\"kind\":";
+        out = out + int_str(r64(ent, q * 32 + 8));
+        out = out + ",\"range\":";
+        out = out + analysis_range_json(ln1, cl1);
+        out = out + ",\"selectionRange\":";
+        out = out + analysis_range_json(ln1, cl1);
+        out = out + ",\"children\":[]}";
+        q = q + 1;
+    }
+    out = out + "]";
+    return out;
+}

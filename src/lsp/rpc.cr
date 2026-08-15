@@ -167,7 +167,9 @@ fn rpc_send(body: string) {
 fn rpc_send_initialize(id: int) {
     out : string, mut = "{\"jsonrpc\":\"2.0\",\"id\":";
     out = out + int_str(id);
-    out = out + ",\"result\":{\"capabilities\":{\"textDocumentSync\":1}}}";
+    // Task 5：声明 completion（@ 触发）/ documentSymbol 能力——客户端据此
+    // 才发送对应请求；textDocumentSync 保持 1（全量同步，Task 3 契约）。
+    out = out + ",\"result\":{\"capabilities\":{\"textDocumentSync\":1,\"completionProvider\":{\"triggerCharacters\":[\"@\"]},\"documentSymbolProvider\":true}}}";
     rpc_send(out);
 }
 
@@ -285,6 +287,9 @@ fn rpc_dispatch(req: int) -> int {
     // 语义查询（Task 4）：请求，回响应——基于快照，不触发检查
     if rpc_method_eq(mnode, "textDocument/hover") != 0 { lsp_hover(req); return 0; }
     if rpc_method_eq(mnode, "textDocument/definition") != 0 { lsp_definition(req); return 0; }
+    // 语义查询（Task 5）：completion / documentSymbol——同一快照模式
+    if rpc_method_eq(mnode, "textDocument/completion") != 0 { lsp_completion(req); return 0; }
+    if rpc_method_eq(mnode, "textDocument/documentSymbol") != 0 { lsp_document_symbol(req); return 0; }
     // 未知方法 → -32601（通知静默忽略）
     if has_id != 0 { rpc_send_error(id_val, -32601); }
     return 0;
