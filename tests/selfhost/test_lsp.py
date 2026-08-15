@@ -67,8 +67,44 @@ def test_diagnostics_and_reset():
     send(proc, {"jsonrpc": "2.0", "id": 9, "method": "shutdown"})
     proc.stdin.close(); proc.wait(timeout=5)
 
+def test_hover_and_definition():
+    proc = subprocess.Popen([BIN], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    send(proc, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+    uri = "file:///tmp/hover_test.cr"
+    #       0: fn add(a: int, b: int) -> int {
+    #       1:     return a + b;
+    #       2: }
+    #       3: (空行)
+    #       4: fn main() -> int {
+    #       5:     x := add(1, 2);
+    #       6:     return x;
+    #       7: }
+    src = "fn add(a: int, b: int) -> int {\n    return a + b;\n}\n\nfn main() -> int {\n    x := add(1, 2);\n    return x;\n}\n"
+    # 注意：didOpen 不能用 send()——它自带 read_frame 会吞掉 publishDiagnostics
+    # 帧（brief 原文 send()+read_frame() 双读会永久阻塞）；直接写帧再读一帧。
+    body = json.dumps({"jsonrpc": "2.0", "method": "textDocument/didOpen",
+                       "params": {"textDocument": {"uri": uri, "version": 1,
+                                                   "text": src}}}).encode()
+    proc.stdin.write(f"Content-Length: {len(body)}\r\n\r\n".encode() + body)
+    proc.stdin.flush()
+    read_frame(proc)  # 丢弃 publishDiagnostics 通知
+    # hover 在 add 调用处（0-based line=5, character=10 即 add 起点）
+    r = send(proc, {"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover",
+                    "params": {"textDocument": {"uri": uri},
+                               "position": {"line": 5, "character": 10}}})
+    assert "fn add" in r["result"]["contents"], r
+    # definition 同位置 → 声明在 line 0
+    r = send(proc, {"jsonrpc": "2.0", "id": 3, "method": "textDocument/definition",
+                    "params": {"textDocument": {"uri": uri},
+                               "position": {"line": 5, "character": 10}}})
+    assert r["result"]["uri"] == uri, r
+    assert r["result"]["range"]["start"]["line"] == 0, r
+    send(proc, {"jsonrpc": "2.0", "id": 9, "method": "shutdown"})
+    proc.stdin.close(); proc.wait(timeout=5)
+
 if __name__ == "__main__":
     test_lifecycle()
     test_jsonrpc_error_codes()
     test_diagnostics_and_reset()
+    test_hover_and_definition()
     print("lsp lifecycle: ALL PASS")

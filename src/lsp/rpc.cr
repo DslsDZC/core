@@ -282,6 +282,9 @@ fn rpc_dispatch(req: int) -> int {
     if rpc_method_eq(mnode, "textDocument/didChange") != 0 { lsp_did_change(req); return 0; }
     if rpc_method_eq(mnode, "textDocument/didSave") != 0 { lsp_did_save(req); return 0; }
     if rpc_method_eq(mnode, "textDocument/didClose") != 0 { lsp_did_close(req); return 0; }
+    // 语义查询（Task 4）：请求，回响应——基于快照，不触发检查
+    if rpc_method_eq(mnode, "textDocument/hover") != 0 { lsp_hover(req); return 0; }
+    if rpc_method_eq(mnode, "textDocument/definition") != 0 { lsp_definition(req); return 0; }
     // 未知方法 → -32601（通知静默忽略）
     if has_id != 0 { rpc_send_error(id_val, -32601); }
     return 0;

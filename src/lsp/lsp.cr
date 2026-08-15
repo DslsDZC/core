@@ -115,7 +115,7 @@ fn lsp_publish_diags() {
     if g_file_count > 0 { main_fni = r64(g_files, 0); }
     main_uri : string, mut = "file://";
     if g_file_count > 0 {
-        mp := load_str_ptr(g_files, 16);
+        mp := load_str_ptr(g_files, 8);
         if str_len(mp) > 0 { main_uri = "file://" + mp; }
     }
     lsp_send_file_diags(main_uri, main_fni);
@@ -159,8 +159,11 @@ fn lsp_check_file(path: string, src: string) {
     tokenize(g_source);
     res_imports();
     // res_imports 把主文件注册到 g_files[0] 时路径为空串——补上真实路径
-    // （供 publishDiagnostics 的 file_id → uri 映射；path 为稳定堆字符串）
-    if g_file_count > 0 { store_str_ptr(g_files, 16, path); }
+    // （供 publishDiagnostics 的 file_id → uri 映射；path 为稳定堆字符串）。
+    // 记录布局 {file_id@0, path@8}（module.cr reg_fileid）——旧代码误写 +16
+    // （记录 1 的 id 槽）仅靠读写同侧巧合工作，Task 4 的 analysis 按真实布局
+    // 读 +8 会拿到空串，故统一为 +8（root cause 修复）。
+    if g_file_count > 0 { store_str_ptr(g_files, 8, path); }
     parse_all();
     if g_diag_count > 0 {
         // parse 阶段诊断：AST 可能不完整，跳过 check_all（与 run_frontend 一致）
@@ -235,4 +238,69 @@ fn lsp_did_close(root: int) {
     module_open_doc_remove(path);
     // 清诊断：发布空数组
     lsp_send_file_diags("file://" + path, -1);
+}
+
+// ── hover / definition（Task 4）──────────────────────────────
+// 请求（带 id）→ 响应。查询基于最后一次成功检查的快照（analysis.cr），
+// 不触发检查。position 为 LSP 0-based；无结果 → result:null。
+
+// 响应体：contents 非空 → {"contents": "<文本>"}，否则 null
+fn lsp_send_hover_resp(root: int, contents: string) {
+    idnode := json_obj_get(root, "id");
+    id_val : ., mut = 0;
+    if idnode >= 0 && json_get(idnode, 0) == J_NUM { id_val = json_get(idnode, 1); }
+    out : string, mut = "{\"jsonrpc\":\"2.0\",\"id\":";
+    out = out + int_str(id_val);
+    if str_len(contents) == 0 {
+        out = out + ",\"result\":null}";
+    } else {
+        out = out + ",\"result\":{\"contents\":";
+        out = out + lsp_json_escape_str(contents);
+        out = out + "}}";
+    }
+    rpc_send(out);
+}
+
+// 响应体：loc 非空 → {"uri","range"} Location，否则 null
+fn lsp_send_def_resp(root: int, loc: string) {
+    idnode := json_obj_get(root, "id");
+    id_val : ., mut = 0;
+    if idnode >= 0 && json_get(idnode, 0) == J_NUM { id_val = json_get(idnode, 1); }
+    out : string, mut = "{\"jsonrpc\":\"2.0\",\"id\":";
+    out = out + int_str(id_val);
+    out = out + ",\"result\":";
+    if str_len(loc) == 0 { out = out + "null"; }
+    else { out = out + loc; }
+    out = out + "}";
+    rpc_send(out);
+}
+
+fn lsp_hover(root: int) {
+    params := json_obj_get(root, "params");
+    pos : ., mut = -1;
+    if params >= 0 { pos = json_obj_get(params, "position"); }
+    if pos < 0 || json_get(pos, 0) != J_OBJ { lsp_send_hover_resp(root, ""); return; }
+    line_node := json_obj_get(pos, "line");
+    col_node := json_obj_get(pos, "character");
+    if line_node < 0 || col_node < 0 ||
+       json_get(line_node, 0) != J_NUM || json_get(col_node, 0) != J_NUM {
+        lsp_send_hover_resp(root, "");
+        return;
+    }
+    lsp_send_hover_resp(root, analysis_hover(json_get(line_node, 1), json_get(col_node, 1)));
+}
+
+fn lsp_definition(root: int) {
+    params := json_obj_get(root, "params");
+    pos : ., mut = -1;
+    if params >= 0 { pos = json_obj_get(params, "position"); }
+    if pos < 0 || json_get(pos, 0) != J_OBJ { lsp_send_def_resp(root, ""); return; }
+    line_node := json_obj_get(pos, "line");
+    col_node := json_obj_get(pos, "character");
+    if line_node < 0 || col_node < 0 ||
+       json_get(line_node, 0) != J_NUM || json_get(col_node, 0) != J_NUM {
+        lsp_send_def_resp(root, "");
+        return;
+    }
+    lsp_send_def_resp(root, analysis_definition(json_get(line_node, 1), json_get(col_node, 1)));
 }

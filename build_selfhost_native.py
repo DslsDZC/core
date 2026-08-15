@@ -227,6 +227,7 @@ def main():
             'src/lsp/json.cr',
             'src/lsp/rpc.cr',
             'src/lsp/lsp.cr',
+            'src/lsp/analysis.cr',
             'src/lsp/main.cr',
         ], wrapper_fn='lsp_main'),
         label='corelsp',
