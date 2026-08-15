@@ -61,9 +61,13 @@ g_ir_func_param_count : string, mut; g_ir_func_param_count_cap : int, mut;
 g_ir_func_count : int, mut;
 
 // Module system arrays (dynamic byte buffers)
+DIAG_REC_SIZE : int = 40;   // g_diags 记录字节数：[ec(8) msg(8) line(8) col(8) file_id(8)]
 g_diags : string, mut;           g_diag_count : int, mut;     g_diag_cap : int, mut;
 g_files : string, mut;           g_file_count : int, mut;     g_file_cap : int, mut;
 g_mods : string, mut;            g_mod_count : int, mut;      g_mod_cap : int, mut;
+// LSP open documents: path → source text. 24-byte records:
+// {path_ptr(8), src_ptr(8), src_len(8)}（路径与源文本均为调用方提供的稳定堆字符串）
+g_open_docs : string, mut;       g_open_doc_count : int, mut; g_open_doc_cap : int, mut;
 g_mod_func_fileids : string, mut; g_mod_func_names : string, mut;
 g_mod_func_tis : string, mut;    g_mod_func_count : int, mut; g_mod_func_cap : int, mut;
 g_mod_path_names : string, mut;  g_mod_path_count : int, mut; g_mod_path_cap : int, mut;
@@ -183,3 +187,31 @@ fn register_plugin_rtype(ns_ni: int, name_ni: int, data: int) -> int {
     w64(g_plugin_rtypes, g_plugin_rtype_count*24+16, data);
     g_plugin_rtype_count = g_plugin_rtype_count + 1;
     return 0; }
+
+// ─── 前端状态重置（LSP 进程内重复检查）──────────────────────────────
+// 清 count 保留 cap（缓冲复用）；g_strs/g_str_hash 驻留表不重置。
+// 与 tokenize/res_imports/parse_all/check_all 各自内部的清零互补——防御
+// 上次运行残留（尤其是 parse 阶段诊断后跳过 check_all 时 g_diags 不清零
+// 导致的"幽灵诊断"）。g_open_docs 是 LSP 文档源（跨检查持久），不在此清。
+fn reset_frontend_state() {
+    g_token_count = 0;
+    g_ast_count = 0;
+    g_error_count = 0;
+    g_diag_count = 0;
+    g_block_stmt_count = 0;
+    g_func_count = 0; g_struct_count = 0; g_enum_count = 0;
+    g_sym_count = 0; g_type_count = 0;
+    g_iface_count = 0; g_impl_for_count = 0; g_method_count = 0;
+    g_type_alias_count = 0; g_generic_constr_count = 0; g_gen_param_count = 0;
+    g_global_let_count = 0;
+    g_loop_depth = 0; g_scope_depth = 0;
+    g_borrow_count = 0; g_holder_count = 0;
+    g_borrow_scope_depth = 0;
+    g_gen_map_count = 0; g_dyn_type_set_count = 0;
+    g_mod_func_count = 0; g_mod_path_count = 0;
+    g_file_count = 0; g_mod_count = 0;
+    g_seg_count = 0; g_line_count = 0;
+    g_unsafe_depth = 0;
+    g_alloc_pts_cap = 0;
+    g_checker_current_fi = 0;
+}

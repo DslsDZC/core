@@ -277,6 +277,11 @@ fn rpc_dispatch(req: int) -> int {
         if has_id != 0 { rpc_send_error(id_val, -32600); }
         return 0;
     }
+    // 文档同步（Task 3）：通知，不回响应——检查结果经 publishDiagnostics 通知回
+    if rpc_method_eq(mnode, "textDocument/didOpen") != 0 { lsp_did_open(req); return 0; }
+    if rpc_method_eq(mnode, "textDocument/didChange") != 0 { lsp_did_change(req); return 0; }
+    if rpc_method_eq(mnode, "textDocument/didSave") != 0 { lsp_did_save(req); return 0; }
+    if rpc_method_eq(mnode, "textDocument/didClose") != 0 { lsp_did_close(req); return 0; }
     // 未知方法 → -32601（通知静默忽略）
     if has_id != 0 { rpc_send_error(id_val, -32601); }
     return 0;

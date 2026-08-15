@@ -112,18 +112,20 @@ fn parse_type() -> int {
         }
     } else if tok_k(t) == T_LBRACE {
         grow_diags(g_diag_count + 1);
-        w64(g_diags, g_diag_count * 32, EC_P_EXPECTED);
-        store_str_ptr(g_diags, g_diag_count * 32 + 8, "expected type after '->', got '{' — missing return type?");
-        w64(g_diags, g_diag_count * 32 + 16, line);
-        w64(g_diags, g_diag_count * 32 + 24, col);
+        w64(g_diags, g_diag_count * DIAG_REC_SIZE, EC_P_EXPECTED);
+        store_str_ptr(g_diags, g_diag_count * DIAG_REC_SIZE + 8, "expected type after '->', got '{' — missing return type?");
+        w64(g_diags, g_diag_count * DIAG_REC_SIZE + 16, line);
+        w64(g_diags, g_diag_count * DIAG_REC_SIZE + 24, col);
+        w64(g_diags, g_diag_count * DIAG_REC_SIZE + 32, diag_fileid_for_line(line));
         g_diag_count = g_diag_count + 1;
         res = alloc_node(0, 0, 0, 0, 0, TY_UNIT, 0, line, col);
     } else {
         grow_diags(g_diag_count + 1);
-        w64(g_diags, g_diag_count * 32, EC_P_EXPECTED);
-        store_str_ptr(g_diags, g_diag_count * 32 + 8, "expected type after '->'");
-        w64(g_diags, g_diag_count * 32 + 16, line);
-        w64(g_diags, g_diag_count * 32 + 24, col);
+        w64(g_diags, g_diag_count * DIAG_REC_SIZE, EC_P_EXPECTED);
+        store_str_ptr(g_diags, g_diag_count * DIAG_REC_SIZE + 8, "expected type after '->'");
+        w64(g_diags, g_diag_count * DIAG_REC_SIZE + 16, line);
+        w64(g_diags, g_diag_count * DIAG_REC_SIZE + 24, col);
+        w64(g_diags, g_diag_count * DIAG_REC_SIZE + 32, diag_fileid_for_line(line));
         g_diag_count = g_diag_count + 1;
         res = alloc_node(0, 0, 0, 0, 0, TY_UNIT, 0, line, col);
     }
@@ -1511,9 +1513,10 @@ fn parse_declaration() {
                 // Store method in interface entry (with overflow checks)
                 if method_count >= 16 {
                     grow_diags(g_diag_count + 1);
-                    w64(g_diags, g_diag_count * 32, EC_P_FIELD_SYNTAX);
-                    store_str_ptr(g_diags, g_diag_count * 32 + 8, "interface '" + iface_name + "' exceeds max 16 methods");
-                    w64(g_diags, g_diag_count * 32 + 16, tok_ln(t)); w64(g_diags, g_diag_count * 32 + 24, tok_cl(t));
+                    w64(g_diags, g_diag_count * DIAG_REC_SIZE, EC_P_FIELD_SYNTAX);
+                    store_str_ptr(g_diags, g_diag_count * DIAG_REC_SIZE + 8, "interface '" + iface_name + "' exceeds max 16 methods");
+                    w64(g_diags, g_diag_count * DIAG_REC_SIZE + 16, tok_ln(t)); w64(g_diags, g_diag_count * DIAG_REC_SIZE + 24, tok_cl(t));
+                    w64(g_diags, g_diag_count * DIAG_REC_SIZE + 32, diag_fileid_for_line(tok_ln(t)));
                     g_diag_count = g_diag_count + 1;
                 } else {
                     mbase := iface_base + OFF_IF_METHODS + method_count * ESZ_IFMETHOD;
@@ -1526,9 +1529,10 @@ fn parse_declaration() {
                         pj = pj + 1; }
                     if pc > 8 {
                         grow_diags(g_diag_count + 1);
-                        w64(g_diags, g_diag_count * 32, EC_P_PARAM_TYPE);
-                        store_str_ptr(g_diags, g_diag_count * 32 + 8, "method '" + istr_get(method_ni) + "' in interface exceeds max 8 params");
-                        w64(g_diags, g_diag_count * 32 + 16, tok_ln(t)); w64(g_diags, g_diag_count * 32 + 24, tok_cl(t));
+                        w64(g_diags, g_diag_count * DIAG_REC_SIZE, EC_P_PARAM_TYPE);
+                        store_str_ptr(g_diags, g_diag_count * DIAG_REC_SIZE + 8, "method '" + istr_get(method_ni) + "' in interface exceeds max 8 params");
+                        w64(g_diags, g_diag_count * DIAG_REC_SIZE + 16, tok_ln(t)); w64(g_diags, g_diag_count * DIAG_REC_SIZE + 24, tok_cl(t));
+                        w64(g_diags, g_diag_count * DIAG_REC_SIZE + 32, diag_fileid_for_line(tok_ln(t)));
                         g_diag_count = g_diag_count + 1;
                     }
                 }

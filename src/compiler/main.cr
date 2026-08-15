@@ -587,8 +587,8 @@ fn compile_source(source: string) -> string {
         ei : ., mut = 0;
         loop {
             if ei >= g_diag_count { break; }
-            diag_code := r64(g_diags, ei * 32);
-            diag_msg := load_str_ptr(g_diags, ei * 32 + 8);
+            diag_code := r64(g_diags, ei * DIAG_REC_SIZE);
+            diag_msg := load_str_ptr(g_diags, ei * DIAG_REC_SIZE + 8);
             err_msg = err_msg + " [" + int_str(diag_code) + "] " + diag_msg;
             ei = ei + 1;
         }
