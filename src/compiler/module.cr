@@ -498,11 +498,13 @@ fn res_imports() {
                         if str_len(ptc) > 0 {
                             pn := extract_toml_name(ptc);
                             if str_len(pn) > 0 && str_eq(pn, project_name) == 0 {
-                                print("  warning: @");
-                                print(project_name);
-                                print(" toml name='");
-                                print(pn);
-                                println("' mismatch");
+                                if g_silent_stdout == 0 {
+                                    print("  warning: @");
+                                    print(project_name);
+                                    print(" toml name='");
+                                    print(pn);
+                                    println("' mismatch");
+                                }
                             }
                         }
                         path = "src/" + project_name + "/" + import_fileid + ".cr";
@@ -548,7 +550,7 @@ fn res_imports() {
                             content = module_get_source(path);
                         }
                         if str_len(content) == 0 {
-                            print("!! import fail: "); println(import_fileid);
+                            if g_silent_stdout == 0 { print("!! import fail: "); println(import_fileid); }
                         }
                     }
                 }
@@ -567,7 +569,7 @@ fn res_imports() {
                         i = pos;
                         continue;
                     }
-                    print("  -> "); println(path);
+                    if g_silent_stdout == 0 { print("  -> "); println(path); }
                     any_new = 1;
                     seg_byte := main_len + total_accumulated + pass_bytes + 1;
                     grow_segs(g_seg_count + 1); w64(g_seg_starts, g_seg_count * 8, seg_byte);

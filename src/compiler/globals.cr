@@ -68,6 +68,8 @@ g_mods : string, mut;            g_mod_count : int, mut;      g_mod_cap : int, m
 // LSP open documents: path → source text. 24-byte records:
 // {path_ptr(8), src_ptr(8), src_len(8)}（路径与源文本均为调用方提供的稳定堆字符串）
 g_open_docs : string, mut;       g_open_doc_count : int, mut; g_open_doc_cap : int, mut;
+// LSP 静默模式：1 = 抑制非诊断的进度/警告 stdout 输出（保护协议通道）
+g_silent_stdout : int, mut;      // 默认 0：corec 命令行行为不变
 g_mod_func_fileids : string, mut; g_mod_func_names : string, mut;
 g_mod_func_tis : string, mut;    g_mod_func_count : int, mut; g_mod_func_cap : int, mut;
 g_mod_path_names : string, mut;  g_mod_path_count : int, mut; g_mod_path_cap : int, mut;
