@@ -1,0 +1,8 @@
+# 冒烟测试（Task 3）：7 条查询覆盖 check/infer/convert/subtype 四命令
+check (ctx) (zero) (nat)
+check (ctx) (zero) (typ 0)
+infer (ctx) (succ (zero))
+infer (ctx) (app (fn (nat) (var 0)) (zero))
+convert (ctx) (nat) (nat) (typ 1)
+subtype (ctx) (typ 0) (typ 1)
+check (ctx) (app (fn (nat) (var 0)) (zero)) (typ 0)

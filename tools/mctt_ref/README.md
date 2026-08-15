@@ -101,3 +101,84 @@ icfp25-artifact 标签树均已核对，只有 dune/.gitignore/.ocamlformat 三�
 
 - switch `coq-8.20.0`（OCaml 4.14.2，独立于 default switch 5.4.1）。
 - 本仓库禁止 git（hook 机械拦截）；McTT 克隆/构建为第三方仓库操作，git/curl 均只作用于 ~/mctt。
+
+## Task 3 补充：harness 入口签名（侦查实测，以提取 .mli 为准）
+
+harness 接线用到的真实模块与签名（`driver/extracted/*.mli`，均位于 wrapped 库
+`McttExtracted` 内，外部须经 `McttExtracted.Module` 引用）：
+
+| 模块 | 签名（M1 用到的入口） |
+|------|----------------------|
+| `Syntax` | `type exp`（`Coq_a_typ/Coq_a_nat/Coq_a_zero/Coq_a_succ/Coq_a_natrec(exp*exp*exp*exp)/Coq_a_pi/Coq_a_fn/Coq_a_app/Coq_a_var/Coq_a_sub`）、`type sub`、`type nf`、`type ne`、`nf_to_exp`、`ne_to_exp`、`nf_eq_dec` |
+| `TypeCheck` | `type_check : exp list -> exp -> exp -> bool`（**参数序 (ctx, 类型, 项)**）、`type_infer : exp list -> exp -> nf option`（(ctx, 项)，返回已正规化 nf）、`type_check_closed` |
+| `Subtyping` | `subtyping_impl : exp list -> exp -> exp -> bool`（(ctx, A, B)：A ≤ B）、`subtyping_nf_impl` |
+| `NbE` | `nbe_impl : exp list -> exp -> exp -> nf`（(ctx, 项, 类型)）、`nbe_ty_impl : exp list -> exp -> nf` |
+| `Evaluation` | `eval_exp_impl : exp -> (int -> domain) -> domain` |
+| `Readback` | `read_nf_impl/read_ne_impl/read_typ_impl : int -> … -> nf/ne` |
+
+要点（构建/调试中实测）：
+
+1. **提取库是 wrapped**：`(library (name McttExtracted) (public_name mctt.extracted))`
+   无 `wrapped false`；外部必须写 `McttExtracted.TypeCheck` 等（driver/Main.ml 即
+   `module Parser = McttExtracted.Parser` 的写法）。
+2. **`type_check` 参数序是 (ctx, 类型, 项)**——协议行 `check <ctx> <项> <类型>`
+   接线时必须交换实参（踩坑：不交换时 `check (ctx) (zero) (nat)` 会因
+   `nbe_ty (zero)` 触发 Readback.ml:60 assert 崩溃）。
+3. **语义总化**：提取代码对前提不满足的输入触发 `assert false`
+   （Readback.ml:17/27/28/60、Evaluation.ml:33/45/46）；harness 统一捕获
+   Assert_failure 按拒绝态处理（协议 §5）。`type_infer` 对任意语法良构输入
+   为全函数（逐分支核实，无 assert 可达）。
+4. **顶层 `(sub …)` 恒推断失败**：TypeCheck.ml 的 `Coq_a_sub (_, _) -> None`
+   （即使语义良型）；`check (sub …)` 一律 reject，但 `convert` 经 nbe 可处理
+   sub 项——均为 McTT 实际行为，语料以此为准。
+
+## Task 3 补充：harness 构建与运行
+
+- 源文件：本目录 `harness.ml` + `dune`（dune 内容 = `(executable (name harness)
+  (libraries McttExtracted))`；brief 假设的 `mctt_driver` 库名不存在，实际为
+  `McttExtracted`）。
+- 构建（需要 opam switch 环境；~ 不在 switch 下的命令请用
+  `opam exec --switch=coq-8.20.0 --` 前缀）：
+
+```bash
+mkdir -p ~/mctt/driver/harness
+cp tools/mctt_ref/harness.ml tools/mctt_ref/dune ~/mctt/driver/harness/
+cd ~/mctt && nice -n 19 opam exec --switch=coq-8.20.0 -- dune build driver/harness/harness.exe
+# 产物：~/mctt/_build/default/driver/harness/harness.exe（可直接运行，无需 switch）
+```
+
+- 运行：`harness.exe QUERY_FILE...`；`#` 注释行/空行跳过；malformed 行 → stderr
+  诊断 + 退出码 1（无 stdout 输出）。
+- 冒烟：`harness.exe tools/mctt_ref/smoke.txt` 应与 `smoke.expected` 逐行一致
+  （7/7，见下节）。
+
+## Task 3 补充：冒烟结果（2026-08-16，7/7 与 brief 期望表一致）
+
+```text
+check: accept      # check (ctx) (zero) (nat)
+check: reject      # check (ctx) (zero) (typ 0)
+infer: type: (nat) # infer (ctx) (succ (zero))
+infer: type: (nat) # infer (ctx) (app (fn (nat) (var 0)) (zero))
+convert: yes       # convert (ctx) (nat) (nat) (typ 1)
+subtype: yes       # subtype (ctx) (typ 0) (typ 1)
+check: reject      # check (ctx) (app (fn (nat) (var 0)) (zero)) (typ 0)
+```
+
+brief 标注「第 7 行预期 reject 存在不确定性」——实测 **reject 确认无误**
+（app 推断类型为 (nat)，(nat) 与 (typ 0) 不可比）。
+
+## Task 3 补充：全量语料验证（2026-08-16）
+
+三个语料文件全部跑通（无 stderr、exit 0；输出行数 = 查询行数 - `#` 注释行）：
+
+| 语料 | 查询行 | 注释行 | 输出行 | 耗时 |
+|------|--------|--------|--------|------|
+| corpus_manual.txt | 25 | 0 | 25 | <0.01s |
+| corpus_random.txt | 1200 | 0 | 1200 | 0.01s |
+| corpus_exhaustive.txt | 45244 | 8 | 45236 | 0.22s |
+
+抽查核验（manual 案卷 25 条全部人工对过语义）：natrec 的 succ 分支按 McTT 规则
+`MS ⟸ A[Wk∘Wk,,succ #1]`（Definitions.v:29）——动机为 (nat) 时分支须为 nat
+形态，(fn (nat) (succ (var 0))) 推断为 Πℕℕ 故 reject（McTT 实际判定，非 harness 错误）；
+`check (ctx (nat) (nat)) (sub (var 0) (compose (weaken) (id))) (nat)` 因顶层 sub
+恒 None 而 reject，亦为 McTT 实际行为。
