@@ -146,10 +146,10 @@ fn main() {
 
 ```core
 x := 42;           // 不可变，类型推断为 int
-y : ., mut = 3.14; // 可变，类型推断
+y : ., mut = 3.14; // 可变，类型推断为 dex（精确小数）
 ```
 
-类型标注、标签（mut/pub）可选：
+类型标注、标签（mut/pub/apx）可选：
 
 ```core
 x : int = 42;
@@ -157,6 +157,7 @@ name : string = "Core";
 
 count : int, mut = 0;  // 可变 + 显式类型
 pub_val : int, pub = 42; // 公开字段
+speed : ., apx = 3.14; // apx = 近似授权：授权后端对 dex 运算做语义级变换（CPU 上兑现为 binary64 快路径）
 
 // 批量声明
 a, b : int = 1, 2;
@@ -189,7 +190,7 @@ fn add(a: int, b: int) -> auto {
     return a + b;      // 推导为 int
 }
 
-fn pi() -> auto = 3.14159;  // 推导为 float（单行形式）
+fn pi() -> auto = 3.14159;  // 推导为 dex（精确小数，单行形式）
 ```
 
 注意：`auto` 是关键字，不可用作变量名或类型名。
@@ -198,8 +199,8 @@ fn pi() -> auto = 3.14159;  // 推导为 float（单行形式）
 
 | 类型 | 说明 |
 |------|------|
-| int | 整数（编译器按需选择宽度） |
-| float | 64 位浮点数 |
+| int | 整数（精确；i64 实现） |
+| dex | 精确小数（默认实数语义，缩放整数/定点实现，精度内置） |
 | bool | true / false |
 | string | 不可变 UTF-8 字符串 |
 | char | Unicode 标量值 |
@@ -208,6 +209,11 @@ fn pi() -> auto = 3.14159;  // 推导为 float（单行形式）
 `dyn` 动态类型详见 `docs/dynamic-typing.md`。
 | unit | 空值 () |
 | never | 发散类型 |
+
+`3.14` 字面量默认产生 dex；近似需显式授权——`apx` 是变量级标签（与 mut/pub 同族）：
+`x : ., apx = 3.14` 授权后端把 dex 运算降级为 binary64 FPU 快路径（结果可以变）；
+不带 apx 时 dex 恒精确（其他范式忽略 apx 附注即回退到精确缩放整数运算）。
+`_f32` / `_f64` 后缀保留，暂作 apx 的 CPU 位宽标注。
 
 显式位宽后缀：
 
@@ -310,8 +316,8 @@ slice : [int] = arr[0..2];   // 切片，引用原数组
 
 ```core
 struct Point {
-    x: float,
-    y: float,
+    x: dex,
+    y: dex,
 }
 
 p := Point { x = 1.0, y = 2.0 };
@@ -351,11 +357,11 @@ fn add(a: int, b: int) -> int = a + b;
 
 ```core
 impl Point {
-    fn norm(&self) -> float {
+    fn norm(&self) -> dex {
         (self.x * self.x + self.y * self.y).sqrt()
     }
 
-    fn move_by(&mut self, dx: float, dy: float) {
+    fn move_by(&mut self, dx: dex, dy: dex) {
         self.x += dx;
         self.y += dy;
     }
@@ -468,7 +474,7 @@ fn consume(v: Vec<int>) { ... }
 consume(move b);         // b 移动进去
 ```
 
-- 复制类型：整数、浮点数、布尔、小元组等实现 Copy 接口，赋值时自动复制。
+- 复制类型：整数、精确小数（dex）、布尔、小元组等实现 Copy 接口，赋值时自动复制。
 
 无生命周期标注，编译器全权推断引用有效性。
 
@@ -503,7 +509,7 @@ impl Hash for Point {
 | `int` | 整数值直接作为哈希 |
 | `string` | 基于内容的哈希 |
 | `bool` | true/false 映射为固定值 |
-| `float` | 按位表示的哈希 |
+| `dex` | 按位表示的哈希 |
 | `(T1, T2)` | 组合哈希 |
 
 用户也可为自定义类型手动实现或通过 derive 自动生成。
@@ -630,17 +636,17 @@ RawRef<T> 无法逃逸到安全代码。
 ```core
 mod examples::pi;
 
-fn leibniz_partial(start: int, n: int) -> float {
+fn leibniz_partial(start: int, n: int) -> dex {
     sum : ., mut = 0.0;
     sign : ., mut = if start % 4 == 1 { 1.0 } else { -1.0 };
     for i in 0..n {
-        sum += sign / ((start + 2 * i) as float);
+        sum += sign / ((start + 2 * i) as dex);
         sign = -sign;
     }
     return sum;
 }
 
-flow worker(id: int, base: int, chunk: int) -> float {
+flow worker(id: int, base: int, chunk: int) -> dex {
     offset : ., mut = base;
     loop {
         partial := leibniz_partial(offset, chunk);

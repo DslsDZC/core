@@ -26,10 +26,10 @@
 
 | 类别 | 特性 | 状态 |
 |------|------|------|
-| **类型系统** | `int`、`float`、`bool`、`string`、`char`、`unit`、`never` | 完成 |
+| **类型系统** | `int`、`dex`、`bool`、`string`、`char`、`unit`、`never` | 完成 |
 | | 泛型函数与泛型结构体 | 完成 |
-| | `auto` / `.` 类型推导、位宽后缀 `_i32` `_u64` `_f32` `_f64` | 完成 |
-| **变量** | `:=` / `: type` 声明，`mut` / `pub` 标签，批量声明 | 完成 |
+| | `auto` / `.` 类型推导、位宽后缀 `_i32` `_u64`（`_f32`/`_f64` 保留为 apx 的 CPU 位宽标注） | 完成 |
+| **变量** | `:=` / `: type` 声明，`mut` / `pub` / `apx` 标签，批量声明 | 完成 |
 | **函数** | 函数定义、调用、单行函数体、`pub fn` 可见性 | 完成 |
 | **控制流** | `if` / `else` / `elif`、`while`、`loop` + `break`/`continue`、`for` 区间和数组迭代 | 完成 |
 | | region 嵌套式（SG_IF/LOOP/FOR/FLOW/UNSAFE + state edges + .ccr v5，即 HDFG 结构） | 完成 |

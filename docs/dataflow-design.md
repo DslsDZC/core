@@ -109,7 +109,7 @@ load_balancer 节点不断创建/移除 worker 节点，HDFG在运行时动态�
 ## 5. 并行计算 π 的图表示例
 
 ```core
-flow worker(id, base, chunk) -> float {
+flow worker(id, base, chunk) -> dex {
     loop {
         partial := leibniz_partial(offset, chunk);
         yield partial;
@@ -134,7 +134,7 @@ fn main() {
 
 图结构：
 
-- 8 个 worker 节点，每个独立运行，产出 float 令牌。
+- 8 个 worker 节点，每个独立运行，产出 dex 令牌。
 - orchestrator 节点通过 recv() 从 8 条边收集令牌，累加后输出。
 - 所有边是缓冲通道，允许生产者/消费者异步执行。
 - 循环构成反馈：worker 每次 yield 后继续计算下一块。
