@@ -182,6 +182,7 @@ src/stdlib/
 ├── panic.cr    → Rust-style panic handler (dev only)
 ├── math.cr     → Math functions (stub)
 ├── collections.cr → Collections (stub)
+├── 平台桥抽象设计：I/O 流 / 随机 / 哈希 / 时钟（语义接口 + 后端实现，程序 IO = 流转导器）——设计定案待实现（docs/superpowers/specs/2026-08-16-platform-abstract-design.md）
 └── _import.cr  → Shared imports for stdlib modules
 ```
 

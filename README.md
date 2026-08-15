@@ -52,6 +52,7 @@
 | **模块系统** | `import`、`fileid`、`@project`、`_import.cr`、依赖裁剪 | 完成 |
 | **标准库** | `io.cr` / `cli.cr` / `toml.cr` | 完成 |
 | | `math.cr` / `collections.cr` | 部分（stub，TODO bug 4） |
+| | 平台桥抽象：I/O 流（程序 = 流转导器）/ 随机 / 哈希 / 时钟（语义接口 + 后端实现） | 设计定案（[spec](docs/superpowers/specs/2026-08-16-platform-abstract-design.md)），待实现 |
 | **编译器基础设施** | 自举编译器（Core 写编译器）、x86-64 ELF 直接输出 | 完成 |
 | | `build`/`check`/`ccr`/`cir`/`run`/`clean-cache` 子命令 | 完成 |
 | | CIR HDFG（带完整类型/语义信息）、`.ccr` 线性 CFG | 完成 |
