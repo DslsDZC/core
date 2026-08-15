@@ -100,17 +100,17 @@ fn emit_alloc_body(buf: string, pos: int, bss_va: int, globals_size: int) -> int
     w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 18); cp = cp + 3;
     // mov rcx, [rdx + r10*8] — 4A 8B 0C D2 (SIB: scale=3, index=r10, base=rdx)
     w8(buf, pos+cp, 74); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 12); w8(buf, pos+cp+3, 210); cp = cp + 4;
-    // lea r11, [rip + g_arena_sizes] — e2_lrb, rip_patch
+    // lea rsi, [rip + g_arena_sizes] — preserve r11 as chunk_start
     rip_pos2 := pos + cp + 3;
-    cp = cp + e2_lrb(buf, pos + cp, 0);
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 53); e2_w32(buf, pos+cp+3, 0); cp = cp + 7;
     grow_rip_patch(g_x86_rip_patch_count + 1);
     w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, rip_pos2);
     w64(g_x86_rip_patch_globals, g_x86_rip_patch_count * 8, gv_arena_sizes);
     g_x86_rip_patch_count = g_x86_rip_patch_count + 1;
-    // mov r11, [r11] — 4D 8B 1B
-    w8(buf, pos+cp, 77); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 27); cp = cp + 3;
-    // mov r8, [r11 + r10*8] — 4F 8B 04 D3
-    w8(buf, pos+cp, 79); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 4); w8(buf, pos+cp+3, 211); cp = cp + 4;
+    // mov rsi, [rsi] — 48 8B 36
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 54); cp = cp + 3;
+    // mov r8, [rsi + r10*8] — 4E 8B 04 D6
+    w8(buf, pos+cp, 78); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 4); w8(buf, pos+cp+3, 214); cp = cp + 4;
 
     // ── Part 4: Align size + bump check (22 bytes) ──
     // mov rdi, r9 — 49 8B F9 (restore original size for alignment)
@@ -125,22 +125,22 @@ fn emit_alloc_body(buf: string, pos: int, bss_va: int, globals_size: int) -> int
     w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 1); w8(buf, pos+cp+2, 249); cp = cp + 3;
     // cmp rcx, r8 — 4C 39 C1
     w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 57); w8(buf, pos+cp+2, 193); cp = cp + 3;
-    // ja .Lchain — 77 21 (rel8=33, shifted by Bug 1 zero-init block)
-    w8(buf, pos+cp, 119); w8(buf, pos+cp+1, 33); cp = cp + 2;
+    // ja .Lchain — 77 22 (rel8=34)
+    w8(buf, pos+cp, 119); w8(buf, pos+cp+1, 34); cp = cp + 2;
 
     // ── Part 5: Commit cursor update (4 bytes) ──
     // mov [rdx + r10*8], rcx — 4A 89 0C D2
     w8(buf, pos+cp, 74); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 12); w8(buf, pos+cp+3, 210); cp = cp + 4;
 
     // ── Part 5b: Zero-init newly allocated arena block (18 bytes) ──
-    // Zero old_cursor bytes starting at chunk_start+8 (after header).
+    // Zero only the newly allocated data bytes.
     // rax=old_cursor, r11=chunk_start, rdx=cursors_ptr (no longer needed)
     // mov rdx, rax (save old_cursor) — 48 89 C2
     w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 194); cp = cp + 3;
-    // lea rdi, [r11 + 8] — 49 8D 7B 08
-    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 123); w8(buf, pos+cp+3, 8); cp = cp + 4;
-    // mov rcx, rax (old_cursor as count) — 48 89 C1
-    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 193); cp = cp + 3;
+    // lea rdi, [r11 + rax + 8] — allocation data after its header
+    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 124); w8(buf, pos+cp+3, 3); w8(buf, pos+cp+4, 8); cp = cp + 5;
+    // mov rcx, r9 (requested data size) — 4C 89 C9
+    w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 201); cp = cp + 3;
     // xor eax, eax — 31 C0
     w8(buf, pos+cp, 49); w8(buf, pos+cp+1, 192); cp = cp + 2;
     // cld — FC

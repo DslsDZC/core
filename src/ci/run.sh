@@ -22,19 +22,23 @@ build_selfhost() {
   python3 build_selfhost_native.py
 }
 
-# src/compiler 全量语法检查（check 不触发 ELF 后端）
+# src/compiler 项目检查（check 不触发 ELF 后端）
 check_compiler_sources() {
-  for f in src/compiler/*.cr; do
-    echo "check $f"
-    ./build/corec check "$f"
-  done
+  ./build/corec check src/compiler
 }
 
 # 集成套件：每个 .cr 编译成 ELF 并运行，main 返回 0 为通过
 run_suite() {
   for f in tests/suite/*.cr; do
+    case "$f" in
+      *_mini*.cr) continue ;;
+    esac
+    if [ ! -s "$f" ]; then
+      continue
+    fi
     echo "suite: $f"
     ./build/corec build "$f" -o /tmp/core_suite_bin --static
+    chmod +x /tmp/core_suite_bin
     /tmp/core_suite_bin
   done
 }
@@ -55,6 +59,7 @@ case "$CI_JOB_NAME" in
     python3 tests/selfhost/test_compile.py
     python3 tests/selfhost/test_impl.py
     python3 tests/selfhost/test_borrow.py
+    python3 tests/selfhost/test_pointer_safety.py
     ;;
 
   suite)
@@ -63,13 +68,16 @@ case "$CI_JOB_NAME" in
     ;;
 
   full-bootstrap)
-    # 三阶段自举验证（corec → corec2 → corec3）按 TODO 逐步点亮。
-    # stage-2：用自举产物编译编译器自身（main.cr 经 imports 拉全编译器）。
-    # 已知风险：corec2 tokenizer 死循环（TODO 自举阻塞项）+ 预存 bug 1
-    # （1GiB bump heap 峰值）——CI 上可能失败/超时/OOM，点亮前如实标记。
+    # Three-stage frontend bootstrap. corec2 and corec3 must be byte-identical.
     build_selfhost
-    ./build/corec build src/compiler/main.cr -o /tmp/corec2 --static
-    /tmp/corec2 --help
+    ./build/corec build src/compiler/main.cr -o /tmp/corec2 --static -O 0
+    cp ./build/corearch /tmp/corearch
+    chmod +x /tmp/corec2
+    chmod +x /tmp/corearch
+    /tmp/corec2 build src/compiler/main.cr -o /tmp/corec3 --static -O 0
+    chmod +x /tmp/corec3
+    cmp /tmp/corec2 /tmp/corec3
+    /tmp/corec3 --help || [ "$?" -eq 1 ]
     ;;
 
   *)

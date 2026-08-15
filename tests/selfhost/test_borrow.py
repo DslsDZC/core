@@ -1,133 +1,123 @@
 #!/usr/bin/env python3
-"""Self-hosted borrow checker tests — runs checker.cr borrow logic through the interpreter."""
-import sys, os
-sys.path.insert(0, 'bootstrap')
+"""Native self-hosted borrow checker regression tests."""
 
-BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from corec.frontend.lexer import Lexer
-from corec.frontend.parser import Parser
-from corec.frontend.name_resolver import NameResolver
-from corec.frontend.desugar import MatchDesugarer
-from corec.frontend.type_checker import TypeChecker
-from corec.frontend.ir_gen import IRGen
-from corec.backend.interpreter import Interpreter
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
 
 
-def concat_sources():
-    files = [
-        'src/stdlib/cli.cr', 'src/stdlib/toml.cr', 'src/compiler/ast.cr', 'src/compiler/globals.cr',
-        'src/compiler/lexer.cr', 'src/compiler/parser.cr',
-        'src/compiler/checker.cr', 'src/compiler/diag.cr', 'src/compiler/ir_gen.cr', 'src/compiler/dataflow.cr',
-        'src/compiler/backend/x86_64.cr', 'src/compiler/module.cr', 'src/compiler/ccr_io.cr', 'src/compiler/dump.cr',
-        'src/compiler/project.cr', 'src/compiler/interp.cr', 'src/compiler/main.cr',
-    ]
-    parts = []
-    for f in files:
-        path = os.path.join(BASE, f)
-        with open(path) as fh:
-            content = fh.read().strip()
-            if content:
-                parts.append(content)
-    return '\n\n'.join(parts)
+BASE = Path(__file__).resolve().parents[2]
+COREC = BASE / "build" / "corec"
 
 
-print("Loading self-hosted compiler...")
-compiler_src = concat_sources()
-lex = Lexer(compiler_src)
-tokens = lex.tokenize()
-ast = Parser(tokens).parse_compilation_unit()
-resolver = NameResolver()
-resolver.resolve(ast)
-desugarer = MatchDesugarer(resolver.symtab)
-ast = desugarer.desugar(ast)
-checker = TypeChecker(resolver.symtab)
-checker.check(ast)
-if checker.errors:
-    print(f"Self-hosted compiler source has type errors: {checker.errors}")
-    sys.exit(1)
-print(f"  {len(tokens)} tokens, {len(checker.errors)} errors")
-
-ir_gen = IRGen(resolver.symtab)
-mod = ir_gen.gen_module(ast)
-interp = Interpreter(mod)
-
-
-def compile_and_check(source, expect_error, description):
-    try:
-        result = interp.run('compile_source', [source])
-        has_error = result and "check errors" in str(result)
-    except Exception as e:
-        has_error = True
-
-    matched = (has_error == expect_error)
-    status = "[PASS]" if matched else "[FAIL]"
-    detail = "error" if has_error else "no errors"
-    print(f"  {status} {description}: {detail}")
-    return matched
-
-
-tests = [
-    ('''
-fn test() -> int {
+CASES = [
+    (
+        "immutable borrow then use original",
+        """
+fn main() -> int {
     x := 42; r := &x; y := x; return y;
 }
-''', True, "immutable borrow then use original"),
-
-    ('''
-fn test() -> int {
-    x := 42; r := &mut x; y := x; return y;
+""",
+        True,
+    ),
+    (
+        "mutable borrow then use original",
+        """
+fn main() -> int {
+    x : ., mut = 42; r := &mut x; y := x; return y;
 }
-''', True, "mut borrow then use original"),
-
-    ('''
-fn test() -> int {
-    x := 42; r1 := &x; r2 := &x;
-    __builtin_str_len(""); return 0;
+""",
+        True,
+    ),
+    (
+        "multiple immutable borrows allowed",
+        """
+fn main() -> int {
+    x := 42; r1 := &x; r2 := &x; return 0;
 }
-''', False, "multiple immutable borrows allowed"),
-
-    ('''
-fn test() -> int {
-    x := 42; r1 := &x; r2 := &mut x;
-    __builtin_str_len(""); return 0;
+""",
+        False,
+    ),
+    (
+        "immutable then mutable borrow",
+        """
+fn main() -> int {
+    x : ., mut = 42; r1 := &x; r2 := &mut x; return 0;
 }
-''', True, "immutable then mutable borrow"),
-
-    ('''
-fn test() -> int {
+""",
+        True,
+    ),
+    (
+        "borrow released after block scope exit",
+        """
+fn main() -> int {
     x := 42;
-    { r := &x; __builtin_str_len(""); }
+    { r := &x; }
     y := x; return y;
 }
-''', False, "borrow released after block scope exit"),
-
-    ('''
-fn test() -> int { x := 42; y := x; return y; }
-''', False, "normal copy use (no borrow)"),
-
-    ('''
-fn test() -> int {
-    x : ., mut = 42; r1 := &mut x; r2 := &x;
-    __builtin_str_len(""); return 0;
+""",
+        False,
+    ),
+    (
+        "normal copy use",
+        """
+fn main() -> int { x := 42; y := x; return y; }
+""",
+        False,
+    ),
+    (
+        "mutable then immutable borrow",
+        """
+fn main() -> int {
+    x : ., mut = 42; r1 := &mut x; r2 := &x; return 0;
 }
-''', True, "mutable then immutable borrow"),
+""",
+        True,
+    ),
 ]
 
-print("\nSelf-hosted Borrow Checker Tests")
-print("=" * 60)
 
-passed = 0
-failed = 0
-for source, expect_error, desc in tests:
-    if compile_and_check(source, expect_error, desc):
-        passed += 1
-    else:
-        failed += 1
+def run_case(name, source, expect_borrow_error):
+    with tempfile.NamedTemporaryFile("w", suffix=".cr", delete=False) as src:
+        src.write(source)
+        src_path = src.name
+    try:
+        result = subprocess.run(
+            [str(COREC), "check", src_path],
+            cwd=BASE,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    finally:
+        os.unlink(src_path)
 
-print(f"\n{passed}/{passed + failed} passed", end="")
-if failed > 0:
-    print(f", {failed} failed")
-    sys.exit(1)
-else:
-    print()
+    output = result.stdout + result.stderr
+    has_borrow_error = "error[B" in output or "Cannot borrow" in output or "while it is borrowed" in output
+    if result.returncode == 0 and has_borrow_error == expect_borrow_error:
+        state = "borrow error" if has_borrow_error else "no borrow error"
+        print(f"[PASS] {name}: {state}")
+        return True
+
+    print(
+        f"[FAIL] {name}: expected_borrow_error={expect_borrow_error}, "
+        f"exit={result.returncode}"
+    )
+    print(output)
+    return False
+
+
+def main():
+    if not COREC.exists():
+        print(f"[FAIL] missing native compiler: {COREC}")
+        return 1
+    results = [run_case(*case) for case in CASES]
+    passed = sum(results)
+    print(f"{passed}/{len(results)} passed")
+    return 0 if all(results) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

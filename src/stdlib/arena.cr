@@ -15,6 +15,8 @@ g_arena_cap : int, mut = 0;        // metadata array capacity
 fn _grow_arena_meta(needed: int) {
     if needed < g_arena_cap { return; }
     nc : ., mut = g_arena_cap * 2; if nc < 64 { nc = 64; } if nc < needed { nc = needed + 64; }
+    saved_arena := g_current_arena;
+    g_current_arena = -1;
     // cursors
     nb := alloc(nc * 8);
     zi : ., mut = 0; loop { if zi >= nc * 8 { break; } store8(nb, zi, 0); zi = zi + 1; }
@@ -31,17 +33,19 @@ fn _grow_arena_meta(needed: int) {
     if g_arena_cap > 0 { _dyncpy(g_arena_parents, g_arena_cap * 8, nb3); }
     g_arena_parents = nb3;
     g_arena_cap = nc;
+    g_current_arena = saved_arena;
 }
 
 // ── Public API ──
 
 fn arena_init(pool_size: int, arena_size: int) {
+    // The backing pool outlives the caller's automatic function arena.
+    g_current_arena = -1;
     g_arena_pool_data = alloc(pool_size);
     g_arena_max_size = arena_size;
     g_arena_free_list = -1;
     g_arena_count = 0;
     g_arena_cap = 0;
-    g_current_arena = -1;
 }
 
 fn arena_new() -> int {

@@ -100,6 +100,7 @@ fn lookup_keyword(s: string) -> int {
     if s == "auto" { return T_AUTO; }
     if s == "fileid" { return T_FILEID; }
     if s == "move" { return T_MOVE; }
+    if s == "self" { return T_SELF; }
     if s == "in" { return T_IN; }
     if s == "None" { return T_NONE; }
     if s == "Some" { return T_SOME; }
