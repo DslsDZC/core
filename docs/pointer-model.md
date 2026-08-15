@@ -30,6 +30,14 @@ Core 的编译器内部维护一张完整的HDFG（dataflow graph）。图中每
 | DEREF 节点 | 表示一次指针解引用操作的图节点 |
 | 图边界 | 编译器无法追踪 provenance 的入口点（外部地址、FFI 返回值等） |
 
+## 地址 = 映射（2026-08-15 语义定稿）
+
+**语义本体**：`&x` = (条目标识, 偏移)——条目由产生它的图节点定义（值 = 配方），偏移是条目内的位移（数组元素、结构体字段）。
+
+**经典映射**：字节地址。编译器和后端把条目标识投影为经典机器上的基地址；在非经典范式（如量子存储）上投影为别的物理表示。
+
+字节地址从来不是语义对象——它只是"缓存"（`docs/memory-model.md` §一）在经典硬件上的映射实例。本文件三个 pass（PointerAnalysis / RegionCheck / ProvenanceVerify）的判定全部在条目标识 + 偏移域上进行，与物理地址表示无关。
+
 ## 用户可见的语法
 
 ```core
@@ -203,7 +211,7 @@ p := mmio + 4096;        // 越界 → 编译错误或运行时 check
 
 ### 类型双关
 
-`*(float*)&i` **不需要 unsafe**。图的内存模型是"字节序列 + 宽度 + 边界"——provenance
+`*(float*)&i` **不需要 unsafe**。图的存储语义是条目标识 + 偏移（`docs/memory-model.md` §一 条款 6）；经典映射下表现为"字节序列 + 宽度 + 边界"——provenance
 （alloc 归属）、offset（字节偏移）、alloc_size（字节大小）全部与类型无关，类型只是
 DEREF 处的"视图"。cast 在图里无节点（ir_gen 透传），provenance 边不断：
 
@@ -270,6 +278,8 @@ Core 编译器已有HDFG（`src/compiler/dataflow.cr`）和线性扫描寄存器
 3. **字节权限层**：每字节 Freeable/Writable/Readable/Nonempty/Empty（见上节）
 
 设计依据：`docs/superpowers/specs/2026-08-13-graph-anchored-regions-design.md` + `docs/memory-model.md`。
+
+**更新（2026-08-15）**：`&` 所指定稿——条目标识 + 偏移是语义，字节地址是经典投影（见上"地址 = 映射"节）。与三个 pass 无行为冲突（判定域本就是条目标识 + 偏移）。
 
 ## 参考
 
