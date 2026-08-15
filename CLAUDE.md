@@ -257,9 +257,6 @@ Design documents (Chinese):
 ### corec2 tokenizer 死循环（自举阻塞项）
 `./build/corec2 check FILE.cr` 卡在 tokenizer。根因：约 9 个全局变量（`g_tok_cap`, `g_tokens`, `g_str_count`, `g_line`, `g_source_len`, `g_x86_is_global`, `g_x86_global_cap`, `g_str_hash`, `g_error_count`）未被 parser 注册到 `g_ir_globals`，赋值语句静默丢弃。已在 PR #9（RhineIris）中通过 tokenizer 参数化（`tokenize(_src: string)`）规避了 `g_source` 全局变量依赖，但其他未注册全局变量问题仍待解决。
 
-### corec2 前端性能（~1000x 慢于 build/corec）
-ELF 后端全栈操作无寄存器分配是直接原因。寄存器分配器只作用于用户程序 IR，不影响编译器自身代码。
-
 ### pass_cse / O1 稳定性
 `--opt-level 1` 在自举编译时可能崩溃（`pass_cse` 大函数问题，`alloc_registers` 元数据交互异常）。
 
