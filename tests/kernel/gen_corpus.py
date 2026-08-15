@@ -3,7 +3,7 @@
 """McTT→Core 内核移植 M1 差分测试语料生成器（Task 4）。
 
 生成三个查询文件（不含期望值；期望值由 Task 7 参考 harness 生成固化）：
-  tests/kernel/cases/corpus_exhaustive.txt   穷举层（size ≤ 4）
+  tests/kernel/cases/corpus_exhaustive.txt   穷举层（默认 size ≤ 3；--max-size 4 显式开启）
   tests/kernel/cases/corpus_random.txt       随机层（固定种子 20260815，1200 条）
   tests/kernel/cases/corpus_manual.txt       案卷（25 条经典难项）
 
@@ -17,7 +17,8 @@
 
 与 brief（.superpowers/sdd/task-4-brief.md）的差异（见 README.md）：
   1. 穷举层按 brief 的简化 natrec 方案（四子项均取 size-1 原子，最小总 size=5），
-     max_size=4 下穷举层无 natrec 项；natrec 覆盖由随机层 + 案卷补齐。
+     默认 max_size=3（size-4 需 --max-size 4 显式开启）下穷举层均无 natrec 项；
+     natrec 覆盖由随机层 + 案卷补齐。
   2. 案卷 6 条（第 8/9/10/16/17/21 条）brief 原文为 3 元 fn，与协议 (fn A M)
      （= McTT ti_fn: λ A M）不符，已删冗余陪域参数修正。
   3. gen_exps 返回按层分组的 dict（扁平列表语义不变，便于逐层加 `#` 注释）。
@@ -26,6 +27,7 @@
      叶节点 size=1（size 仅用于 natrec 过滤，实参恒为原子项）。
 """
 
+import argparse
 import os
 import random
 
@@ -156,11 +158,13 @@ def rand_exp(rng, depth, max_var):
 
 # --- 发射配置 ---
 
-MAX_SIZE = 4             # 穷举层规模（brief：size ≤ 4）
 RANDOM_SEED = 20260815   # 固定种子（brief Step 3）
 RANDOM_COUNT = 1200      # 随机层条数
 CONVERT_CAP = 50         # convert 仅对穷举前 50 项
 CTX_POOL = ["(ctx)", "(ctx (nat))", "(ctx (typ 0))", "(ctx (nat) (nat))"]
+
+# 穷举层规模由命令行 --max-size 控制：默认 3（产物约 3 MB）；size-4 全量约 141 MB，
+# 超过 GitHub 100MiB 单文件上传限制，须 --max-size 4 显式开启。
 
 
 def is_type_shaped(t):
@@ -168,19 +172,19 @@ def is_type_shaped(t):
     return t[0] in (K_PI, K_TYP, K_NAT)
 
 
-def emit_exhaustive(path, out):
+def emit_exhaustive(path, out, max_size):
     """穷举层发射（brief Step 2）。
 
     对每项 t 发射 infer/check×2；前 CONVERT_CAP 项加 convert；类型形态项加 subtype×2；
     再以 (ctx (nat)) 与 (ctx (typ 0)) 上下文重复 infer/check。`#` 行注释标明来源层。
     """
-    total = sum(len(out[n]) for n in range(1, MAX_SIZE + 1))
+    total = sum(len(out[n]) for n in range(1, max_size + 1))
     with open(path, "w") as f:
-        f.write("# corpus_exhaustive.txt — 穷举层（size <= %d，共 %d 项）\n" % (MAX_SIZE, total))
+        f.write("# corpus_exhaustive.txt — 穷举层（size <= %d，共 %d 项）\n" % (max_size, total))
         f.write("# 协议：Task 3 共享格式；每行一条查询；# 开头的行是注释，harness 与 term_io 需跳过\n")
         f.write("# 生成：python3 tests/kernel/gen_corpus.py（种子 %d）\n" % RANDOM_SEED)
         idx = 0
-        for n in range(1, MAX_SIZE + 1):
+        for n in range(1, max_size + 1):
             bucket = out.get(n, [])
             f.write("# 穷举层 size=%d（%d 项），上下文 (ctx)\n" % (n, len(bucket)))
             for t in bucket:
@@ -196,7 +200,7 @@ def emit_exhaustive(path, out):
                 idx += 1
         for ctx in ("(ctx (nat))", "(ctx (typ 0))"):
             f.write("# 上下文 %s：重复 infer/check（全部 %d 项）\n" % (ctx, total))
-            for n in range(1, MAX_SIZE + 1):
+            for n in range(1, max_size + 1):
                 for t in out.get(n, []):
                     s = show_exp(t)
                     f.write("infer %s %s\n" % (ctx, s))
@@ -297,17 +301,28 @@ def line_count(path):
 
 
 def main():
+    parser = argparse.ArgumentParser(
+        description="McTT→Core 内核差分测试语料生成器（穷举 + 随机 + 案卷）")
+    parser.add_argument("--max-size", type=int, default=3, metavar="N",
+                        help="穷举层最大 size（默认 3，产物约 3 MB；"
+                             "size-4 全量约 141 MB，超过 GitHub 100MiB 单文件限制，"
+                             "须显式 --max-size 4 开启）")
+    args = parser.parse_args()
+    max_size = args.max_size
+    if max_size < 1:
+        parser.error("--max-size 至少为 1")
+
     cases = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cases")
     os.makedirs(cases, exist_ok=True)
 
-    out = gen_exps(MAX_SIZE)
-    n_terms = sum(len(out[n]) for n in range(1, MAX_SIZE + 1))
-    print("穷举层：size<=%d 共 %d 项" % (MAX_SIZE, n_terms))
-    for n in range(1, MAX_SIZE + 1):
+    out = gen_exps(max_size)
+    n_terms = sum(len(out[n]) for n in range(1, max_size + 1))
+    print("穷举层：size<=%d 共 %d 项" % (max_size, n_terms))
+    for n in range(1, max_size + 1):
         print("  size=%d：%d 项" % (n, len(out[n])))
 
     p1 = os.path.join(cases, "corpus_exhaustive.txt")
-    emit_exhaustive(p1, out)
+    emit_exhaustive(p1, out, max_size)
 
     rng = random.Random(RANDOM_SEED)
     p2 = os.path.join(cases, "corpus_random.txt")
