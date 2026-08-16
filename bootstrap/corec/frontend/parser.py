@@ -21,7 +21,7 @@ class Parser:
                                    TokenType.SEMI])):
                 name = self.advance().lexeme  # NAME
                 self.advance()  # :
-                type_name = self.advance().lexeme  # int/float/bool
+                type_name = self.advance().lexeme  # int/dex/bool
                 self.advance()  # =
                 val = int(self.advance().lexeme)  # VALUE
                 self.const_values[name] = val
@@ -328,12 +328,15 @@ class Parser:
                 mut = True
                 self.advance()
             return RefType(mut, self.parse_type())
-        base_types = {'int','float','bool','string','char','unit','never'}
+        # dex = 精确小数（数值迁移 Task 3）；'float' 并存期仍接受，映射到同一 dex 类型
+        # （float 关键字移除是 Task 6，bootstrap 内部类型名已迁 'dex'）
+        base_types = {'int','dex','bool','string','char','unit','never'}
         if self.check(TokenType.SELF_TYPE):
             self.advance()
             return BaseType('Self')
-        if self.check(TokenType.IDENT) and self.cur().lexeme in base_types:
-            return BaseType(self.advance().lexeme)
+        if self.check(TokenType.IDENT) and (self.cur().lexeme in base_types or self.cur().lexeme == 'float'):
+            lex = self.advance().lexeme
+            return BaseType('dex' if lex == 'float' else lex)
         if self.check(TokenType.UNIT):
             self.advance()
             return BaseType('unit')
@@ -510,7 +513,8 @@ class Parser:
         if self.check(TokenType.INT_LIT):
             return Literal(int(self.advance().lexeme), 'int')
         if self.check(TokenType.FLOAT_LIT):
-            return Literal(float(self.advance().lexeme), 'float')
+            # 3.14 字面量 → dex（数值迁移 Task 3；binary64 值保留 = apx 快路径参考实现）
+            return Literal(float(self.advance().lexeme), 'dex')
         if self.check(TokenType.STRING_LIT):
             return Literal(self.advance().lexeme, 'string')
         if self.check(TokenType.CHAR_LIT):

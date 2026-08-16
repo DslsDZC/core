@@ -363,7 +363,7 @@ fn reg_so_funcs(index_content: string, so_name: string) {
                 if pname == "int" { ptype_code = 0; }
                 else if pname == "string" { ptype_code = 1; }
                 else if pname == "unit" { ptype_code = 2; }
-                else if pname == "float" { ptype_code = 3; }
+                else if pname == "float" || pname == "dex" { ptype_code = 3; }
                 else if pname == "bool" { ptype_code = 4; }
                 // Decimal encoding: packed positionally
                 param_type_bits = param_type_bits * 100 + ptype_code;
@@ -377,7 +377,7 @@ fn reg_so_funcs(index_content: string, so_name: string) {
         if ret_type == "int" { ret_code = 0; }
         else if ret_type == "string" { ret_code = 1; }
         else if ret_type == "unit" || str_eq(ret_type, "") != 0 { ret_code = 2; }
-        else if ret_type == "float" { ret_code = 3; }
+        else if ret_type == "float" || ret_type == "dex" { ret_code = 3; }
         else if ret_type == "bool" { ret_code = 4; }
         type_encoding : ., mut = param_count * 1000000000000 + param_type_bits * 100 + ret_code;
 

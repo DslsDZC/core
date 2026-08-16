@@ -81,7 +81,8 @@ fn parse_type() -> int {
         lex := tok_lx(t);
         advance_tok();
         if lex == "int" { res = alloc_node(0, 0, 0, 0, 0, TY_INT, 0, line, col); }
-        else if lex == "float" { res = alloc_node(0, 0, 0, 0, 0, TY_FLOAT, 0, line, col); }
+        // dex = 精确小数；float 关键字并存期仍接受（移除是 Task 6），同属 TY_DEX
+        else if lex == "float" || lex == "dex" { res = alloc_node(0, 0, 0, 0, 0, TY_DEX, 0, line, col); }
         else if lex == "bool" { res = alloc_node(0, 0, 0, 0, 0, TY_BOOL, 0, line, col); }
         else if lex == "string" { res = alloc_node(0, 0, 0, 0, 0, TY_STRING, 0, line, col); }
         else if lex == "char" { res = alloc_node(0, 0, 0, 0, 0, TY_CHAR, 0, line, col); }
@@ -402,13 +403,13 @@ fn parse_primary() -> int {
         else if kn == T_INT_U64 { w = W_U64; }
         return alloc_node(EXPR_INT, 0, 0, 0, tok_iv(t), TY_INT, w, tok_ln(t), tok_cl(t));
     }
-    if tok_k(t) == T_FLOAT || tok_k(t) == T_FLOAT_F32 || tok_k(t) == T_FLOAT_F64 {
+    if tok_k(t) == T_DEX || tok_k(t) == T_FLOAT_F32 || tok_k(t) == T_FLOAT_F64 {
         advance_tok();
         kn := tok_k(t);
         w : ., mut = 0;
         if kn == T_FLOAT_F32 { w = W_F32; }
         else if kn == T_FLOAT_F64 { w = W_F64; }
-        return alloc_node(EXPR_FLOAT, 0, 0, 0, tok_iv(t), TY_FLOAT, w, tok_ln(t), tok_cl(t));
+        return alloc_node(EXPR_DEX, 0, 0, 0, tok_iv(t), TY_DEX, w, tok_ln(t), tok_cl(t));
     }
     if tok_k(t) == T_STRING {
         advance_tok();

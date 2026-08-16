@@ -196,7 +196,7 @@ class TypeChecker:
     # --------------------------------------------------------------
     def _infer_expr(self, expr: Expr) -> Type:
         if isinstance(expr, Literal):
-            kind_map = {'int':BaseType('int'),'float':BaseType('float'),'bool':BaseType('bool'),
+            kind_map = {'int':BaseType('int'),'dex':BaseType('dex'),'bool':BaseType('bool'),
                        'string':BaseType('string'),'char':BaseType('char'),'unit':BaseType('unit'),
                        'some':BaseType('unit')}
             return kind_map.get(expr.kind, BaseType('unit'))
@@ -217,9 +217,9 @@ class TypeChecker:
             left_t = self._infer_expr(expr.left)
             right_t = self._infer_expr(expr.right)
             if expr.op in ('+','-','*','/','%'):
-                if left_t.name in ('int','float') and right_t.name in ('int','float'):
-                    if left_t.name == 'float' or right_t.name == 'float':
-                        return BaseType('float')
+                if left_t.name in ('int','dex') and right_t.name in ('int','dex'):
+                    if left_t.name == 'dex' or right_t.name == 'dex':
+                        return BaseType('dex')
                     return BaseType('int')
                 elif expr.op == '+' and left_t.name == 'string' and right_t.name == 'string':
                     return BaseType('string')
@@ -227,7 +227,7 @@ class TypeChecker:
                     self.errors.append(f"Arithmetic type error between {left_t.name} and {right_t.name}")
                     return BaseType('never')
             elif expr.op in ('==','!=','<','>','<=','>='):
-                if left_t.name not in ('int','float','string') or right_t.name not in ('int','float','string'):
+                if left_t.name not in ('int','dex','string') or right_t.name not in ('int','dex','string'):
                     self.errors.append(f"Comparison not allowed")
                 return BaseType('bool')
             elif expr.op in ('|', '&'):

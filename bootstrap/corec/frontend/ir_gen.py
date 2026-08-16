@@ -162,7 +162,7 @@ class IRGen:
     def gen_literal(self, lit):
         val = lit.value
         if lit.kind == 'int': val = int(val)
-        elif lit.kind == 'float': val = float(val)
+        elif lit.kind == 'dex': val = float(val)
         v = self.new_temp()
         self.add_instr(ConstInstr(val, lit.kind, v))
         return v
@@ -626,7 +626,7 @@ class IRGen:
                 if val_expr.elements:
                     first = val_expr.elements[0]
                     if isinstance(first, Literal):
-                        kind_map = {'int':'int','float':'float','bool':'bool','string':'string','char':'char','unit':'unit'}
+                        kind_map = {'int':'int','dex':'dex','bool':'bool','string':'string','char':'char','unit':'unit'}
                         elem_t = BaseType(kind_map.get(first.kind, 'unit'))
                     else:
                         elem_t = BaseType('unit')
@@ -634,7 +634,7 @@ class IRGen:
                     elem_t = BaseType('unit')
                 typ = ArrayType(elem_t, len(val_expr.elements))
             elif isinstance(val_expr, Literal):
-                kind_map = {'int':'int','float':'float','bool':'bool','string':'string','char':'char','unit':'unit'}
+                kind_map = {'int':'int','dex':'dex','bool':'bool','string':'string','char':'char','unit':'unit'}
                 typ = BaseType(kind_map.get(val_expr.kind,'unit'))
             elif isinstance(val_expr, Index):
                 # Infer type from array element type (e.g., g_ast[node] -> ASTNode)

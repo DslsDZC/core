@@ -147,7 +147,7 @@ fn is_ptr_var(var_idx: int) -> int {
     prod_op := r64(g_df_nodes, prod * ESZ_DFNODE + OFF_DF_OPCODE);
     if prod_op == IR_ALLOC {
         ti := irv_type(var_idx);
-        if ti == TI_INT || ti == TI_FLOAT || ti == TI_BOOL || ti == TI_CHAR {
+        if ti == TI_INT || ti == TI_DEX || ti == TI_BOOL || ti == TI_CHAR {
             return 0;
         }
         return 1;
@@ -193,7 +193,7 @@ fn ir_call_return_type(func_ni: int) -> int {
     if fi >= 0 {
         rt := fi_return_type(fi);
         if rt == TY_INT { return TI_INT; }
-        if rt == TY_FLOAT { return TI_FLOAT; }
+        if rt == TY_DEX { return TI_DEX; }
         if rt == TY_BOOL { return TI_BOOL; }
         if rt == TY_STRING { return TI_STR; }
         if rt == TY_UNIT { return TI_UNIT; }
@@ -208,7 +208,7 @@ fn ir_call_return_type(func_ni: int) -> int {
         if ret_code == 0 { return TI_INT; }
         if ret_code == 1 { return TI_STR; }
         if ret_code == 2 { return TI_UNIT; }
-        if ret_code == 3 { return TI_FLOAT; }
+        if ret_code == 3 { return TI_DEX; }
         if ret_code == 4 { return TI_BOOL; }
     }
     return TI_UNIT;
@@ -276,7 +276,7 @@ fn ti_from_type_expr(node: int) -> int {
     if ast_kind(node) == 0 {
         tv := ast_type_val(node);
         if tv == TY_INT { return TI_INT; }
-        if tv == TY_FLOAT { return TI_FLOAT; }
+        if tv == TY_DEX { return TI_DEX; }
         if tv == TY_BOOL { return TI_BOOL; }
         if tv == TY_STRING { return TI_STR; }
         if tv == TY_CHAR { return TI_CHAR; }
@@ -288,7 +288,7 @@ fn ti_from_type_expr(node: int) -> int {
         ni := ast_int_val(node);
         name := istr_get(ni);
         if str_eq(name, "int") != 0 { return TI_INT; }
-        if str_eq(name, "float") != 0 { return TI_FLOAT; }
+        if str_eq(name, "float") != 0 || str_eq(name, "dex") != 0 { return TI_DEX; }
         if str_eq(name, "bool") != 0 { return TI_BOOL; }
         if str_eq(name, "string") != 0 { return TI_STR; }
         if str_eq(name, "char") != 0 { return TI_CHAR; }
@@ -309,7 +309,7 @@ fn type_size(ti: int) -> int {
     if k == TYP_BASE {
         d := get_type_data(ti);
         if d == TY_INT { return 8; }
-        if d == TY_FLOAT { return 8; }
+        if d == TY_DEX { return 8; }
         if d == TY_BOOL { return 1; }
         if d == TY_STRING { return 8; }
         if d == TY_UNIT { return 0; }
@@ -360,7 +360,7 @@ fn type_align(ti: int) -> int {
     if k == TYP_BASE {
         d := get_type_data(ti);
         if d == TY_INT { return 8; }
-        if d == TY_FLOAT { return 8; }
+        if d == TY_DEX { return 8; }
         if d == TY_BOOL { return 1; }
         if d == TY_STRING { return 8; }
         if d == TY_CHAR { return 4; }
@@ -478,9 +478,9 @@ fn gen_expr(node: int) -> int {
         emit(IR_CONST, v, ast_int_val(node), 0, 0, TI_INT);
         return v;
     }
-    if ast_kind(node) == EXPR_FLOAT {
-        v := new_ir_var("float", TI_FLOAT);
-        emit(IR_CONST, v, ast_int_val(node), 0, 0, TI_FLOAT);
+    if ast_kind(node) == EXPR_DEX {
+        v := new_ir_var("dex", TI_DEX);
+        emit(IR_CONST, v, ast_int_val(node), 0, 0, TI_DEX);
         return v;
     }
     if ast_kind(node) == EXPR_BOOL {
@@ -682,18 +682,18 @@ fn gen_expr(node: int) -> int {
             if is_ptr_var(left_var) != 0 { fti = irv_type(left_var); }
             else if is_ptr_var(right_var) != 0 { fti = irv_type(right_var); }
         }
-        // float 运算：类型标记 TI_FLOAT（后端按 ti 分派 SSE2，IEEE 754 标准）
+        // dex 运算（binary64 快路径 = apx 授权时的实现）：类型标记 TI_DEX（后端按 ti 分派 SSE2，IEEE 754 标准）
         // int 操作数隐式转换（cvtsi2sd）——阶段 4
-        if lt == TI_FLOAT || rt == TI_FLOAT {
-            fti = TI_FLOAT;
-            if lt != TI_FLOAT {
-                t1 := new_ir_var("_f0", TI_FLOAT);
-                emit(IR_I2F, t1, left_var, 0, 0, TI_FLOAT);
+        if lt == TI_DEX || rt == TI_DEX {
+            fti = TI_DEX;
+            if lt != TI_DEX {
+                t1 := new_ir_var("_f0", TI_DEX);
+                emit(IR_I2F, t1, left_var, 0, 0, TI_DEX);
                 left_var = t1;
             }
-            if rt != TI_FLOAT {
-                t2 := new_ir_var("_f1", TI_FLOAT);
-                emit(IR_I2F, t2, right_var, 0, 0, TI_FLOAT);
+            if rt != TI_DEX {
+                t2 := new_ir_var("_f1", TI_DEX);
+                emit(IR_I2F, t2, right_var, 0, 0, TI_DEX);
                 right_var = t2;
             }
         }
@@ -971,7 +971,7 @@ fn gen_expr(node: int) -> int {
                     type_str = istr_get(name_ni);
                 } else if ti == TI_INT { type_str = "int"; }
                 else if ti == TI_BOOL { type_str = "bool"; }
-                else if ti == TI_FLOAT { type_str = "float"; }
+                else if ti == TI_DEX { type_str = "dex"; }
                 else if ti == TI_STR { type_str = "string"; }
                 else if ti == TI_CHAR { type_str = "char"; }
                 else if ti == TI_UNIT { type_str = "unit"; }
@@ -1090,7 +1090,7 @@ fn gen_expr(node: int) -> int {
                     else if ti == TI_STR { type_args = type_args + "string"; }
                     else if ti == TI_BOOL { type_args = type_args + "bool"; }
                     else if ti == TI_CHAR { type_args = type_args + "char"; }
-                    else if ti == TI_FLOAT { type_args = type_args + "float"; }
+                    else if ti == TI_DEX { type_args = type_args + "dex"; }
                     else if ti == TI_UNIT { type_args = type_args + "unit"; }
                     else { type_args = type_args + "int"; }
                     ai = ai + 1;

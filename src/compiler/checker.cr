@@ -19,7 +19,7 @@ fn alloc_type(kind: int, data: int, extra: int) -> int {
 fn init_types() {
     g_type_count = 0;
     alloc_type(TYP_BASE, TY_INT, 0);     // TI_INT = 0
-    alloc_type(TYP_BASE, TY_FLOAT, 0);   // TI_FLOAT = 1
+    alloc_type(TYP_BASE, TY_DEX, 0);   // TI_DEX = 1
     alloc_type(TYP_BASE, TY_BOOL, 0);    // TI_BOOL = 2
     alloc_type(TYP_BASE, TY_STRING, 0);  // TI_STR = 3
     alloc_type(TYP_BASE, TY_UNIT, 0);    // TI_UNIT = 4
@@ -365,7 +365,7 @@ fn res_type_node(node: int) -> int {
         // Base type node: type_val = TY_*
         tv := ast_type_val(node);
         if tv == TY_INT { return TI_INT; }
-        if tv == TY_FLOAT { return TI_FLOAT; }
+        if tv == TY_DEX { return TI_DEX; }
         if tv == TY_BOOL { return TI_BOOL; }
         if tv == TY_STRING { return TI_STR; }
         if tv == TY_UNIT { return TI_UNIT; }
@@ -471,7 +471,7 @@ fn get_type_name(ti: int) -> int {
     if k == TYP_BASE {
         d := get_type_data(ti);
         if d == TY_INT { return str_intern("int"); }
-        if d == TY_FLOAT { return str_intern("float"); }
+        if d == TY_DEX { return str_intern("dex"); }
         if d == TY_BOOL { return str_intern("bool"); }
         if d == TY_STRING { return str_intern("string"); }
         if d == TY_UNIT { return str_intern("unit"); }
@@ -669,7 +669,7 @@ fn collect_decls() {
             if type_node > 0 && ast_kind(type_node) != 0 {
                 rt_ti = res_type_node(type_node);
             } else if rt == TY_INT { rt_ti = TI_INT; }
-            else if rt == TY_FLOAT { rt_ti = TI_FLOAT; }
+            else if rt == TY_DEX { rt_ti = TI_DEX; }
             else if rt == TY_BOOL { rt_ti = TI_BOOL; }
             else if rt == TY_STRING { rt_ti = TI_STR; }
             else if rt == TY_UNIT { rt_ti = TI_UNIT; }
@@ -693,7 +693,7 @@ fn collect_decls() {
                     if type_node2 > 0 && ast_kind(type_node2) != 0 {
                         first_rt_ti = res_type_node(type_node2);
                     } else if first_rt == TY_INT { first_rt_ti = TI_INT; }
-                    else if first_rt == TY_FLOAT { first_rt_ti = TI_FLOAT; }
+                    else if first_rt == TY_DEX { first_rt_ti = TI_DEX; }
                     else if first_rt == TY_BOOL { first_rt_ti = TI_BOOL; }
                     else if first_rt == TY_STRING { first_rt_ti = TI_STR; }
                     else if first_rt == TY_UNIT { first_rt_ti = TI_UNIT; }
@@ -745,7 +745,7 @@ fn collect_decls() {
             // Resolve return type to type index
             rt_ti : ., mut = TI_UNIT;
             if ret_type == TY_INT { rt_ti = TI_INT; }
-            else if ret_type == TY_FLOAT { rt_ti = TI_FLOAT; }
+            else if ret_type == TY_DEX { rt_ti = TI_DEX; }
             else if ret_type == TY_BOOL { rt_ti = TI_BOOL; }
             else if ret_type == TY_STRING { rt_ti = TI_STR; }
             else if ret_type == TY_UNIT { rt_ti = TI_UNIT; }
@@ -874,7 +874,7 @@ fn res_call_type(node: int, func_fi: int) -> int {
     if ast_kind(node) == 0 {
         tv := ast_type_val(node);
         if tv == TY_INT { return TI_INT; }
-        if tv == TY_FLOAT { return TI_FLOAT; }
+        if tv == TY_DEX { return TI_DEX; }
         if tv == TY_BOOL { return TI_BOOL; }
         if tv == TY_STRING { return TI_STR; }
         if tv == TY_UNIT { return TI_UNIT; }
@@ -1140,7 +1140,7 @@ fn check_func(fi: int) {
                 // Base type: switch on type_val (TY_*)
                 ptype := ast_type_val(pn);
                 if ptype == TY_INT { ti = TI_INT; }
-                else if ptype == TY_FLOAT { ti = TI_FLOAT; }
+                else if ptype == TY_DEX { ti = TI_DEX; }
                 else if ptype == TY_BOOL { ti = TI_BOOL; }
                 else if ptype == TY_STRING { ti = TI_STR; }
                 else if ptype == TY_CHAR { ti = TI_CHAR; }
@@ -1193,7 +1193,7 @@ fn check_func(fi: int) {
         if type_node > 0 && ast_kind(type_node) != 0 {
             ret_ti = res_type_node(type_node);
         } else if return_type == TY_INT { ret_ti = TI_INT; }
-        else if return_type == TY_FLOAT { ret_ti = TI_FLOAT; }
+        else if return_type == TY_DEX { ret_ti = TI_DEX; }
         else if return_type == TY_BOOL { ret_ti = TI_BOOL; }
         else if return_type == TY_STRING { ret_ti = TI_STR; }
         else if return_type == TY_UNIT { ret_ti = TI_UNIT; }
@@ -1360,7 +1360,7 @@ fn infer_expr(node: int) -> int {
 
     if ast_kind(node) == EXPR_INT { return TI_INT; }
     if ast_kind(node) == EXPR_NONE && ast_a(node) >= 0 && ast_a(node) != node { return infer_expr(ast_a(node)); }
-    if ast_kind(node) == EXPR_FLOAT { return TI_FLOAT; }
+    if ast_kind(node) == EXPR_DEX { return TI_DEX; }
     if ast_kind(node) == EXPR_STRING { return TI_STR; }
     if ast_kind(node) == EXPR_BOOL { return TI_BOOL; }
     if ast_kind(node) == EXPR_CHAR { return TI_CHAR; }
@@ -1413,11 +1413,11 @@ fn infer_expr(node: int) -> int {
             if op == OP_SUB && get_type_kind(lt) == TYP_PTR && get_type_kind(rt) == TYP_PTR {
                 return TI_INT;
             }
-            // Check: arithmetic ops require int or float
-            if lt != TI_INT && lt != TI_FLOAT && rt != TI_INT && rt != TI_FLOAT {
-                check_error(EC_TB_ADD, "Arithmetic operation requires int or float", ast_line(node), ast_col(node));
+            // Check: arithmetic ops require int or dex
+            if lt != TI_INT && lt != TI_DEX && rt != TI_INT && rt != TI_DEX {
+                check_error(EC_TB_ADD, "Arithmetic operation requires int or dex", ast_line(node), ast_col(node));
             }
-            if lt == TI_FLOAT || rt == TI_FLOAT { return TI_FLOAT; }
+            if lt == TI_DEX || rt == TI_DEX { return TI_DEX; }
             return TI_INT;
         }
         if op == OP_EQ || op == OP_NE || op == OP_LT || op == OP_GT || op == OP_LE || op == OP_GE {
@@ -1594,7 +1594,7 @@ fn infer_expr(node: int) -> int {
                                             ast_set_data(node, mangled_ni2);
                                             iface_ret2 := r64(g_ifaces, imbase2 + OFF_IFM_RET_TI);
                                             if iface_ret2 == TY_INT { func_ni = mangled_ni2; return TI_INT; }
-                                            if iface_ret2 == TY_FLOAT { func_ni = mangled_ni2; return TI_FLOAT; }
+                                            if iface_ret2 == TY_DEX { func_ni = mangled_ni2; return TI_DEX; }
                                             if iface_ret2 == TY_BOOL { func_ni = mangled_ni2; return TI_BOOL; }
                                             if iface_ret2 == TY_STRING { func_ni = mangled_ni2; return TI_STR; }
                                             if iface_ret2 == TY_UNIT { func_ni = mangled_ni2; return TI_UNIT; }
@@ -1664,7 +1664,7 @@ fn infer_expr(node: int) -> int {
                 if ret_code2 == 0 { return TI_INT; }
                 if ret_code2 == 1 { return TI_STR; }
                 if ret_code2 == 2 { return TI_UNIT; }
-                if ret_code2 == 3 { return TI_FLOAT; }
+                if ret_code2 == 3 { return TI_DEX; }
                 if ret_code2 == 4 { return TI_BOOL; }
                 return TI_UNIT;
             }

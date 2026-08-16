@@ -328,7 +328,7 @@ fn tokenize(_src: string) {
             // float 字面量（含小数点或 f32/f64 后缀）→ IEEE 754 binary64 位模式
             // 修复前 float 走 str_int（3.14 解析成 3，小数静默丢弃）
             if has_dot != 0 || suffix == "f32" || suffix == "f64" {
-                add_tok_int(T_FLOAT, str_to_f64_bits(num_str), start_line, start_col);
+                add_tok_int(T_DEX, str_to_f64_bits(num_str), start_line, start_col);
             } else {
                 ival : ., mut = str_int(num_str);
                 if suffix == "u8" || suffix == "u16" || suffix == "u32" || suffix == "u64" { }

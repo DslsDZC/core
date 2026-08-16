@@ -25,7 +25,7 @@ class Interpreter:
         from corec.syntax.ast import BaseType
         if isinstance(typ, BaseType):
             if typ.name == 'int': return 0
-            if typ.name == 'float': return 0.0
+            if typ.name == 'dex': return 0.0
             if typ.name == 'bool': return False
             if typ.name == 'string': return ''
             if typ.name == 'char': return '\x00'
@@ -88,7 +88,7 @@ class Interpreter:
             val = instr.value
             if instr.type == 'int':
                 val = int(val) if isinstance(val, str) else val
-            elif instr.type == 'float':
+            elif instr.type == 'dex':
                 val = float(val) if isinstance(val, str) else val
             # string, char, bool: keep original value
             self.vars[id(instr.dest)] = val

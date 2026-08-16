@@ -49,7 +49,7 @@ fn ir_var_str(var_idx: int) -> string {
 
 fn type_kind_name(tk: int) -> string {
     if tk == 0 { return "int"; }
-    if tk == 1 { return "float"; }
+    if tk == 1 { return "dex"; }
     if tk == 2 { return "bool"; }
     if tk == 3 { return "str"; }
     if tk == 4 { return "unit"; }

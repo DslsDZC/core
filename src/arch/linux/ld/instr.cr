@@ -335,7 +335,7 @@ fn e2_sd_load_x(b: string, p: int, o: int, rn: int) -> int {
 
 // 存返回值到 dest：float → movsd [slot], xmm0（SysV XMM0 返回）；int → rax
 fn e2_store_ret(b: string, p: int, d: int) -> int {
-    if d >= 0 && irv_type(d) == TI_FLOAT {
+    if d >= 0 && irv_type(d) == TI_DEX {
         return e2_sd_store(b, p, g2_slot(d));
     }
     return e2_st(b, p, 0, g2_slot(d));
@@ -452,7 +452,7 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
 
     if op == IR_BINARY {
         do2 := g2_slot(d);
-        if ti == TI_FLOAT {
+        if ti == TI_DEX {
             // float 运算（SSE2 double，IEEE 754）——标准答案实现
             cp = cp + e2_sd_load(buf, pos+cp, g2_slot(s1));   // xmm0 = s1
             cp = cp + e2_sd_load1(buf, pos+cp, g2_slot(s2));  // xmm1 = s2
@@ -587,7 +587,7 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
         ai := 0;
         loop { if ai >= ac { break; }
             pt := irv_type(fa + ai);
-            if pt == TI_FLOAT {
+            if pt == TI_DEX {
                 if fr_cnt < 8 {
                     cp = cp + e2_sd_load_x(buf, pos+cp, g2_slot(fa + ai), fr_cnt);
                     fr_cnt = fr_cnt + 1;
@@ -610,9 +610,9 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
             ic2 : ., mut = 0; fc2 : ., mut = 0;
             j2 : ., mut = 0;
             loop { if j2 >= stack_ai { break; }
-                if irv_type(fa + j2) == TI_FLOAT { fc2 = fc2 + 1; } else { ic2 = ic2 + 1; }
+                if irv_type(fa + j2) == TI_DEX { fc2 = fc2 + 1; } else { ic2 = ic2 + 1; }
                 j2 = j2 + 1; }
-            if irv_type(fa + stack_ai) == TI_FLOAT {
+            if irv_type(fa + stack_ai) == TI_DEX {
                 if fc2 >= 8 {
                     cp = cp + e2_sd_load_x(buf, pos+cp, g2_slot(fa + stack_ai), 0);
                     cp = cp + e2_push_xmm0(buf, pos+cp);
@@ -857,7 +857,7 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
 
     if op == IR_RETURN {
         if s1 >= 0 {
-            if irv_type(s1) == TI_FLOAT {
+            if irv_type(s1) == TI_DEX {
                 // float 返回：movsd xmm0, [slot]（SysV 返回值在 XMM0）
                 cp = cp + e2_sd_load(buf, pos+cp, g2_slot(s1));
             } else if r64(g_x86_is_global, s1 * 8) != 0 {

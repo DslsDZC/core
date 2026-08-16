@@ -33,7 +33,7 @@
 // TY_* 常量 → 名字
 fn analysis_tyname(ty: int) -> string {
     if ty == TY_INT { return "int"; }
-    if ty == TY_FLOAT { return "float"; }
+    if ty == TY_DEX { return "dex"; }
     if ty == TY_BOOL { return "bool"; }
     if ty == TY_STRING { return "string"; }
     if ty == TY_UNIT { return "unit"; }
@@ -309,7 +309,7 @@ fn analysis_type_of_expr(node: int, depth: int) -> string {
     if node < 0 || depth > 8 { return "?"; }
     k := ast_kind(node);
     if k == EXPR_INT { return "int"; }
-    if k == EXPR_FLOAT { return "float"; }
+    if k == EXPR_DEX { return "dex"; }
     if k == EXPR_BOOL { return "bool"; }
     if k == EXPR_STRING { return "string"; }
     if k == EXPR_CHAR { return "char"; }
@@ -878,7 +878,7 @@ fn analysis_document_symbol() -> string {
 //                 T_PATHSEP T_LBRACKET T_RBRACKET T_FATARROW T_PERCENT
 //                 T_DOTDOT T_DOTDOTDOT T_COLON_EQ T_AT T_QUESTION
 //                 T_PLUS_EQ T_MINUS_EQ T_STAR_EQ T_SLASH_EQ
-//   number   (7): T_INT T_FLOAT（字面量令牌）
+//   number   (7): T_INT T_DEX（字面量令牌）
 
 // kind → legend 下标；T_IDENT 返回 -1（需按名字分类，见 analysis_token_type）
 fn analysis_kind_type(k: int) -> int {
@@ -897,7 +897,7 @@ fn analysis_kind_type(k: int) -> int {
         return 1;
     }
     if k == T_STRING || k == T_CHAR { return 5; }
-    if k == T_INT || k == T_FLOAT { return 7; }
+    if k == T_INT || k == T_DEX { return 7; }
     if k == T_IDENT { return -1; }
     return 6;   // 运算符/分隔符：其余全部 kind
 }
@@ -905,7 +905,7 @@ fn analysis_kind_type(k: int) -> int {
 // 名字是否为内置类型名（parser.cr parse_type 的 T_IDENT 分支字面量清单）
 fn analysis_is_builtin_type(ni: int) -> int {
     s := istr_get(ni);
-    if str_eq(s, "int") != 0 || str_eq(s, "float") != 0 ||
+    if str_eq(s, "int") != 0 || str_eq(s, "float") != 0 || str_eq(s, "dex") != 0 ||
        str_eq(s, "bool") != 0 || str_eq(s, "string") != 0 ||
        str_eq(s, "char") != 0 || str_eq(s, "never") != 0 ||
        str_eq(s, "dyn") != 0 { return 1; }
@@ -952,7 +952,7 @@ fn analysis_tok_span(ti: int, st: int, sl: int) -> int {
         return p - st;
     }
     // 数字：镜像 lexer 数字分支（'.' 起始、hex/oct/bin 前缀、小数、字母后缀）
-    if k == T_INT || k == T_FLOAT {
+    if k == T_INT || k == T_DEX {
         p : ., mut = st;
         if load8(g_source, p) == 46 && is_digit(load8(g_source, p + 1)) != 0 { p = p + 1; }
         loop { if is_digit(load8(g_source, p)) != 0 { p = p + 1; } else { break; } }

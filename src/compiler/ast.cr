@@ -5,7 +5,7 @@
 T_EOF : int = 0;
 T_IDENT : int = 1;
 T_INT : int = 2;
-T_FLOAT : int = 3;
+T_DEX : int = 3;  // 3.14 字面量令牌（数值迁移 Task 3：T_FLOAT → T_DEX，值=binary64 位模式 = apx 快路径表示；精确解析在 Task 4）
 T_STRING : int = 4;
 T_FN : int = 5;
 T_MUT : int = 7;
@@ -105,7 +105,7 @@ T_REF : int = 96;
 T_DYN : int = 99;  // dynamic type
 T_EXTERN : int = 100;  // extern "C" / foreign function declaration
 
-// Width constants (stored in EXPR_INT/EXPR_FLOAT data field)
+// Width constants (stored in EXPR_INT/EXPR_DEX data field)
 W_I8 : int = 1;
 W_I16 : int = 2;
 W_I32 : int = 3;
@@ -119,7 +119,7 @@ W_F64 : int = 10;
 
 // Type constants
 TY_INT : int = 0;
-TY_FLOAT : int = 1;
+TY_DEX : int = 1;  // dex 精确小数（数值迁移 Task 3：TY_FLOAT 更名；float 关键字并存期映射到此类型）
 TY_BOOL : int = 2;
 TY_STRING : int = 3;
 TY_UNIT : int = 4;
@@ -203,7 +203,7 @@ struct ASTNode {
 // AST node kind constants
 EXPR_NONE : int = 0;
 EXPR_INT : int = 1;      // int_val = value
-EXPR_FLOAT : int = 27;   // int_val = value (as scaled int)
+EXPR_DEX : int = 27;   // int_val = value (as scaled int) —— 3.14 字面量节点（数值迁移 Task 3 更名）
 EXPR_STRING : int = 2;   // int_val = str table index
 EXPR_BOOL : int = 3;     // int_val = 0/1
 EXPR_IDENT : int = 4;    // int_val = name str table index
@@ -293,7 +293,7 @@ UOP_DEREF : int = 4;
 
 // Type table pre-allocated indices (for checker type system)
 TI_INT : int = 0;
-TI_FLOAT : int = 1;
+TI_DEX : int = 1;    // dex 精确小数（数值迁移 Task 3：TI_FLOAT 更名，编号不变——.ccr 兼容）
 TI_BOOL : int = 2;
 TI_STR : int = 3;
 TI_UNIT : int = 4;
