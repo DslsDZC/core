@@ -93,6 +93,7 @@
 | TA05 | 变量未声明 mutable | `Variable '{name}' is not mutable` |
 | TA06 | 全局变量未声明 mutable | `Global '{name}' must be `mut` to reassign` |
 | TA07 | 元组解构数量不匹配 | `Tuple destructuring has {M} variables but tuple has {N} elements` |
+| TA08 | 未知声明标签 | `unknown declaration tag '{tag}'`（已知：mut/pub/apx + 插件标签） |
 
 ## TF0xx — 类型检查：函数与调用
 
@@ -255,7 +256,7 @@
 | P | P001–P019 | 19 | 语法 |
 | N | N001–N021 | 21 | 名字解析 |
 | I | I001–I006 | 6 | 类型推断 |
-| TA | TA01–TA07 | 7 | 赋值与绑定 |
+| TA | TA01–TA08 | 8 | 赋值与绑定 |
 | TF | TF01–TF17 | 17 | 函数与调用 |
 | TB | TB01–TB09 | 9 | 二元运算 |
 | TU | TU01–TU03 | 3 | 一元运算 |

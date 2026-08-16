@@ -333,15 +333,15 @@ fn e2_sd_load_x(b: string, p: int, o: int, rn: int) -> int {
     return cp - p;
 }
 
-// 存返回值到 dest：float → movsd [slot], xmm0（SysV XMM0 返回）；int → rax
+// 存返回值到 dest：dex（binary64，apx 快路径）→ movsd [slot], xmm0（SysV XMM0 返回）；int → rax
 fn e2_store_ret(b: string, p: int, d: int) -> int {
-    if d >= 0 && irv_type(d) == TI_FLOAT {
+    if d >= 0 && irv_type(d) == TI_DEX {
         return e2_sd_store(b, p, g2_slot(d));
     }
     return e2_st(b, p, 0, g2_slot(d));
 }
 
-// 压栈 float（8 字节）：sub rsp,8 + movsd [rsp],xmm0
+// 压栈 binary64 值（8 字节，apx 快路径）：sub rsp,8 + movsd [rsp],xmm0
 fn e2_push_xmm0(b: string, p: int) -> int {
     cp := p;
     w8(b, cp, 72); w8(b, cp+1, 131); w8(b, cp+2, 236); w8(b, cp+3, 8); cp = cp + 4;
@@ -349,7 +349,7 @@ fn e2_push_xmm0(b: string, p: int) -> int {
     return cp - p;
 }
 
-// cvtsi2sd xmm0, [rbp+disp] — F2 0F 2A /0（int→float 转换）
+// cvtsi2sd xmm0, [rbp+disp] — F2 0F 2A /0（int→binary64 转换，apx 快路径）
 fn e2_sd_cvt(b: string, p: int, o: int) -> int {
     cp := p;
     w8(b, cp, 242); w8(b, cp+1, 15); w8(b, cp+2, 42); cp = cp + 3;
@@ -416,7 +416,7 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
     if op == IR_NOP { return 0; }
 
     if op == IR_I2F && d >= 0 {
-        // int → float：cvtsi2sd xmm0, [rbp+disp] — F2 0F 2A /0，然后 movsd 存回
+        // int → binary64：cvtsi2sd xmm0, [rbp+disp] — F2 0F 2A /0，然后 movsd 存回
         do2 := g2_slot(d);
         cp = cp + e2_sd_cvt(buf, pos+cp, g2_slot(s1));   // cvtsi2sd xmm0, [s1]
         cp = cp + e2_sd_store(buf, pos+cp, do2);
@@ -424,7 +424,7 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
     }
 
     if op == IR_F2I && d >= 0 {
-        // float → int：movsd xmm0, [s1]；cvttsd2si rax, xmm0（F2 48 0F 2C C0）；存回
+        // binary64 → int：movsd xmm0, [s1]；cvttsd2si rax, xmm0（F2 48 0F 2C C0，截断）；存回
         do2 := g2_slot(d);
         cp = cp + e2_sd_load(buf, pos+cp, g2_slot(s1));
         w8(buf, pos+cp, 242); w8(buf, pos+cp+1, 72); w8(buf, pos+cp+2, 15);
@@ -452,8 +452,8 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
 
     if op == IR_BINARY {
         do2 := g2_slot(d);
-        if ti == TI_FLOAT {
-            // float 运算（SSE2 double，IEEE 754）——标准答案实现
+        if ti == TI_DEX {
+            // binary64 运算（SSE2 double，IEEE 754）——apx 快路径标准答案实现
             cp = cp + e2_sd_load(buf, pos+cp, g2_slot(s1));   // xmm0 = s1
             cp = cp + e2_sd_load1(buf, pos+cp, g2_slot(s2));  // xmm1 = s2
             // F2 0F 5x C1：addsd/subsd/mulsd/divsd xmm0, xmm1
@@ -464,7 +464,7 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
             if s3 >= OP_ADD && s3 <= OP_DIV {
                 cp = cp + e2_sd_store(buf, pos+cp, do2);
             } else if s3 >= OP_EQ && s3 <= OP_GE {
-                // float 比较：comisd xmm0, xmm1 — 66 0F 2F C1，用无符号标志
+                // binary64 比较：comisd xmm0, xmm1 — 66 0F 2F C1，用无符号标志
                 // （IEEE 754：< → CF=1；== → ZF=1；> → CF=0&&ZF=0）
                 // 比较结果是 int（0/1），用整数路径存储
                 w8(buf, pos+cp, 102); w8(buf, pos+cp+1, 15); w8(buf, pos+cp+2, 47); w8(buf, pos+cp+3, 193); cp = cp + 4;
@@ -581,13 +581,13 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
     if op == IR_CALL {
         fa := s1; ac := s2;
         // SysV AMD64 参数分派：int 用 ir（0-5 → rdi,rsi,rdx,rcx,r8,r9），
-        // float 用 fr（0-7 → xmm0-7），各自独立编号（标准答案）
+        // binary64 参数用 fr（0-7 → xmm0-7），各自独立编号（标准答案）
         // 第一遍：寄存器参数（位置顺序，左到右）
         ir_cnt : ., mut = 0; fr_cnt : ., mut = 0;
         ai := 0;
         loop { if ai >= ac { break; }
             pt := irv_type(fa + ai);
-            if pt == TI_FLOAT {
+            if pt == TI_DEX {
                 if fr_cnt < 8 {
                     cp = cp + e2_sd_load_x(buf, pos+cp, g2_slot(fa + ai), fr_cnt);
                     fr_cnt = fr_cnt + 1;
@@ -602,7 +602,7 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
                 }
             }
         ai = ai + 1; }
-        // 第二遍：栈参数（右到左压，第 7 个 int / 第 9 个 float 超限才压）
+        // 第二遍：栈参数（右到左压，第 7 个 int / 第 9 个 binary64 超限才压）
         stack_total : ., mut = 0;
         stack_ai : ., mut = ac - 1;
         loop {
@@ -610,9 +610,9 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
             ic2 : ., mut = 0; fc2 : ., mut = 0;
             j2 : ., mut = 0;
             loop { if j2 >= stack_ai { break; }
-                if irv_type(fa + j2) == TI_FLOAT { fc2 = fc2 + 1; } else { ic2 = ic2 + 1; }
+                if irv_type(fa + j2) == TI_DEX { fc2 = fc2 + 1; } else { ic2 = ic2 + 1; }
                 j2 = j2 + 1; }
-            if irv_type(fa + stack_ai) == TI_FLOAT {
+            if irv_type(fa + stack_ai) == TI_DEX {
                 if fc2 >= 8 {
                     cp = cp + e2_sd_load_x(buf, pos+cp, g2_slot(fa + stack_ai), 0);
                     cp = cp + e2_push_xmm0(buf, pos+cp);
@@ -857,8 +857,8 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
 
     if op == IR_RETURN {
         if s1 >= 0 {
-            if irv_type(s1) == TI_FLOAT {
-                // float 返回：movsd xmm0, [slot]（SysV 返回值在 XMM0）
+            if irv_type(s1) == TI_DEX {
+                // binary64 返回：movsd xmm0, [slot]（SysV 返回值在 XMM0，apx 快路径）
                 cp = cp + e2_sd_load(buf, pos+cp, g2_slot(s1));
             } else if r64(g_x86_is_global, s1 * 8) != 0 {
                 // Global: load via RIP-relative into rax
@@ -1239,6 +1239,10 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
     }
     if op == IR_FAST {
         // No-op — consumed by optimization passes
+        return 0;
+    }
+    if op == IR_APPROX {
+        // No-op — annotation only (apx: approved for approximate arithmetic)
         return 0;
     }
     if op == IR_UNROLL {

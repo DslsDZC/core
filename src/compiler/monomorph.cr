@@ -98,7 +98,7 @@ fn gen_lookup_subst(name_ni: int) -> int {
 fn gen_base_type_tv(name_ni: int) -> int {
     s := istr_get(name_ni);
     if s == "int" { return TY_INT; }
-    if s == "float" { return TY_FLOAT; }
+    if s == "dex" { return TY_DEX; }
     if s == "bool" { return TY_BOOL; }
     if s == "string" { return TY_STRING; }
     if s == "char" { return TY_CHAR; }
@@ -217,7 +217,7 @@ fn gen_clone_tree(node: int) -> int {
 
     // ── Leaf nodes (no AST children) ──
     if k == EXPR_INT { n := ast_alloc(k, a, b, c, iv, tv, d, ln, cl); gen_dedup_add(node, n); return n; }
-    if k == EXPR_FLOAT { n := ast_alloc(k, a, b, c, iv, tv, d, ln, cl); gen_dedup_add(node, n); return n; }
+    if k == EXPR_DEX { n := ast_alloc(k, a, b, c, iv, tv, d, ln, cl); gen_dedup_add(node, n); return n; }
     if k == EXPR_BOOL { n := ast_alloc(k, a, b, c, iv, tv, d, ln, cl); gen_dedup_add(node, n); return n; }
     if k == EXPR_STRING { n := ast_alloc(k, a, b, c, iv, tv, d, ln, cl); gen_dedup_add(node, n); return n; }
     if k == EXPR_CHAR { n := ast_alloc(k, a, b, c, iv, tv, d, ln, cl); gen_dedup_add(node, n); return n; }

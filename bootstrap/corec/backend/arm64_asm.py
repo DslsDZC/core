@@ -237,5 +237,7 @@ class Arm64AsmGen:
             self.emit(f"    cmp x9, #1")
             self.emit(f"    b.eq {instr.true_label}")
             self.emit(f"    b {instr.false_label}")
+        elif isinstance(instr, ApproxInstr):
+            pass  # pure annotation — no codegen
         else:
             raise NotImplementedError(f"Instruction {type(instr)}")

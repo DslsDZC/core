@@ -2,6 +2,35 @@ import sys
 sys.path.insert(0, 'bootstrap')
 from corec.syntax.tokens import Token, TokenType
 from corec.syntax.ast import *
+from corec.ir.coreir import DEX_SCALE
+
+
+def _str_to_scaled(s: str) -> int:
+    """十进制字符串 → 定点缩放整数（S = 10^6，与自举侧 str_to_scaled 同规则）。
+
+    整数部分 × S + 小数 6 位；第 7 位小数起四舍五入（半进）；去下划线/尾缀。
+    """
+    n = s.replace('_', '')
+    # 剥离 alpha 尾缀（f32/f64——apx CPU 位宽标注，本路径忽略）
+    i = 0
+    while i < len(n) and (n[i].isdigit() or n[i] == '.'):
+        i += 1
+    n = n[:i]
+    neg = False
+    if n.startswith('-'):
+        neg = True
+        n = n[1:]
+    ip_s, _, fp_s = n.partition('.')
+    ip = int(ip_s) if ip_s else 0
+    fp = fp_s[:6].ljust(6, '0')
+    fv = int(fp)
+    if len(fp_s) > 6 and fp_s[6] >= '5':
+        fv += 1
+        if fv == DEX_SCALE:
+            fv = 0
+            ip += 1
+    v = ip * DEX_SCALE + fv
+    return -v if neg else v
 
 class Parser:
     def __init__(self, tokens: list):
@@ -21,7 +50,7 @@ class Parser:
                                    TokenType.SEMI])):
                 name = self.advance().lexeme  # NAME
                 self.advance()  # :
-                type_name = self.advance().lexeme  # int/float/bool
+                type_name = self.advance().lexeme  # int/dex/bool
                 self.advance()  # =
                 val = int(self.advance().lexeme)  # VALUE
                 self.const_values[name] = val
@@ -109,7 +138,11 @@ class Parser:
                 # Accept IDENT or any keyword as a tag (anything that's not a structural token)
                 tt = self.cur().type
                 if tt not in (TokenType.EQ, TokenType.SEMI, TokenType.COMMA, TokenType.COLON, TokenType.EOF):
-                    tags.append(self.advance().lexeme)
+                    tag = self.advance().lexeme
+                    # 已知标签：mut / pub / apx（与自举编译器一致，未知标签报错）
+                    if tag not in ('mut', 'pub', 'apx'):
+                        self.error(f"unknown declaration tag '{tag}'")
+                    tags.append(tag)
                 else:
                     break
                 if self.check(TokenType.COMMA):
@@ -324,7 +357,8 @@ class Parser:
                 mut = True
                 self.advance()
             return RefType(mut, self.parse_type())
-        base_types = {'int','float','bool','string','char','unit','never'}
+        # dex = 精确小数（数值迁移 Task 5：float 类型名已移除，与自举侧同步）
+        base_types = {'int','dex','bool','string','char','unit','never'}
         if self.check(TokenType.SELF_TYPE):
             self.advance()
             return BaseType('Self')
@@ -506,7 +540,9 @@ class Parser:
         if self.check(TokenType.INT_LIT):
             return Literal(int(self.advance().lexeme), 'int')
         if self.check(TokenType.FLOAT_LIT):
-            return Literal(float(self.advance().lexeme), 'float')
+            # 3.14 字面量 → dex（数值迁移 Task 3/4）——精确解析：十进制 → 定点缩放整数
+            # （S = 10^6，第 7 位小数起四舍五入；非二进制近似——0.1+0.2==0.3 精确成立）
+            return Literal(_str_to_scaled(self.advance().lexeme), 'dex')
         if self.check(TokenType.STRING_LIT):
             return Literal(self.advance().lexeme, 'string')
         if self.check(TokenType.CHAR_LIT):

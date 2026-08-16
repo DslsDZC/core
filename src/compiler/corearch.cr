@@ -126,7 +126,9 @@ fn corearch_main() -> int {
                 sz = ctx_emit_static(g_elf_buf, out_path);
             } else {
                 // Pure static: write directly (rt.cr prepended by frontend)
-                fd := syscall3(2, out_path, 577, 420);
+                // 0755（493）：ELF 输出必须可执行——修复 `corec build` 输出 0644 的
+                // 既有怪癖（2026-08-16 Task 6：所有测试曾被迫 chmod 兜底；.so 输出保持 0644）
+                fd := syscall3(2, out_path, 577, 493);
                 if fd < 0 { print("error: cannot write "); println(out_path); return 1; }
                 syscall3(1, fd, g_elf_buf, sz);
                 syscall3(3, fd, 0, 0); }
@@ -141,7 +143,7 @@ fn corearch_main() -> int {
         if sz <= 0 { println("error: linking failed"); return 1; }
     } else {
         sz := elf_gen(g_elf_buf);
-        fd := syscall3(2, out_path, 577, 420);
+        fd := syscall3(2, out_path, 577, 493);  // 0755：可执行输出（同静态路径修复）
         if fd < 0 { print("error: cannot write "); println(out_path); return 1; }
         syscall3(1, fd, g_elf_buf, sz);
         syscall3(3, fd, 0, 0); }

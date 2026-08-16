@@ -179,6 +179,48 @@ fn str_to_f64_bits(s: string) -> int {
     return bits64;
 }
 
+// decimal string → 定点缩放整数（数值迁移 Task 4：dex 精确字面量解析）
+// S = 10^6（6 位小数）。整数部分 × S + 小数 6 位；第 7 位小数起四舍五入（半进，
+// 与 float_str_bits 的舍入规则一致）。负号直接处理（'-' 前缀）。
+// 溢出：|整数部分| ≤ 9.2e12（×S 越界 = 环绕，与 int 溢出一致——文档化限制）。
+fn str_to_scaled(s: string) -> int {
+    sl := str_len(s);
+    i : ., mut = 0;
+    neg : int = 0;
+    if i < sl && load8(s, i) == 45 { neg = 1; i = i + 1; }
+    ip : int = 0; fp : int = 0; nd : int = 0; sd : int = 0; round_up : int = 0;
+    loop {
+        if i >= sl { break; }
+        c := load8(s, i);
+        if c == 46 { sd = 1; i = i + 1; continue; }
+        if c < 48 || c > 57 { break; }
+        if sd != 0 {
+            nd = nd + 1;
+            if nd <= 6 { fp = fp * 10 + (c - 48); }
+            else if nd == 7 { if c >= 53 { round_up = 1; } }
+        } else {
+            ip = ip * 10 + (c - 48);
+        }
+        i = i + 1;
+    }
+    if round_up != 0 {
+        fp = fp + 1;
+        if fp >= 1000000 { fp = 0; ip = ip + 1; }
+    }
+    // 小数位补齐到 6 位：fp 是原始数字（如 "3.14" → 14），×10^(6-nd)
+    if nd < 6 {
+        pad : ., mut = 6 - nd;
+        loop {
+            if pad <= 0 { break; }
+            fp = fp * 10;
+            pad = pad - 1;
+        }
+    }
+    v := ip * 1000000 + fp;
+    if neg != 0 { return 0 - v; }
+    return v;
+}
+
 fn add_tok(kind: int, lex: int, start_line: int, start_col: int) {
     grow_tokens(g_token_count + 1);
     tp := g_token_count * ESZ_TOKEN;
@@ -208,6 +250,18 @@ fn add_tok_str(kind: int, s: string, start_line: int, start_col: int) {
     si := str_intern(s);
     w64(g_tokens, tp + OFF_TK_LEXEME, si);
     w64(g_tokens, tp + OFF_TK_INTVAL, 0);
+    w64(g_tokens, tp + OFF_TK_LINE, start_line);
+    w64(g_tokens, tp + OFF_TK_COL, start_col);
+    g_token_count = g_token_count + 1;
+}
+
+// int_val + lexeme 双载令牌（dex 字面量用：int_val = 缩放整数，lexeme = 原数字串）
+fn add_tok_int_lex(kind: int, ival: int, lexeme_ni: int, start_line: int, start_col: int) {
+    grow_tokens(g_token_count + 1);
+    tp := g_token_count * ESZ_TOKEN;
+    w64(g_tokens, tp + OFF_TK_KIND, kind);
+    w64(g_tokens, tp + OFF_TK_LEXEME, lexeme_ni);
+    w64(g_tokens, tp + OFF_TK_INTVAL, ival);
     w64(g_tokens, tp + OFF_TK_LINE, start_line);
     w64(g_tokens, tp + OFF_TK_COL, start_col);
     g_token_count = g_token_count + 1;
@@ -325,10 +379,12 @@ fn tokenize(_src: string) {
                 suffix = str_sub(_src, ss, _pos - ss);
             }
             num_str := str_sub(_src, start, _pos - start - str_len(suffix));
-            // float 字面量（含小数点或 f32/f64 后缀）→ IEEE 754 binary64 位模式
+            // dex 字面量（含小数点或 f32/f64 后缀）：int_val = 定点缩放整数（精确解析，
+            // 数值迁移 Task 4——十进制 → 缩放整数，非二进制近似）；lexeme 槽 = 原数字串
+            // （parser 在 apx 场景需要 binary64 位模式：str_to_f64_bits(num_str)）。
             // 修复前 float 走 str_int（3.14 解析成 3，小数静默丢弃）
             if has_dot != 0 || suffix == "f32" || suffix == "f64" {
-                add_tok_int(T_FLOAT, str_to_f64_bits(num_str), start_line, start_col);
+                add_tok_int_lex(T_DEX, str_to_scaled(num_str), str_intern(num_str), start_line, start_col);
             } else {
                 ival : ., mut = str_int(num_str);
                 if suffix == "u8" || suffix == "u16" || suffix == "u32" || suffix == "u64" { }

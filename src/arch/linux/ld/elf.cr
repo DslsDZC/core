@@ -1246,20 +1246,20 @@ fi = 0; loop { if fi >= g_ir_func_count { break; }
         pi := 0; loop { if pi >= pc { break; }
             po2 := -(vs + pi + 1 - g_current_func_var_start) * 8;  // force stack slot, ignore reg alloc
             pty := irv_type(vs + pi);
-            if pty == TI_FLOAT && pi < 6 {
+            if pty == TI_DEX && pi < 6 {
                 // float 参数在 XMM：movsd [rbp+po2], xmm{frn}（SysV）
                 // frn = 第 pi 个参数前的 float 参数数
                 frn : ., mut = 0;
                 fj : ., mut = 0;
                 loop { if fj >= pi { break; }
-                    if irv_type(vs + fj) == TI_FLOAT { frn = frn + 1; }
+                    if irv_type(vs + fj) == TI_DEX { frn = frn + 1; }
                     fj = fj + 1; }
                 if frn < 8 {
                     // movsd [rbp+po2], xmm{frn} — F2 0F 11 /rn（mod=01, rm=5）
                     w8(buf, cp, 242); w8(buf, cp+1, 15); w8(buf, cp+2, 17);
                     w8(buf, cp+3, 64 + frn * 8 + 5); w8(buf, cp+4, po2); cp = cp + 5;
                 } else {
-                    // 9+ float 参数在栈上（边缘场景，位置布局简化处理）
+                    // 9+ binary64 参数在栈上（边缘场景，位置布局简化处理）
                     caller_off := 16 + (pi - 6) * 8;
                     if g_opt_level >= 1 { caller_off = caller_off + 40; }
                     cp = cp + e2_sd_load(buf, cp, caller_off);
@@ -1268,7 +1268,7 @@ fi = 0; loop { if fi >= g_ir_func_count { break; }
             } else if pi >= 6 {
                 caller_off := 16 + (pi - 6) * 8;
                 if g_opt_level >= 1 { caller_off = caller_off + 40; }
-                if pty == TI_FLOAT {
+                if pty == TI_DEX {
                     cp = cp + e2_sd_load(buf, cp, caller_off);
                     cp = cp + e2_sd_store(buf, cp, po2);
                 } else {

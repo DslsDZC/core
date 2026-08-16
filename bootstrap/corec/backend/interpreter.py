@@ -1,6 +1,30 @@
 from corec.ir.coreir import *
 from corec.syntax.ast import ArrayType, PathType, BaseType
 
+
+# ── dex 定点精确运算（数值迁移 Task 4）──
+# dex 值 = 缩放整数（Dex，S = 10^6）。运算规则与自举侧一致：
+#   加减：缩放整数直接运算；乘法：(a·b)/S；除法：(a·S)/b（向零截断）
+#   比较：缩放整数比较；int 操作数先 ×S 对齐（与自举侧 ir_gen 隐式缩放一致）
+def _trunc_div(a, b):
+    """向零截断除法（与 C/x86 idiv、自举侧一致——Python // 是向下取整）"""
+    q = abs(a) // abs(b)
+    if (a < 0) != (b < 0):
+        q = -q
+    return q
+
+
+def _dex_str(v):
+    """缩放整数 → 十进制字符串（去尾零）：3140000 → "3.14"、6000000 → "6"."""
+    neg = v < 0
+    n = abs(v)
+    ip, fp = n // DEX_SCALE, n % DEX_SCALE
+    s = '-' if neg else ''
+    s += str(ip)
+    if fp:
+        s += '.' + str(fp).rjust(6, '0').rstrip('0')
+    return s
+
 class Interpreter:
     def __init__(self, module):
         self.module = module
@@ -25,7 +49,7 @@ class Interpreter:
         from corec.syntax.ast import BaseType
         if isinstance(typ, BaseType):
             if typ.name == 'int': return 0
-            if typ.name == 'float': return 0.0
+            if typ.name == 'dex': return Dex(0)
             if typ.name == 'bool': return False
             if typ.name == 'string': return ''
             if typ.name == 'char': return '\x00'
@@ -88,8 +112,8 @@ class Interpreter:
             val = instr.value
             if instr.type == 'int':
                 val = int(val) if isinstance(val, str) else val
-            elif instr.type == 'float':
-                val = float(val) if isinstance(val, str) else val
+            elif instr.type == 'dex':
+                val = Dex(int(val)) if isinstance(val, str) else Dex(val)
             # string, char, bool: keep original value
             self.vars[id(instr.dest)] = val
         elif isinstance(instr, BinaryInstr):
@@ -102,6 +126,27 @@ class Interpreter:
                     return
             left = self._to_value(left_raw)
             right = self._to_value(right_raw)
+            # dex 精确运算：缩放整数算术（int 操作数 ×S 对齐——与自举侧隐式缩放一致）
+            if isinstance(left, Dex) or isinstance(right, Dex):
+                if not isinstance(left, Dex): left = Dex(left * DEX_SCALE)
+                if not isinstance(right, Dex): right = Dex(right * DEX_SCALE)
+                if instr.op == '+': res = Dex(left + right)
+                elif instr.op == '-': res = Dex(left - right)
+                elif instr.op == '*': res = Dex((left * right) // DEX_SCALE)
+                elif instr.op == '/': res = Dex(_trunc_div(left * DEX_SCALE, right))
+                elif instr.op == '%':
+                    # a mod b = a - trunc(a/b)·b（截断除法恒等式；缩放形式）
+                    q = _trunc_div(left * DEX_SCALE, right)
+                    res = Dex(left - _trunc_div(q, DEX_SCALE) * right)
+                elif instr.op == '>': res = 1 if left > right else 0
+                elif instr.op == '<': res = 1 if left < right else 0
+                elif instr.op == '>=': res = 1 if left >= right else 0
+                elif instr.op == '<=': res = 1 if left <= right else 0
+                elif instr.op == '==': res = 1 if left == right else 0
+                elif instr.op == '!=': res = 1 if left != right else 0
+                else: raise NotImplementedError(f"dex op {instr.op}")
+                self.vars[id(instr.dest)] = res
+                return
             if instr.op == '+': res = left + right
             elif instr.op == '-': res = left - right
             elif instr.op == '*': res = left * right
@@ -125,7 +170,8 @@ class Interpreter:
             self.vars[id(instr.dest)] = res
         elif isinstance(instr, UnaryInstr):
             op_val = self.vars.get(id(instr.operand))
-            if instr.op == '-': res = -op_val
+            if instr.op == '-':
+                res = Dex(-op_val) if isinstance(op_val, Dex) else -op_val
             elif instr.op == '!': res = not op_val
             else: raise NotImplementedError(f"unary op {instr.op}")
             self.vars[id(instr.dest)] = res
@@ -203,7 +249,9 @@ class Interpreter:
                 is_println = instr.func == 'println'
                 for a in instr.args:
                     s = self.vars.get(id(a), '')
-                    if isinstance(s, int):
+                    if isinstance(s, Dex):
+                        s = _dex_str(s)          # 定点 → 十进制（去尾零）
+                    elif isinstance(s, int):
                         s = str(s)
                     elif not isinstance(s, str):
                         s = str(s)
@@ -220,7 +268,9 @@ class Interpreter:
                     if i + 1 < len(fmt) and fmt[i:i+2] == '{}':
                         if arg_idx < len(instr.args):
                             val = self.vars.get(id(instr.args[arg_idx]), '')
-                            if isinstance(val, int):
+                            if isinstance(val, Dex):
+                                val = _dex_str(val)   # 定点 → 十进制
+                            elif isinstance(val, int):
                                 val = str(val)
                             parts.append(str(val))
                             arg_idx += 1
@@ -518,6 +568,8 @@ class Interpreter:
             return (None, None)
         elif isinstance(instr, LabelInstr):
             pass
+        elif isinstance(instr, ApproxInstr):
+            pass  # pure annotation — no runtime semantics
         else:
             raise NotImplementedError(f"instr {type(instr)}")
         return None

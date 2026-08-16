@@ -192,3 +192,21 @@
 - 参数/返回：SysV XMM0-7（int/float 独立编号）+ XMM0 返回 + 栈参数（float 超 8）
 - 打印：float_str_bits（位模式 → 十进制，长除 + 去尾零 + 跨位进位舍入）
 - 验证：O0/O1/O2 运行全部通过；待办：f32 单精度、printf 风格最短表示
+
+### corelsp 服务器加固 TODO（2026-08-16 终审分流，详见 LSP 任务审查记录）
+
+- json.cr：节点索引无边界防御（-1/过期索引）、重复键取首值（规范为末值）、`\b`/`\f`/`\/` 拒绝、递归深度无上限
+- rpc.cr：Content-Length 数字溢出绕过上限（19+ 位 → 负 n → alloc）、"content-length" 子串可被其他头误匹配、裸 `\n\n` 头终止符不识别（规范强制 CRLF，合规）、逐字节读性能（100KB ≈ 10 万次 syscall）
+- analysis.cr：类型节点索引 0 边界（文件首语句为命名类型 fn 时 hover 回退 "int"）、self 参数显示 "int"（impl 解析挂起前不可达）、definition 指向 fn 关键字而非函数名、查询忽略请求 uri（多文档场景悬停 A 返回 B）、多字节字符串按字节列宽匹配（非 UTF-16）
+- analysis.cr：completion/documentSymbol 关键字/@ 表以字面量 if 链镜像（新增关键字时漂移风险——已注释指向真源）、semanticTokens 未闭合字符串以 `\` 结尾 span+1、T_INT_I8.. 死条目（lexer 发 T_INT）、T_LET 死 kind
+- test_lsp.py：第七组 read 超时已修（select 5s）；`->` 标记扫描已限定帧间（终审顺手修完成）
+- 顺手修遗留：报告文档类笔误（lsp-task-7-report 字节数、lsp-task-6-report §1 表未同步 T_WHILE）——scratch 文件，不阻塞
+
+### 数值类型（dex/apx）迁移遗留 TODO（2026-08-16 终审分流）
+
+- **corearch `--link <so>` 静态路径崩溃**（so_parse_text SIGILL/SIGSEGV，ld.cr:400 附近）：阻塞 extern dex 运行时 FFI 实测（M2 的 IR 层修复已合入并有 cir 断言，运行时验证待此修复）；仓库无 .so 产物、--link 路径零测试覆盖；复现记录 + 备好的 C shim 在 /tmp/dex_ffi_shim.c。**执行注意**：shim 用精确位判等，字面量快路径（str_to_f64_bits 截断 ~2ulp）与计算路径（I2F/1e6）有 1-ulp 差（3.14 → 字面量 4614253070214989086 vs canonical 4614253070214989087）——判等须用 lexer 一致常量或容差
+- sizes.cr: IR_APPROX 无显式条目（默认 return 0 兜底、行为正确，纯对称性——与 IR_FAST/IR_UNROLL 显式条目对齐）
+- 泛型+dex 返回类型：pre-existing（实例化调用点按 int 处理返回类型，与 float 时代逐位一致；bootstrap 侧正确）
+- str_to_f64_bits ~2ulp 截断（保留站点文档化限制）：binary64 判别子用 1/3（0.1b+0.2b==0.3 仅 −1ulp 组合恰好落位模式，不可作断言）
+- INT_LIT 缺 hex/octal/binary 前缀分支（0x1F 等——既有缺口，tokens.ebnf 已如实记录）；`1_000` 下划线产生 T_INT(-1) 静默值 0（两编译器分歧已文档化）
+- interp 裸 opcode 数字风格（与既有 op == 26 风格一致，非缺陷）；`_f32/_f64` 宽度透传死路径（EBNF/inventory 争议点 7 已标注，apx 位宽标注需新发射路径）
