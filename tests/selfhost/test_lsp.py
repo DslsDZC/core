@@ -236,6 +236,44 @@ def test_semantic_tokens():
     assert toks[10] == (0, 30, 1, 6), toks
     shutdown_and_wait(proc)
 
+# ── 第 6b 组：semanticTokens 多行差分（Task 8 补）──────────────────────────
+# 单行用例不覆盖跨行路径——旧实现 deltaLine>0 时 deltaStartChar 输出相对差，
+# 跨行令牌产生负列（LSP 规范要求绝对列）。本组回归：多行源码重建位置必须
+# 与源码逐令牌一致，且 deltaStartChar 全为非负。
+
+def test_semantic_tokens_multiline():
+    proc = subprocess.Popen([BIN], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    send(proc, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+    uri = "file:///tmp/semantic_ml.cr"
+    src = "fn main() -> int {\n    return 42;\n}\n"
+    body = json.dumps({"jsonrpc": "2.0", "method": "textDocument/didOpen",
+                       "params": {"textDocument": {"uri": uri, "version": 1,
+                                                   "text": src}}}).encode()
+    proc.stdin.write(f"Content-Length: {len(body)}\r\n\r\n".encode() + body)
+    proc.stdin.flush()
+    read_frame(proc)  # 丢弃 publishDiagnostics 通知
+    r = send(proc, {"jsonrpc": "2.0", "id": 2, "method": "textDocument/semanticTokens/full",
+                    "params": {"textDocument": {"uri": uri}}})
+    assert "error" not in r, r
+    data = r["result"]["data"]
+    assert data and len(data) % 5 == 0, r
+    groups = [data[i:i+5] for i in range(0, len(data), 5)]
+    # 差分重建位置：deltaLine==0 → 列累加；deltaLine>0 → 列取绝对 deltaStartChar
+    line = col = 0
+    toks = []
+    for g in groups:
+        line += g[0]
+        col = col + g[1] if g[0] == 0 else g[1]
+        assert g[1] >= 0, f"deltaStartChar 必须非负：{g}"
+        toks.append((line, col, g[2], g[3]))
+    # fn@0:0 | main@0:3 | (@0:7 | )@0:8 | ->@0:10 | int@0:13 | {@0:17 |
+    # return@1:4 | 42@1:11 | ;@1:13 | }@2:0
+    assert toks[0] == (0, 0, 2, 0), toks
+    assert toks[7] == (1, 4, 6, 0), toks      # return：跨行后列=绝对列 4
+    assert toks[8] == (1, 11, 2, 7), toks     # 42
+    assert toks[10] == (2, 0, 1, 6), toks     # }：跨行后列=绝对列 0（旧实现 -13）
+    shutdown_and_wait(proc)
+
 # ── 第 7 组：stdout 污染守卫 ────────────────────────────────────────────────
 # 背景（Task 3 Fix 1）：res_imports 的加载进度/失败/toML 警告曾直接 print 到
 # stdout，污染 LSP 帧协议通道（严格客户端无法解析）。修复为 g_silent_stdout
@@ -298,6 +336,7 @@ TESTS = [
     test_hover_and_definition,
     test_completion_and_document_symbol,
     test_semantic_tokens,
+    test_semantic_tokens_multiline,
     test_stdout_pollution_guard,
 ]
 

@@ -1034,9 +1034,20 @@ fn analysis_semantic_tokens() -> string {
             line0 : ., mut = r64(g_tokens, j * ESZ_TOKEN + OFF_TK_LINE) - 1;
             col0 : ., mut = r64(g_tokens, j * ESZ_TOKEN + OFF_TK_COL) - 1;
             if first == 0 { out = out + ","; }
-            out = out + int_str(line0 - prev_line);
-            out = out + ",";
-            out = out + int_str(col0 - prev_col);
+            if line0 > prev_line {
+                // 跨行令牌：deltaStartChar 为绝对列（LSP 差分编码规范——
+                // deltaLine > 0 时列非相对差）。旧实现恒输出 col0 - prev_col，
+                // 跨行令牌产生负 deltaStartChar，客户端解码得到非法列。
+                // （Task 6 测试用单行源码，跨行路径未被覆盖——Task 8 客户端
+                // 冒烟测试暴露，已补多行用例。）
+                out = out + int_str(line0 - prev_line);
+                out = out + ",";
+                out = out + int_str(col0);
+            } else {
+                out = out + "0";
+                out = out + ",";
+                out = out + int_str(col0 - prev_col);
+            }
             out = out + ",";
             out = out + int_str(analysis_tok_span(j, st, sl));
             out = out + ",";
