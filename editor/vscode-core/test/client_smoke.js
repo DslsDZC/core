@@ -13,6 +13,18 @@ const { EventEmitter } = require('events');
 
 // ── mock vscode API ───────────────────────────────────────────────
 
+// 真实 VS Code 枚举是 TS 数值枚举（双向映射：Enum[name]=value 且
+// Enum[value]=name）；mock 必须同样双向，否则 extension.js 的兜底判断
+// `vscode.CompletionItemKind[k] !== undefined`（依赖反向映射）会失真。
+function numEnum(entries) {
+  const e = {};
+  for (const [name, value] of Object.entries(entries)) {
+    e[name] = value;
+    e[value] = name;
+  }
+  return e;
+}
+
 class Uri {
   constructor(s) {
     this.s = s;
@@ -51,8 +63,12 @@ const mockVscode = {
   Range, Diagnostic: Diag, Hover, MarkdownString, Location,
   CompletionItem, DocumentSymbol, SemanticTokens, SemanticTokensBuilder,
   DiagnosticSeverity: { Error: 1, Warning: 2, Information: 3 },
-  CompletionItemKind: { Text: 0, Function: 3, Keyword: 14, Variable: 6, Struct: 22, Enum: 23 },
-  SymbolKind: { Variable: 13 },
+  // 终审修正：以下均为 VS Code API 枚举值（0-based；LSP 规范为 1-based，
+  // 客户端 extension.js 回填时 -1 平移）。此前误写 LSP 值（Function 3、
+  // Keyword 14、Variable 6、Struct 22、Enum 23、SymbolKind.Variable 13），
+  // 会让「平移后 kind 落在 mock 枚举上」的断言失真。
+  CompletionItemKind: numEnum({ Text: 0, Function: 2, Keyword: 13, Variable: 5, Struct: 21, Enum: 12 }),
+  SymbolKind: numEnum({ Variable: 12 }),
   workspace: {
     getConfiguration: () => ({ get: (k, d) => d }), // 默认 build/corelsp + enabled
     workspaceFolders: [{ uri: new Uri('file://' + REPO_ROOT) }],
@@ -144,7 +160,21 @@ async function main() {
   const c = await registered.completion.provideCompletionItems(doc, { line: 1, character: 4 }, '@');
   assert(Array.isArray(c), 'completion 应为数组');
 
-  console.log('client_smoke: 全部通过（握手/诊断/hover/semanticTokens/documentSymbol/completion）');
+  // 7) 平移断言（终审）：服务器 completion 返回 Struct=22（LSP 1-based）→
+  //    客户端 -1 平移后 21（VS Code CompletionItemKind.Struct，0-based）。
+  //    经真实 corelsp 响应验证 extension.js 平移逻辑生效。
+  const structDoc = { ...doc, uri: new Uri('file:///proj/shift_test.cr'),
+    getText: () => 'struct Point { x: int, y: int }\n' };
+  emitters.open.emit('e', structDoc);
+  await new Promise((r) => setTimeout(r, 1200));
+  const items = await registered.completion.provideCompletionItems(
+    structDoc, { line: 1, character: 0 }, '');
+  assert(Array.isArray(items), 'struct 文档 completion 应为数组');
+  const point = items.find((it) => it.label === 'Point');
+  assert(point && point.kind === 21,
+    `Point 平移后应为 21（VS Code Struct），实际 ${point ? point.kind : '未返回'}`);
+
+  console.log('client_smoke: 全部通过（握手/诊断/hover/semanticTokens/documentSymbol/completion/平移断言）');
   process.exit(0);
 }
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # test_lsp.py — corelsp 集成测试套件（Task 1-6 功能 + Task 7 统一驱动）
 #
-# 组织方式（Task 7 统一驱动）：七组测试按序执行，每组独立 spawn corelsp
+# 组织方式（Task 7 统一驱动）：八组测试按序执行，每组独立 spawn corelsp
 # （隔离全局状态——corelsp 是单文档全局状态机，跨组复用会串状态）：
 #   1. lifecycle                    — initialize/initialized/未知方法/shutdown/exit
 #   2. jsonrpc error codes          — initialize 前请求 → -32602
@@ -9,11 +9,12 @@
 #   4. hover + definition           — 语义查询（声明定位）
 #   5. completion + documentSymbol  — 候选/前缀过滤/@ 内建/符号表
 #   6. semanticTokens/full          — 差分编码令牌流
+#   6b. semanticTokens 多行         — 跨行差分重建位置 + deltaStartChar 非负
 #   7. stdout 污染守卫              — 原始字节流严格帧扫描，0 脏字节
 #
 # 结尾打印 "lsp suite: ALL PASS (N tests)"；任一失败 → 打印 FAIL 行并非零退出。
 
-import json, re, subprocess, sys
+import json, re, select, subprocess, sys
 
 BIN = "build/corelsp"
 
@@ -298,14 +299,25 @@ def test_stdout_pollution_guard():
     raw_send(proc, {"jsonrpc": "2.0", "id": 9, "method": "shutdown"})
     raw_send(proc, {"jsonrpc": "2.0", "method": "exit"})
     proc.stdin.close()
-    data = proc.stdout.read()
+    # read 加超时（终审）：服务器挂起时套件不能跟着挂死——select 检查可读性，
+    # 5s 内无数据即 kill 并断言失败（非零退出）
+    chunks = []
+    while True:
+        ready, _, _ = select.select([proc.stdout], [], [], 5)
+        if not ready:
+            proc.kill()
+            assert False, "stdout read 超时（5s）——corelsp 未在 exit 后退出"
+        chunk = proc.stdout.read1(1 << 16)
+        if not chunk:
+            break
+        chunks.append(chunk)
+    data = b"".join(chunks)
     assert proc.wait(timeout=5) == 0
-    # 1) 污染标记：无加载进度 '->'、无 '!! import fail'、无 'warning:'
-    for marker in (b"->", b"!! import fail", b"warning:"):
-        assert marker not in data, f"stdout contains marker {marker!r}: {data!r}"
-    # 2) 严格帧扫描：每个字节都必须属于 Content-Length 帧 + 合法 JSON 体；
-    #    帧前/帧间/帧后任何脏字节即断言失败（VS Code 严格客户端解析标准）
+    # 1) 严格帧扫描：每个字节都必须属于 Content-Length 帧 + 合法 JSON 体；
+    #    帧前/帧间/帧后任何脏字节即断言失败（VS Code 严格客户端解析标准）；
+    #    同时记录 body 字节范围，供污染标记只扫帧间空隙
     frames = []
+    body_ranges = []
     i = 0
     while i < len(data):
         m = re.match(rb"Content-Length: (\d+)\r\n\r\n", data[i:])
@@ -316,9 +328,22 @@ def test_stdout_pollution_guard():
         assert len(body) == n, f"truncated frame body at offset {start}"
         json.loads(body)  # 必须可解析为合法 JSON
         frames.append(body)
+        body_ranges.append((start, start + n))
         i = start + n
     assert len(frames) == 5, frames   # init 响应 + initialized ack + 好/坏文件
     #                               # publishDiagnostics ×2 + shutdown 响应
+    # 2) 污染标记（终审修正）：只扫帧间空隙——body 之外的字节（头之前/帧尾
+    #    之后/帧头本身）。诊断消息文本可合法含 '->'（如类型不匹配报错），对
+    #    含帧体的全字节流扫标记会对诊断过敏误报；空隙是纯协议字节，加载进度
+    #    '->'、'!! import fail'、'warning:' 等污染不得出现
+    gaps = bytearray()
+    prev = 0
+    for s, e in body_ranges:
+        gaps += data[prev:s]
+        prev = e
+    gaps += data[prev:]
+    for marker in (b"->", b"!! import fail", b"warning:"):
+        assert marker not in gaps, f"frame gap contains marker {marker!r}: {bytes(gaps)!r}"
     # 3) 帧形状抽查：好文件空诊断 / 坏文件非空诊断（与 test_diagnostics_and_reset
     #    互补——那边走 lenient 读取，这边证明帧本身结构健全）
     pub_good = json.loads(frames[2])
