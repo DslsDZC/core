@@ -17,6 +17,7 @@ class NameResolver:
             ('store8', BaseType('int')),
             ('load64', BaseType('int')),
             ('syscall3', BaseType('int')),
+            ('syscall4', BaseType('int')),
             ('fiber_init', BaseType('int')),
             ('fiber_switch', BaseType('int')),
             ('load_str_ptr', BaseType('string')),

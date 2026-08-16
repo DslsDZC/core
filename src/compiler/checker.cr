@@ -1641,10 +1641,11 @@ fn infer_expr(node: int) -> int {
             ast_set_b(func_node, first_arg);
             return infer_expr(func_node);
         }
-        // Check builtins (only syscall3 — OS communication, no .cr body)
+        // Check builtins (syscall3/syscall4 — OS communication, no .cr body)
         if func_ni >= 0 {
             s := istr_get(func_ni);
             if s == "syscall3" { return TI_INT; }
+            if s == "syscall4" { return TI_INT; }
         }
         // Check for SYM_SO_FN (.so extension registered)
         so_fn_fi : ., mut = -1;
@@ -2053,12 +2054,32 @@ fn infer_expr(node: int) -> int {
         // Range index: arr[low..high] → slice type
         if ast_kind(ast_b(node)) == EXPR_RANGE {
             if arr_kind == TYP_ARRAY {
+                // F11：字面量切片界编译期验证（TK05/06 既有错误码）
+                arr_len : ., mut = get_type_extra(arr_ti);
+                rn := ast_b(node);
+                if arr_len > 0 && ast_kind(ast_a(rn)) == EXPR_INT && ast_kind(ast_b(rn)) == EXPR_INT {
+                    lo := ast_int_val(ast_a(rn));
+                    hi := ast_int_val(ast_b(rn));
+                    if lo < 0 || hi > arr_len {
+                        check_error(EC_TK_SLICE_BOUNDS, "slice out of bounds: [" + int_str(lo) + ".." + int_str(hi) + "] (array length " + int_str(arr_len) + ")", ast_line(node), ast_col(node));
+                    } else if lo > hi {
+                        check_error(EC_TK_SLICE_LEN, "slice length negative: [" + int_str(lo) + ".." + int_str(hi) + "]", ast_line(node), ast_col(node));
+                    }
+                }
                 return alloc_type(TYP_SLICE, get_type_data(arr_ti), 0);
             }
             return TI_UNIT;
         }
         // Regular index: arr[i] or slice[i] → element type
         if arr_kind == TYP_ARRAY {
+            // F2：字面量索引编译期越界检查（数组长度编译期可知时）
+            if ast_kind(ast_b(node)) == EXPR_INT {
+                idx_val := ast_int_val(ast_b(node));
+                arr_len : ., mut = get_type_extra(arr_ti);
+                if arr_len > 0 && (idx_val < 0 || idx_val >= arr_len) {
+                    check_error(EC_R_OOB, "index out of bounds: " + int_str(idx_val) + " (array length " + int_str(arr_len) + ")", ast_line(node), ast_col(node));
+                }
+            }
             return get_type_data(arr_ti);
         }
         if arr_kind == TYP_SLICE {

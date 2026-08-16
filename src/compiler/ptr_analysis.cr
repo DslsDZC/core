@@ -251,6 +251,28 @@ fn ptr_analysis_func(nstart: int, ncount: int, vstart: int, vcount: int) {
                     }
                 }
 
+                // F11①：IR_SLICE 传播底层数组 provenance（d = &arr[low]）。
+                // 使经切片的 DEREF 能被分配长度检查捕获；offset = low*8（常量时）。
+                if op == IR_SLICE && s1 >= 0 {
+                    if pa_merge_pts(d, s1) != 0 { changed = 1; }
+                    base_off := r64(g_offsets, s1 * 8);
+                    low_val : int = -1;
+                    if s2 >= 0 {
+                        prod := r64(g_df_var_producer, s2 * 8);
+                        if prod >= 0 {
+                            prod_op := r64(g_df_nodes, prod * ESZ_DFNODE + OFF_DF_OPCODE);
+                            if prod_op == IR_CONST {
+                                low_val = r64(g_df_nodes, prod * ESZ_DFNODE + OFF_DF_S1);
+                            }
+                        }
+                    }
+                    if low_val >= 0 && base_off >= 0 {
+                        w64(g_offsets, d * 8, base_off + low_val * 8);
+                    } else {
+                        w64(g_offsets, d * 8, -1);
+                    }
+                }
+
                 // BINARY with PTR ops: propagate with offset
                 if op == IR_BINARY && (s3 == OP_PTR_ADD || s3 == OP_PTR_SUB) && s1 >= 0 {
                     if pa_merge_pts(d, s1) != 0 { changed = 1; }

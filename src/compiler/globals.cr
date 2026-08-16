@@ -87,7 +87,7 @@ g_label_count : int, mut;
 g_loop_region_enter : string, mut;  g_loop_region_exit : string, mut;
 g_loop_region_count : int, mut;     g_loop_region_cap : int, mut;
 // Pre-computed interned string indices for builtin function name matching
-g_ni_syscall3 : int, mut;  g_ni_load8 : int, mut;  g_ni_store8 : int, mut;
+g_ni_syscall3 : int, mut;  g_ni_syscall4 : int, mut;  g_ni_load8 : int, mut;  g_ni_store8 : int, mut;
 g_ni_load64 : int, mut;    g_ni_load_str_ptr : int, mut;
 g_ni_store_str_ptr : int, mut;  g_ni_get_arg : int, mut;
 g_ni_w64 : int, mut;  g_ni_dyncpy : int, mut;  g_ni_r64 : int, mut;

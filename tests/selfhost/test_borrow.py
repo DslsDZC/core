@@ -96,7 +96,10 @@ def run_case(name, source, expect_borrow_error):
 
     output = result.stdout + result.stderr
     has_borrow_error = "error[B" in output or "Cannot borrow" in output or "while it is borrowed" in output
-    if result.returncode == 0 and has_borrow_error == expect_borrow_error:
+    # F19（compcert-r4 波 3）：corec check 对诊断返回 1（修复前诊断后恒 0——
+    # 与 check 命令「诊断即失败」的语义相悖）。断言随新契约更新：
+    # 期望诊断的用例 → rc=1；无诊断用例 → rc=0。
+    if result.returncode == (1 if expect_borrow_error else 0) and has_borrow_error == expect_borrow_error:
         state = "borrow error" if has_borrow_error else "no borrow error"
         print(f"[PASS] {name}: {state}")
         return True

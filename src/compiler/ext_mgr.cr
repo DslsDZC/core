@@ -26,16 +26,20 @@ EXT_HOOK_BINARY_OP    : int = 2;  // 二元运算后
 fn grow_ext_reg(needed: int) {
     if needed < g_ext_reg_cap { return; }
     ncap : ., mut = g_ext_reg_cap * 2; if ncap < 8 { ncap = 8; } if ncap < needed { ncap = needed + 8; }
-    nb := alloc(ncap * 8); _dyncpy(g_ext_reg, g_ext_reg_cap * 8, nb); g_ext_reg = nb; g_ext_reg_cap = ncap;
+    // 记录 = [hook_type(8), plugin_id(8)] 共 16 字节——修复 F1：原代码按 8 字节
+    // 扩容/拷贝，且 ext_reg 把 plugin_id 写到 +4（与 hook_type 重叠）→ 注册表
+    // 恒损坏 → dispatch 永远匹配不到插件 → 越界守卫从不触发。
+    nb := alloc(ncap * 16); _dyncpy(g_ext_reg, g_ext_reg_cap * 16, nb); g_ext_reg = nb; g_ext_reg_cap = ncap;
 }
 
 fn ext_init() {
     if g_ext_inited != 0 { return; }
     g_ext_inited = 1;
     g_ext_reg_cap = 0; g_ext_reg_count = 0;
-    // 环境变量控制
+    // 环境变量控制：边界检查是 Core 的安全契约，默认开启。
+    // CORE_SAFE=0 显式关闭（仅 unsafe 调试场景）；CORE_SAFE=1 保持显式开启兼容。
     ev := get_env("CORE_SAFE");
-    if str_len(ev) > 0 && ev == "1" { g_ext_flags = 1; }
+    if str_len(ev) > 0 && ev == "0" { g_ext_flags = 0; } else { g_ext_flags = 1; }
     // 内置插件初始化（未来从 .so 加载）
     ext_safety_init();
 }
@@ -48,8 +52,8 @@ fn ext_has(flag: int) -> int {
 // 注册一个插件到指定钩子
 fn ext_reg(hook_type: int, plugin_id: int) {
     grow_ext_reg(g_ext_reg_count + 1);
-    w64(g_ext_reg, g_ext_reg_count * 8, hook_type);
-    w64(g_ext_reg, g_ext_reg_count * 8 + 4, plugin_id);
+    w64(g_ext_reg, g_ext_reg_count * 16, hook_type);
+    w64(g_ext_reg, g_ext_reg_count * 16 + 8, plugin_id);
     g_ext_reg_count = g_ext_reg_count + 1;
 }
 
@@ -61,8 +65,8 @@ fn ext_dispatch_array_access(arr_var: int, idx_var: int, idx_lit: int, arr_len_l
     ri : ., mut = 0;
     loop {
         if ri >= g_ext_reg_count { break; }
-        ht := r64(g_ext_reg, ri * 8);
-        pid := r64(g_ext_reg, ri * 8 + 4);
+        ht := r64(g_ext_reg, ri * 16);
+        pid := r64(g_ext_reg, ri * 16 + 8);
         if ht == EXT_HOOK_ARRAY_ACCESS {
             if pid == 1 {  // EXT_PLUGIN_SAFETY
                 r := ext_safety_on_array_access(arr_var, idx_var, idx_lit, arr_len_lit);
@@ -80,8 +84,8 @@ fn ext_dispatch_binary_op(op: int, lv: int, rv: int, result_var: int) -> int {
     ri : ., mut = 0;
     loop {
         if ri >= g_ext_reg_count { break; }
-        ht := r64(g_ext_reg, ri * 8);
-        pid := r64(g_ext_reg, ri * 8 + 4);
+        ht := r64(g_ext_reg, ri * 16);
+        pid := r64(g_ext_reg, ri * 16 + 8);
         if ht == EXT_HOOK_BINARY_OP {
             if pid == 1 {
                 return ext_safety_on_binary_op(op, lv, rv, result_var);

@@ -368,7 +368,7 @@ fn ctx_emit_dyn(buf: string, path: string) -> int {
      println(int_str(total));
     emit(buf, total, 0);
         fd := syscall3(2, path, 577, 493);  // 0755：ELF 输出必须可执行（Task 6 修复 0644 怪癖）
-    if fd < 0 { return -1; }
+        if fd < 0 { return -1; }
     nw := syscall3(1, fd, buf, total);
     syscall3(3, fd, 0, 0);
     return total; }
@@ -442,6 +442,8 @@ fn ctx_emit_static(buf: string, path: string) -> int {
         w8(buf, user_out + cj, bu8(g_user_code, cj)); cj = cj + 1; }
 
     // Patch external relocations: user code calls → .so functions
+    // F16②：解析失败的外部符号是硬错误——修复前静默保留 rel32=0 → 跳入 ELF 头崩溃。
+    unresolved : ., mut = 0;
     rpi : ., mut = 0;
     loop { if rpi >= g_x86_ext_rel_count { break; }
         abs_pos := r64(g_x86_ext_rel_pos, rpi * 8);
@@ -454,9 +456,14 @@ fn ctx_emit_static(buf: string, path: string) -> int {
                 call_pos := user_out + abs_pos;
                 target_va := 0x400000 + so_out + func_off;
                 rel := target_va - (call_pos + 5);
-                w32(buf, call_pos + 1, rel); }
+                w32(buf, call_pos + 1, rel);
+            } else {
+                println("error: 无法解析外部符号（静态链接）：" + fn_name);
+                unresolved = unresolved + 1;
+            }
         }
     rpi = rpi + 1; }
+    if unresolved > 0 { return -2; }
 
     // ELF header: single PT_LOAD
     w8(buf,0,127);w8(buf,1,69);w8(buf,2,76);w8(buf,3,70);

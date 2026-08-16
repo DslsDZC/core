@@ -305,6 +305,23 @@ fn main() -> int {
 }
 ''', 88)
 
+# ── 整数除/模向零截断（BC2/F10：对照 ELF idiv 与 CompCert Z.quot/Z.rem）──
+test('Div trunc toward zero (-7/3)', '''
+fn main() -> int { return -7 / 3; }
+''', -2)
+
+test('Div trunc toward zero (7/-3)', '''
+fn main() -> int { return 7 / -3; }
+''', -2)
+
+test('Mod sign follows dividend (-7%3)', '''
+fn main() -> int { return -7 % 3; }
+''', -1)
+
+test('Mod sign follows dividend (7%-3)', '''
+fn main() -> int { return 7 % -3; }
+''', 1)
+
 # ── Summary ──
 print(f"\n{passed}/{passed + failed} passed", end="")
 if failed > 0:

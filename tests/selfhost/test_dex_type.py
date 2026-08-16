@@ -75,19 +75,20 @@ def test_dex_type_declares():
     print("[PASS] fn f() -> dex { return 3.14; } (check exit 0)")
 
     # 3) 移除守卫（Task 5）：float 类型名不再映射 TY_DEX——按未知类型名走 lenient
-    #    TYP_NAMED 路径（TF01 非致命、check 仍 exit 0；与任何未知名字一致）。
-    #    （终审 Minor 2：守卫收紧——断言 exit==0 且 TF01 出现，防"漏报/误报"双向漂移）
+    #    TYP_NAMED 路径（TF01 非致命、check 报诊断；与任何未知名字一致）。
+    #    （终审 Minor 2：守卫收紧——断言 TF01 出现且退出码按 F19 契约反映诊断，
+    #      防"漏报/误报"双向漂移。第四轮 F19：check 有诊断 rc=1、无诊断 rc=0）
     src3 = (
         "fn f() -> float { return 3.14; }\n"
         "fn main() -> int { return 1; }\n"
     )
     r3 = run_corec(["check"], src3)
     out3 = r3.stdout + r3.stderr
-    if r3.returncode != 0 or "TF01" not in out3:
-        print(f"[FAIL] float keyword should be rejected (TF01, non-fatal exit 0): exit={r3.returncode}")
+    if r3.returncode != 1 or "TF01" not in out3:
+        print(f"[FAIL] float keyword should be rejected (TF01, F19 diagnostic exit 1): exit={r3.returncode}")
         print(out3)
         return False
-    print("[PASS] fn f() -> float { ... } rejected with TF01, exit 0 (float type name removed)")
+    print("[PASS] fn f() -> float { ... } rejected with TF01, exit 1 (float type name removed, F19)")
     return True
 
 
