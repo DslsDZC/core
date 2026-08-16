@@ -96,7 +96,8 @@ T_NONE : int = 87;
 T_SOME : int = 88;
 T_LET : int = 89;
 T_INT_TYPE : int = 90;
-T_FLOAT_TYPE : int = 91;
+// T_FLOAT_TYPE 91 已删除（数值迁移 Task 5：float 类型名移除；勿重编号——保持 LSP
+// 区间 T_INT_TYPE..T_AUTO_TYPE 90..95 连续，见 analysis.cr 说明）
 T_BOOL_TYPE : int = 92;
 T_UNIT_TYPE : int = 93;
 T_STR_TYPE : int = 94;
@@ -119,7 +120,7 @@ W_F64 : int = 10;
 
 // Type constants
 TY_INT : int = 0;
-TY_DEX : int = 1;  // dex 精确小数（数值迁移 Task 3：TY_FLOAT 更名；float 关键字并存期映射到此类型）
+TY_DEX : int = 1;  // dex 精确小数（数值迁移 Task 3：TY_FLOAT 更名；Task 5：float 类型名移除，用户写 dex）
 TY_BOOL : int = 2;
 TY_STRING : int = 3;
 TY_UNIT : int = 4;
@@ -578,8 +579,8 @@ IR_CALL_EXTERN : int = 45;  // dest=result_var, s1=func_name_ni, s2=first_arg, s
 IR_LAZY_THUNK  : int = 46;  // dest=thunk_var, s1=expr_var — wrap as lazy thunk
 IR_LAZY_FORCE  : int = 47;  // dest=val_var, s1=thunk_var — force evaluation
 IR_FNADDR : int = 48;  // dest=addr_var, s1=fn_name_ni — load function address (movabs + link-time patch)
-IR_I2F : int = 49;  // dest=float_var, s1=int_var — int → float（cvtsi2sd）
-IR_F2I : int = 50;  // dest=int_var, s1=float_var — float → int（cvttsd2si）
+IR_I2F : int = 49;  // dest=dex_var(bits), s1=int_var — int → binary64（cvtsi2sd，apx 快路径）
+IR_F2I : int = 50;  // dest=int_var, s1=dex_var(bits) — binary64 → int（cvttsd2si 截断，apx 快路径）
 IR_APPROX : int = 51;  // — 无操作数注解：apx 变量声明处（语义许可，后端可忽略，interp 跳过）
 
 // Resolution flag for BRANCH/JUMP (stored in type_kind field after label resolution)

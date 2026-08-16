@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""dex 类型核心测试（自举编译器 build/corec）—— 数值迁移 Task 3。
+"""dex 类型核心测试（自举编译器 build/corec）—— 数值迁移 Task 3/5。
 
-dex 是精确小数类型（float 并存期——float 关键字仍有效，移除是 Task 6）：
+dex 是精确小数类型（Task 5：float 类型名已移除，不再映射 TY_DEX）：
 - `x : dex = 3.14` 合法（check exit 0）
 - `fn f() -> dex { return 3.14; }` 合法
 - `3.14` 字面量推断为 dex（`x := 3.14` 不报错；cir dump 字面量常量名为 dex）
@@ -10,7 +10,7 @@ dex 是精确小数类型（float 并存期——float 关键字仍有效，移�
 - dex 类型声明/返回通过类型检查（check exit 0）
 - 字面量归属 dex：cir dump 中 main 的字面量 IR_CONST 变量名为 dex
   （float 时代为 "float"，见 ir_gen new_ir_var("float", TI_FLOAT)）
-- 并存期回归守卫：float 关键字仍然有效（float 站点未迁移）
+- 移除守卫：float 类型名按未知类型报 TF01（不再映射到 dex）
 """
 
 import os
@@ -74,17 +74,18 @@ def test_dex_type_declares():
         return False
     print("[PASS] fn f() -> dex { return 3.14; } (check exit 0)")
 
-    # 3) 并存期守卫：float 关键字仍然有效（float 站点未迁移）→ check exit 0
+    # 3) 移除守卫（Task 5）：float 类型名不再映射 TY_DEX——按未知类型名走 lenient
+    #    TYP_NAMED 路径（exit 0 但必须报 TF01 未知类型错误；与任何未知名字一致）
     src3 = (
         "fn f() -> float { return 3.14; }\n"
         "fn main() -> int { return 1; }\n"
     )
     r3 = run_corec(["check"], src3)
-    if r3.returncode != 0:
-        print(f"[FAIL] float keyword (co-existence): exit={r3.returncode}")
+    if "TF01" not in r3.stdout + r3.stderr:
+        print(f"[FAIL] float keyword should be rejected (TF01): exit={r3.returncode}")
         print(r3.stdout + r3.stderr)
         return False
-    print("[PASS] fn f() -> float { return 3.14; } (co-existence, check exit 0)")
+    print("[PASS] fn f() -> float { ... } rejected with TF01 (float type name removed)")
     return True
 
 

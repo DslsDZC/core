@@ -1259,7 +1259,7 @@ fi = 0; loop { if fi >= g_ir_func_count { break; }
                     w8(buf, cp, 242); w8(buf, cp+1, 15); w8(buf, cp+2, 17);
                     w8(buf, cp+3, 64 + frn * 8 + 5); w8(buf, cp+4, po2); cp = cp + 5;
                 } else {
-                    // 9+ float 参数在栈上（边缘场景，位置布局简化处理）
+                    // 9+ binary64 参数在栈上（边缘场景，位置布局简化处理）
                     caller_off := 16 + (pi - 6) * 8;
                     if g_opt_level >= 1 { caller_off = caller_off + 40; }
                     cp = cp + e2_sd_load(buf, cp, caller_off);

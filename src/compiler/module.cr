@@ -358,12 +358,12 @@ fn reg_so_funcs(index_content: string, so_name: string) {
             while str_len(pname) > 0 && load8(pname, 0) == 32 { pname = str_sub(pname, 1, str_len(pname)-1); }
             while str_len(pname) > 0 && load8(pname, str_len(pname)-1) == 32 { pname = str_sub(pname, 0, str_len(pname)-1); }
             if str_len(pname) > 0 && param_count < 8 {
-                // Encode type: int=0, string=1, float=2, bool=3, unit=4, other=5
+                // Encode type: int=0, string=1, unit=2, dex=3（binary64 跨 C 边界 = apx 授权）, bool=4, other=5
                 ptype_code : ., mut = 5;
                 if pname == "int" { ptype_code = 0; }
                 else if pname == "string" { ptype_code = 1; }
                 else if pname == "unit" { ptype_code = 2; }
-                else if pname == "float" || pname == "dex" { ptype_code = 3; }
+                else if pname == "dex" { ptype_code = 3; }
                 else if pname == "bool" { ptype_code = 4; }
                 // Decimal encoding: packed positionally
                 param_type_bits = param_type_bits * 100 + ptype_code;
@@ -377,7 +377,7 @@ fn reg_so_funcs(index_content: string, so_name: string) {
         if ret_type == "int" { ret_code = 0; }
         else if ret_type == "string" { ret_code = 1; }
         else if ret_type == "unit" || str_eq(ret_type, "") != 0 { ret_code = 2; }
-        else if ret_type == "float" || ret_type == "dex" { ret_code = 3; }
+        else if ret_type == "dex" { ret_code = 3; }
         else if ret_type == "bool" { ret_code = 4; }
         type_encoding : ., mut = param_count * 1000000000000 + param_type_bits * 100 + ret_code;
 

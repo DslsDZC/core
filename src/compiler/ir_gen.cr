@@ -297,7 +297,7 @@ fn ti_from_type_expr(node: int) -> int {
         ni := ast_int_val(node);
         name := istr_get(ni);
         if str_eq(name, "int") != 0 { return TI_INT; }
-        if str_eq(name, "float") != 0 || str_eq(name, "dex") != 0 { return TI_DEX; }
+        if str_eq(name, "dex") != 0 { return TI_DEX; }
         if str_eq(name, "bool") != 0 { return TI_BOOL; }
         if str_eq(name, "string") != 0 { return TI_STR; }
         if str_eq(name, "char") != 0 { return TI_CHAR; }
@@ -759,7 +759,7 @@ fn gen_expr(node: int) -> int {
             else if is_ptr_var(right_var) != 0 { fti = irv_type(right_var); }
         }
         // dex 运算分流（数值迁移 Task 4）：
-        //   有 TI_DEX（apx 形式）操作数 → binary64 快路径（SSE2，IEEE 754——现成 float 路径）
+        //   有 TI_DEX（apx 形式）操作数 → binary64 快路径（SSE2，IEEE 754——apx 标准答案）
         //   有 TI_DEX_S（定点形式）操作数 → 精确路径（缩放整数指令序列）
         if lt == TI_DEX || rt == TI_DEX {
             fti = TI_DEX;

@@ -98,7 +98,7 @@ fn gen_lookup_subst(name_ni: int) -> int {
 fn gen_base_type_tv(name_ni: int) -> int {
     s := istr_get(name_ni);
     if s == "int" { return TY_INT; }
-    if s == "float" || s == "dex" { return TY_DEX; }
+    if s == "dex" { return TY_DEX; }
     if s == "bool" { return TY_BOOL; }
     if s == "string" { return TY_STRING; }
     if s == "char" { return TY_CHAR; }

@@ -203,18 +203,18 @@
 
 ## 范围外附录：bootstrap/corec（Python 自举编译器，预扫范围外但构建关键）
 
-`build_selfhost_native.py` 用 bootstrap 编译 src/compiler——**bootstrap 目前不认识 `dex`**（无任何 dex 支持），且保留完整 float 实现（8 文件 22 处，2026-08-16 复查；口径 = 含大小写 float/FLOAT_LIT 的站点行数，type_checker.py:230 一行双命中计 1 处；小写 "float" grep 仅 19 行，FLOAT_LIT 专属 3 行）：
+`build_selfhost_native.py` 用 bootstrap 编译 src/compiler——**bootstrap 的 dex 支持已随 Task 2-5 同步落地**（2026-08-16 更新）：Task 3 认识 dex 类型名/字面量（base_types 含 'dex'、kind_map 'dex'、算术/比较规则 int|dex），Task 4 落地定点缩放语义（`Dex(int)` 值类 + `DEX_SCALE`，`Dex.__eq__` 对 float 期望值按缩放语义比较——测试期望值保持十进制语义），Task 5 移除 'float' 类型名别名（与自举侧同步拒绝 float）。
 
-- `bootstrap/corec/syntax/tokens.py:7`（`FLOAT_LIT = auto()` 枚举成员定义——FLOAT_LIT 全大写，大小写敏感 "float" grep 不命中，附录口径须含大小写，补列）
-- `bootstrap/corec/frontend/lexer.py:81/94/107-108`（is_float 字面量扫描 + FLOAT_LIT 令牌发射——108 为 `Token(TokenType.FLOAT_LIT, ...)`，全大写不命中 "float" grep，补列）
-- `bootstrap/corec/frontend/parser.py:24`（type_name lexeme）、`327`（base_types 集合）、`508-509`（FLOAT_LIT 分支检查 + float 字面量节点——508 为 `check(TokenType.FLOAT_LIT)`，补列）
-- `bootstrap/corec/frontend/type_checker.py:199`（kind_map）、`220-222`（float 算术 + 提升规则）、`230`（比较规则 int/float/string——补列）
-- `bootstrap/corec/frontend/ir_gen.py:165`（float 字面量）、`629/637`（kind_map）
-- `bootstrap/corec/ir/cir.py:42`（docstring）
-- `bootstrap/corec/backend/interpreter.py:28`（float 默认值 0.0）、`91-92`（float 常量）
-- `bootstrap/corec/backend/x86_64_stack_asm.py:145`（`isinstance(val, float)` float 常量发射）
+Task 5 迁移后 bootstrap 的 float 残留（均按分类表 `保留`/`dex,apx` 处理，不属移除项）：
 
-**处理建议**：Task 2（加 dex）必须同步在 bootstrap 落 dex 类型支持，否则自举断裂；bootstrap 自身实现 binary64 语义（Python float），按 `dex,apx` 同类处理（认识 dex 类型名、保留 binary64 实现 = apx 快路径参考实现）最贴契约——**需维护者确认后再纳入 Task 5 范围**。
+- `bootstrap/corec/syntax/tokens.py:7`（`FLOAT_LIT = auto()` 枚举成员——FLOAT_LIT 终结符保留，3.14 字面量在 dex 世界继续存在）
+- `bootstrap/corec/frontend/lexer.py:81/94/107-108`（is_float 字面量扫描 + FLOAT_LIT 令牌发射——字面量扫描机制保留）
+- `bootstrap/corec/frontend/parser.py:508-509`（FLOAT_LIT 分支检查 + dex 字面量节点——Task 5 后该分支产出 `Literal(..., 'dex')`，见 `_str_to_scaled`）
+- `bootstrap/corec/ir/cir.py:43`（docstring）
+- `bootstrap/corec/backend/x86_64_stack_asm.py:145`（`isinstance(val, float)`——Python float 值 = binary64 参考实现，apx 快路径）
+- `bootstrap/corec/ir/coreir.py:14-19`（`Dex.__eq__` 对 float 期望值比较——测试支撑，非编译器路径）
+
+bootstrap 内部类型名统一为 'dex'（type_checker/ir_gen/interpreter 的 kind_map、提升规则、默认值、常量发射）；'float' 仅存在于上述机制性保留点与历史 docstring。
 
 ## 完整性自检
 

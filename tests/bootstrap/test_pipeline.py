@@ -183,17 +183,17 @@ fn main() -> int {
 }
 ''', 3)
 
-# ── Float ──
-test('Float Add', '''
-fn main() -> float {
+# ── Dex ──
+test('Dex Add', '''
+fn main() -> dex {
     a := 3.14;
     b := 2.86;
     return a + b;
 }
 ''', 6.0)
 
-test('Int Float Mix', '''
-fn main() -> float {
+test('Int Dex Mix', '''
+fn main() -> dex {
     a := 2;
     b := 3.5;
     return a + b;

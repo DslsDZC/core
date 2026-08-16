@@ -81,8 +81,8 @@ fn parse_type() -> int {
         lex := tok_lx(t);
         advance_tok();
         if lex == "int" { res = alloc_node(0, 0, 0, 0, 0, TY_INT, 0, line, col); }
-        // dex = 精确小数；float 关键字并存期仍接受（移除是 Task 6），同属 TY_DEX
-        else if lex == "float" || lex == "dex" { res = alloc_node(0, 0, 0, 0, 0, TY_DEX, 0, line, col); }
+        // dex = 精确小数（float 类型名已移除——数值迁移 Task 5）
+        else if lex == "dex" { res = alloc_node(0, 0, 0, 0, 0, TY_DEX, 0, line, col); }
         else if lex == "bool" { res = alloc_node(0, 0, 0, 0, 0, TY_BOOL, 0, line, col); }
         else if lex == "string" { res = alloc_node(0, 0, 0, 0, 0, TY_STRING, 0, line, col); }
         else if lex == "char" { res = alloc_node(0, 0, 0, 0, 0, TY_CHAR, 0, line, col); }

@@ -905,7 +905,7 @@ fn analysis_kind_type(k: int) -> int {
 // 名字是否为内置类型名（parser.cr parse_type 的 T_IDENT 分支字面量清单）
 fn analysis_is_builtin_type(ni: int) -> int {
     s := istr_get(ni);
-    if str_eq(s, "int") != 0 || str_eq(s, "float") != 0 || str_eq(s, "dex") != 0 ||
+    if str_eq(s, "int") != 0 || str_eq(s, "dex") != 0 ||
        str_eq(s, "bool") != 0 || str_eq(s, "string") != 0 ||
        str_eq(s, "char") != 0 || str_eq(s, "never") != 0 ||
        str_eq(s, "dyn") != 0 { return 1; }

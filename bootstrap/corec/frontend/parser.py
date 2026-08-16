@@ -357,15 +357,13 @@ class Parser:
                 mut = True
                 self.advance()
             return RefType(mut, self.parse_type())
-        # dex = 精确小数（数值迁移 Task 3）；'float' 并存期仍接受，映射到同一 dex 类型
-        # （float 关键字移除是 Task 6，bootstrap 内部类型名已迁 'dex'）
+        # dex = 精确小数（数值迁移 Task 5：float 类型名已移除，与自举侧同步）
         base_types = {'int','dex','bool','string','char','unit','never'}
         if self.check(TokenType.SELF_TYPE):
             self.advance()
             return BaseType('Self')
-        if self.check(TokenType.IDENT) and (self.cur().lexeme in base_types or self.cur().lexeme == 'float'):
-            lex = self.advance().lexeme
-            return BaseType('dex' if lex == 'float' else lex)
+        if self.check(TokenType.IDENT) and self.cur().lexeme in base_types:
+            return BaseType(self.advance().lexeme)
         if self.check(TokenType.UNIT):
             self.advance()
             return BaseType('unit')
