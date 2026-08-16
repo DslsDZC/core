@@ -210,6 +210,14 @@ fn ir_interpret() -> int {
         // IR_APPROX — pure annotation, skip（无运算语义，不能崩）
         if op == 51 { ip = ip + 1; continue; }
 
+        // IR_I2F(49) / IR_F2I(50)——int↔binary64 转换：解释器无 binary64 语义
+        // （数值迁移 Task 6 定稿）。apx dex 运算必然经过 bits↔缩放转换（打印/边界），
+        // 此处显式报错替代静默跳过——跳过会让目的槽残留 0/脏值，后续除法可能 SIGFPE。
+        if op == 49 || op == 50 {
+            println("interpreter error: IR_I2F/IR_F2I needs binary64 semantics (apx dex) — `corec run` cannot execute apx dex arithmetic; build & run natively (corec build) instead");
+            return -1;
+        }
+
         // IR_STORE_PTR
         if op == 26 { if d >= 0 && s1 >= 0 { w64(g_ir_vals, s1 * 8, r64(g_ir_vals, d * 8)); } }
 

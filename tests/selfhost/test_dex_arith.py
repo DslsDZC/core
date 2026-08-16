@@ -1,17 +1,24 @@
 #!/usr/bin/env python3
-"""dex 精确运算测试（自举编译器 build/corec）—— 数值迁移 Task 4。
+"""dex 精确运算测试（自举编译器 build/corec）—— 数值迁移 Task 4/6。
 
 定点缩放语义（S = 10^6）：
 - 无 apx：dex 运算 = 缩放整数精确算术（0.1+0.2==0.3、3.14+2.86==6.0、1/10 打印 "0.1"）
-- 有 apx：dex 运算 = binary64 快路径（现成 float 路径——0.1b+0.2b != 0.3b）
+- 有 apx：dex 运算 = binary64 快路径（现成 float 路径——binary64 行为，以 1/3 判别子断言）
 - 字面量 3.14 → 缩放整数 3140000（cir dump 证据）
 - 打印：缩放整数 → 十进制（去尾零）
 
 断言点：
 - ELF 端到端：精确断言全过（dex_test.cr 思路的主函数内联版）
-- apx 分流：同程序带 apx → binary64 行为（z == 0.3 为假）；不带 apx → 精确（为真）
+- apx 分流：同程序带 apx → binary64 行为（1.0b/3.0b != 0.3333333）；不带 apx → 精确（为真）
+- apx 打印（Task 6 定稿）：6 位定点舍入（半进）——0.1 → "0.1"、1/3 → "0.333333"、1.0000006 → "1.000001"
+- `corec run` 解释器：精确运算结果正确；apx dex 显式报错（无 binary64 语义，Task 6）
 - cir dump：`const dex = 3140000`（精确字面量 = 缩放整数，非二进制位模式）
-- `corec run` 解释器：精确运算结果正确
+
+文档化限制（Task 6 发现）：经典 binary64 演示「0.1b+0.2b != 0.3」在本实现不成立——
+str_to_f64_bits 字面量转换按 ~2ulp 截断（lexer.cr 注释），0.1/0.2 各低 1ulp 后相加
+恰好落在 0.3 的位模式上。该限制属 apx 快路径字面量转换（保留站点，非回归）；
+binary64 行为断言以 1/3 判别子（APX_SRC）为准——±2ulp 字面量误差下依然鲁棒
+（缩放 333333 vs 3333333 差三个数量级）。
 """
 
 import os
@@ -120,6 +127,29 @@ MOD_SRC = (
     "    if c != 0.1 { return 3; }\n"
     "    d := -1.0 % 0.3;\n"
     "    if d != -0.1 { return 4; }\n"
+    "    return 0;\n"
+    "}\n"
+)
+
+# apx 打印定稿（Task 6）：apx 变量经 dex_str 打印 = 6 位定点舍入（四舍五入半进，
+# bits→scaled 转换舍入而非截断）——用户写 0.1 打印 "0.1"（非全精度、非截断 "0.099999"）。
+# 判别点：u = 1.0000006 → bits×1e6 ≈ 1000000.6 → 舍入 1000001（"1.000001"）；
+# 截断实现会得 1000000（"1"）。负半进：-0.5 → -1。
+APX_PRINT_SRC = (
+    "import io\n"
+    "import fmt\n"
+    "import dex\n"
+    "fn main() -> int {\n"
+    "    w : dex, apx = 0.1;\n"
+    "    if !str_eq(dex_str(w), \"0.1\") { return 1; }\n"
+    "    x : dex, apx = 1.0;\n"
+    "    y : dex, apx = 3.0;\n"
+    "    if !str_eq(dex_str(x / y), \"0.333333\") { return 2; }\n"
+    "    u : dex, apx = 1.0000006;\n"
+    "    if !str_eq(dex_str(u), \"1.000001\") { return 3; }\n"
+    "    n : dex, apx = 0.1;\n"
+    "    v : dex, apx = 0.0 - n;\n"
+    "    if !str_eq(dex_str(v), \"-0.1\") { return 4; }\n"
     "    return 0;\n"
     "}\n"
 )
@@ -248,6 +278,38 @@ def test_apx_cross_fn_boundary():
     return True
 
 
+def test_apx_print_rounding():
+    # Task 6 定稿：apx 打印 = 6 位定点舍入（半进）——0.1 → "0.1"（截断会得
+    # "0.099999"）、1.0/3.0 → "0.333333"、1.0000006 → "1.000001"（截断得 "1"）、
+    # -0.1 → "-0.1"（负半进）
+    code, out = build_run_exit(APX_PRINT_SRC)
+    if code != 0:
+        print(f"[FAIL] apx print rounding: exit={code} (expected 0: 6-digit round-half-away)")
+        print(out)
+        return False
+    print("[PASS] apx print = 6-digit rounding (0.1->'0.1', 1/3->'0.333333', 1.0000006->'1.000001', -0.1->'-0.1')")
+    return True
+
+
+def test_interp_rejects_apx_dex():
+    # Task 6：解释器无 binary64 语义——apx dex 运算（必经 I2F/F2I 转换）显式报错，
+    # 替代静默跳过/脏值（SIGFPE 防护）。exit != 0 且消息含 "binary64"。
+    src = "fn main() -> int { x : dex, apx = 0.1; return @raw_int(x); }"
+    r = subprocess.run(
+        [str(COREC), "run", src],
+        cwd=BASE,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if r.returncode == 0 or "binary64" not in (r.stdout + r.stderr):
+        print(f"[FAIL] interp should reject apx dex: exit={r.returncode}")
+        print(r.stdout + r.stderr)
+        return False
+    print(f"[PASS] interp rejects apx dex with explicit error (exit={r.returncode})")
+    return True
+
+
 def main():
     if not COREC.exists():
         print(f"[FAIL] missing native compiler: {COREC}")
@@ -260,6 +322,8 @@ def main():
         test_let_apx_to_exact_boundary(),
         test_dex_mod_trunc_identity(),
         test_apx_cross_fn_boundary(),
+        test_apx_print_rounding(),
+        test_interp_rejects_apx_dex(),
     ]
     passed = sum(results)
     print(f"{passed}/{len(results)} passed")

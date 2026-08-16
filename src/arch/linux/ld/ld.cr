@@ -367,7 +367,7 @@ fn ctx_emit_dyn(buf: string, path: string) -> int {
         total := r64(g_ch_vaddr, (g_ch_count - 1) * 8) + r64(g_ch_size, (g_ch_count - 1) * 8) - g_text_base;
      println(int_str(total));
     emit(buf, total, 0);
-        fd := syscall3(2, path, 577, 420);
+        fd := syscall3(2, path, 577, 493);  // 0755：ELF 输出必须可执行（Task 6 修复 0644 怪癖）
     if fd < 0 { return -1; }
     nw := syscall3(1, fd, buf, total);
     syscall3(3, fd, 0, 0);
@@ -380,7 +380,7 @@ fn ctx_emit_so(buf: string, path: string) -> int {
     layout();
     total := r64(g_ch_vaddr, (g_ch_count - 1) * 8) + r64(g_ch_size, (g_ch_count - 1) * 8) - g_text_base;
     emit(buf, total, 1);
-    fd := syscall3(2, path, 577, 420);
+    fd := syscall3(2, path, 577, 493);  // 0755：ELF 输出必须可执行（Task 6 修复 0644 怪癖）
     if fd < 0 { return -1; }
     nw := syscall3(1, fd, buf, total);
     syscall3(3, fd, 0, 0);
@@ -470,7 +470,7 @@ fn ctx_emit_static(buf: string, path: string) -> int {
     w64(buf,96,total);w64(buf,104,total);
     w64(buf,112,4096);
 
-    fd := syscall3(2, path, 577, 420);
+    fd := syscall3(2, path, 577, 493);  // 0755：ELF 输出必须可执行（Task 6 修复 0644 怪癖）
     if fd < 0 { return -1; }
     nw := syscall3(1, fd, buf, total);
     syscall3(3, fd, 0, 0);

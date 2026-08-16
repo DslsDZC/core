@@ -479,15 +479,40 @@ fn force_if_thunk(var_idx: int) -> int {
 // 否则 → 定点整数指令序列）；存储/边界处按槽位形式转换（apx 结果在边界按定点
 // 6 位截断/舍入——「精确，或经授权的近似」契约的兑现）。
 
-// bits（TI_DEX）→ 缩放整数（TI_DEX_S）：F2I(bits × S)
+// bits（TI_DEX）→ 缩放整数（TI_DEX_S）：round(bits × S)——6 位定点舍入（四舍五入
+// 半进，数值迁移 Task 6 定稿：apx 打印/边界行为 = 6 位定点舍入，非截断、非全精度
+// binary64）。实现：F2I 本身向零截断——正数先 +0.5、负数先 −0.5（分支按 m < 0 分流，
+// 与字面量 str_to_scaled 的半进一致；半进 = 绝对值半上，-0.5 → -1）。此舍入同时吸收
+// str_to_f64_bits 字面量转换的 ~2ulp 截断误差（打印/边界 6 位精度下不可见）。
 fn dex_bits_to_scaled(var: int) -> int {
     if irv_type(var) != TI_DEX { return var; }
     c := new_ir_var("_dxs", TI_DEX);
     emit(IR_CONST, c, 4696837146684686336, 0, 0, TI_DEX);  // 1e6 的 binary64 位模式
     m := new_ir_var("_dxm", TI_DEX);
     emit(IR_BINARY, m, var, c, OP_MUL, TI_DEX);
+    zero := new_ir_var("_dx0", TI_DEX);
+    emit(IR_CONST, zero, 0, 0, 0, TI_DEX);
+    negc := new_ir_var("_dxc", TI_INT);
+    emit(IR_BINARY, negc, m, zero, OP_LT, TI_DEX);  // m < 0 → int 0/1（comisd 路径）
+    half := new_ir_var("_dxh", TI_DEX);
+    emit(IR_CONST, half, 4602678819172646912, 0, 0, TI_DEX);  // 0.5 的 binary64 位模式（0x3FE0000000000000）
+    pos_lbl := new_label();
+    neg_lbl := new_label();
+    merge_lbl := new_label();
+    mrg := new_ir_var("_dxmrg", TI_DEX);
+    emit(IR_BRANCH, -1, negc, neg_lbl, pos_lbl, 0);
+    emit(IR_LABEL, -1, pos_lbl, 0, 0, 0);
+    rp := new_ir_var("_dxrp", TI_DEX);
+    emit(IR_BINARY, rp, m, half, OP_ADD, TI_DEX);  // m ≥ 0：+0.5
+    emit(IR_STORE, -1, mrg, rp, 0, 0);
+    emit(IR_JUMP, -1, merge_lbl, 0, 0, 0);
+    emit(IR_LABEL, -1, neg_lbl, 0, 0, 0);
+    rn := new_ir_var("_dxrn", TI_DEX);
+    emit(IR_BINARY, rn, m, half, OP_SUB, TI_DEX);  // m < 0：−0.5
+    emit(IR_STORE, -1, mrg, rn, 0, 0);
+    emit(IR_LABEL, -1, merge_lbl, 0, 0, 0);
     r := new_ir_var("_dxsc", TI_DEX_S);
-    emit(IR_F2I, r, m, 0, 0, TI_DEX);
+    emit(IR_F2I, r, mrg, 0, 0, TI_DEX);
     return r;
 }
 
