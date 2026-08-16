@@ -481,8 +481,10 @@ fn analysis_definition(line: int, col: int) -> string {
 // 位置 → 前缀（光标前最近标识符；@ 后为 @ 内建上下文）→ 候选过滤 → JSON。
 // 候选来源（唯一真源）：lexer.cr lookup_keyword() 关键字、checker.cr
 // EXPR_AT 分发 14 个 @ 内建 + parser.cr @ffi、g_syms（函数/全局/类型）、
-// g_funcs / g_structs / g_enums。kind 按 brief：Keyword=14 / Function=3 /
-// Variable=6 / Struct=23 / Enum=23。
+// g_funcs / g_structs / g_enums。kind 为 LSP CompletionItemKind 规范值
+// （1-based）：Keyword=14 / Function=3 / Variable=6 / Struct=22 / Enum=13。
+// （Task 5 brief 数字有误——23 实为 Event；终审按规范修正，客户端平移
+// -1 得 VS Code 0-based 值。）
 //
 // 注意：前缀直接回扫快照 g_source（不依赖令牌——半截标识符不成令牌）；
 // 与 hover/definition 同为「最后一次成功检查的快照」语义。
@@ -636,12 +638,12 @@ fn analysis_cand_add(cand: string, count: int, ni: int, kind: int) -> int {
     return 1;
 }
 
-// SYM_* 种类 → CompletionItemKind（FN/SO_FN→3 函数、GLOBAL/LOCAL/PARAM→6
-// 变量、TYPE→23 结构体、MODULE→9 模块）
+// SYM_* 种类 → CompletionItemKind 规范值（FN/SO_FN→3 函数、
+// GLOBAL/LOCAL/PARAM→6 变量、TYPE→22 结构体、MODULE→9 模块）
 fn analysis_sym_item_kind(sk: int) -> int {
     if sk == SYM_FN || sk == SYM_SO_FN { return 3; }
     if sk == SYM_GLOBAL || sk == SYM_LOCAL || sk == SYM_PARAM { return 6; }
-    if sk == SYM_TYPE { return 23; }
+    if sk == SYM_TYPE { return 22; }
     return 9;
 }
 
@@ -666,7 +668,11 @@ fn analysis_completion(line: int, col: int) -> string {
         i : ., mut = 0;
         loop {
             if i >= g_sym_count { break; }
-            cnt = cnt + analysis_cand_add(cand, cnt, sym_name(i), analysis_sym_item_kind(sym_kind(i)));
+            kk : ., mut = analysis_sym_item_kind(sym_kind(i));
+            // SYM_TYPE 混装结构体/枚举/接口（collect_decls 统一注册）——
+            // 枚举按名字区分（g_enums 快照），发 Enum=13；否则按结构体 22
+            if sym_kind(i) == SYM_TYPE && find_enum(sym_name(i)) >= 0 { kk = 13; }
+            cnt = cnt + analysis_cand_add(cand, cnt, sym_name(i), kk);
             i = i + 1;
         }
         i = 0;
@@ -678,13 +684,13 @@ fn analysis_completion(line: int, col: int) -> string {
         i = 0;
         loop {
             if i >= g_struct_count { break; }
-            cnt = cnt + analysis_cand_add(cand, cnt, si_name(i), 23);
+            cnt = cnt + analysis_cand_add(cand, cnt, si_name(i), 22);   // Struct
             i = i + 1;
         }
         i = 0;
         loop {
             if i >= g_enum_count { break; }
-            cnt = cnt + analysis_cand_add(cand, cnt, ei_name(i), 23);
+            cnt = cnt + analysis_cand_add(cand, cnt, ei_name(i), 13);   // Enum
             i = i + 1;
         }
         j : ., mut = 0;
@@ -772,7 +778,8 @@ fn analysis_document_symbol() -> string {
             ln := r64(g_tokens, d * ESZ_TOKEN + OFF_TK_LINE);
             if analysis_line_offset(ln) == 0 {
                 w64(ent, cnt * 32, ni);
-                w64(ent, cnt * 32 + 8, 23);    // SymbolKind.Enum = 23（按 brief）
+                w64(ent, cnt * 32 + 8, 10);    // SymbolKind.Enum = 10（LSP 规范；
+                                               // Task 5 brief 误为 23）
                 w64(ent, cnt * 32 + 16, ln);
                 w64(ent, cnt * 32 + 24, r64(g_tokens, d * ESZ_TOKEN + OFF_TK_COL));
                 cnt = cnt + 1;
@@ -848,8 +855,8 @@ fn analysis_document_symbol() -> string {
 //
 // tokenType 映射表（token kind → legend 下标；legend 在 rpc.cr
 // rpc_send_initialize 声明，顺序必须与这里一致）：
-//   keyword  (0): T_FN T_MUT T_IF T_ELSE T_LOOP T_FOR T_IN T_RETURN
-//                 T_BREAK T_CONTINUE T_STRUCT T_ENUM T_IMPL T_PUB
+//   keyword  (0): T_FN T_MUT T_IF T_ELSE T_LOOP T_WHILE T_FOR T_IN
+//                 T_RETURN T_BREAK T_CONTINUE T_STRUCT T_ENUM T_IMPL T_PUB
 //                 T_TRUE T_FALSE T_MOVE T_SELF T_MATCH T_TYPE T_MOD
 //                 T_IMPORT T_AS T_GO T_AWAIT T_FLOW T_YIELD T_UNSAFE
 //                 T_INTERFACE T_AUTO T_FILEID T_NONE T_SOME T_EXTERN
@@ -876,7 +883,8 @@ fn analysis_document_symbol() -> string {
 // kind → legend 下标；T_IDENT 返回 -1（需按名字分类，见 analysis_token_type）
 fn analysis_kind_type(k: int) -> int {
     if k == T_FN || k == T_MUT || k == T_IF || k == T_ELSE || k == T_LOOP ||
-       k == T_FOR || k == T_IN || k == T_RETURN || k == T_BREAK ||
+       k == T_WHILE || k == T_FOR || k == T_IN || k == T_RETURN ||
+       k == T_BREAK ||
        k == T_CONTINUE || k == T_STRUCT || k == T_ENUM || k == T_IMPL ||
        k == T_PUB || k == T_TRUE || k == T_FALSE || k == T_MOVE ||
        k == T_SELF || k == T_MATCH || k == T_TYPE || k == T_MOD ||
@@ -1033,9 +1041,20 @@ fn analysis_semantic_tokens() -> string {
             line0 : ., mut = r64(g_tokens, j * ESZ_TOKEN + OFF_TK_LINE) - 1;
             col0 : ., mut = r64(g_tokens, j * ESZ_TOKEN + OFF_TK_COL) - 1;
             if first == 0 { out = out + ","; }
-            out = out + int_str(line0 - prev_line);
-            out = out + ",";
-            out = out + int_str(col0 - prev_col);
+            if line0 > prev_line {
+                // 跨行令牌：deltaStartChar 为绝对列（LSP 差分编码规范——
+                // deltaLine > 0 时列非相对差）。旧实现恒输出 col0 - prev_col，
+                // 跨行令牌产生负 deltaStartChar，客户端解码得到非法列。
+                // （Task 6 测试用单行源码，跨行路径未被覆盖——Task 8 客户端
+                // 冒烟测试暴露，已补多行用例。）
+                out = out + int_str(line0 - prev_line);
+                out = out + ",";
+                out = out + int_str(col0);
+            } else {
+                out = out + "0";
+                out = out + ",";
+                out = out + int_str(col0 - prev_col);
+            }
             out = out + ",";
             out = out + int_str(analysis_tok_span(j, st, sl));
             out = out + ",";
