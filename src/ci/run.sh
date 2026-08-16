@@ -56,6 +56,7 @@ case "$CI_JOB_NAME" in
     ;;
 
   selfhost-tests)
+    build_selfhost
     python3 tests/selfhost/test_compile.py
     python3 tests/selfhost/test_impl.py
     python3 tests/selfhost/test_borrow.py
