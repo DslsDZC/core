@@ -106,7 +106,7 @@ Expected: apx 测试全绿；test_compile 回归绿；自举构建成功（编�
 - [ ] **Step 5: 提交**
 
 ```bash
-cd /home/DslsDZC/core && jj commit -m "lsp: apx 标签机制——变量标签 + IR_APPROX 注解（新功能，迁移前置）" src/compiler/ tests/selfhost/test_apx_tag.py
+cd /home/DslsDZC/core && jj commit -m "core: apx 标签机制——变量标签 + IR_APPROX 注解（新功能，迁移前置）" src/compiler/ tests/selfhost/test_apx_tag.py
 ```
 
 ---
