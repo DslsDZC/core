@@ -53,7 +53,7 @@ vim.keymap.set('n', 'gd', vim.lsp.buf.definition, { buffer = 0 })
 
 - **诊断**：nvim 自动接收 `publishDiagnostics` 并显示（`vim.diagnostic`），无需额外配置。
 - **补全**：`vim.lsp.buf.completion`（`<C-x><C-o>`），或 blink.cmp / nvim-cmp 等补全框架自动接入 LSP source。服务器补全为 `@` 触发（`triggerCharacters: ["@"]`）。
-- **语义着色**：nvim 0.10+ 自动请求语义令牌；需 colorscheme 支持 `@keyword` 等标准高亮组（或 `:SemanticTokensEnable` 强制开启）。
+- **语义着色**：nvim 0.10+ 语义令牌默认开启（不存在 `:SemanticTokensEnable` 命令，无需配置）；如需高亮，需 colorscheme 将 `@lsp.type.*` 链接到 `@keyword` 等高亮组。
 - **与既有 compiler 插件互斥**：`editor/nvim/plugin/core.lua`（基于 `corec` 编译器的诊断/跳转）与 LSP 功能重叠——启用 LSP 时建议移除该插件，避免诊断与键位重复。
 - 安装语法高亮/文件类型检测等基础配置见 `editor/README.md`。
 

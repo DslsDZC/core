@@ -158,7 +158,9 @@ def test_completion_and_document_symbol():
     labels = {it["label"]: it["kind"] for it in r["result"]["items"]}
     assert labels["fn"] == 14, r
     assert labels["add"] == 3 and labels["main"] == 3, r
-    assert labels["Point"] == 23 and labels["Color"] == 23, r
+    # kind 为 LSP CompletionItemKind 规范值：Keyword=14/Function=3/
+    # Struct=22/Enum=13（终审修正；Task 5 brief 误为 23）
+    assert labels["Point"] == 22 and labels["Color"] == 13, r
     # 符号候选前缀过滤（大小写不敏感）：line 9 的 "po"（character 6）→ 仅 Point
     r = send(proc, {"jsonrpc": "2.0", "id": 3, "method": "textDocument/completion",
                     "params": {"textDocument": {"uri": uri},
@@ -190,7 +192,9 @@ def test_completion_and_document_symbol():
     assert [s["name"] for s in syms] == ["add", "Point", "Color", "main"], r
     kinds = {s["name"]: s["kind"] for s in syms}
     assert kinds["add"] == 12 and kinds["main"] == 12, r
-    assert kinds["Point"] == 23 and kinds["Color"] == 23, r
+    # documentSymbol kind 为 LSP SymbolKind 规范值：Function=12/Struct=23/
+    # Enum=10（终审修正；Task 5 brief 误为 23）
+    assert kinds["Point"] == 23 and kinds["Color"] == 10, r
     shutdown_and_wait(proc)
 
 def test_semantic_tokens():

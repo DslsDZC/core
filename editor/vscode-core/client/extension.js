@@ -41,6 +41,14 @@ class RpcConnection {
     child.stdout.on('data', (d) => this._onData(d));
     child.on('error', () => { this.closed = true; });
     child.on('exit', () => { this.closed = true; });
+    // stdin EPIPE 竞态：服务器死亡瞬间，在途请求的 write 可能触发 EPIPE
+    // ——Node 对无监听器的 'error' 事件会抛未捕获异常，击穿 extension host。
+    // EPIPE 即服务器已退出的正常信号：吞掉并置 closed（后续请求快速失败
+    // 返回 "corelsp 未运行"）；其余 stdin 错误记录后同样按已关闭处理。
+    child.stdin.on('error', (e) => {
+      this.closed = true;
+      if (!e || e.code !== 'EPIPE') { console.error('corelsp stdin error:', e); }
+    });
   }
 
   // 发起请求（数字 id）；服务器从不回错误响应以外的失败帧，超时兜底
@@ -257,11 +265,14 @@ async function activate(context) {
             context: {},
           });
           if (!r || !r.items) { return []; }
+          // LSP CompletionItemKind 为 1-based，VS Code 枚举为 0-based，
+          // 需平移 -1（如 Struct 22 → 21、Enum 13 → 12）；越界兜底 Text。
           return r.items.map((it) => {
             const item = new vscode.CompletionItem(it.label);
             if (typeof it.kind === 'number') {
-              item.kind = vscode.CompletionItemKind[it.kind] !== undefined
-                ? it.kind : vscode.CompletionItemKind.Text;
+              const k = it.kind - 1;
+              item.kind = vscode.CompletionItemKind[k] !== undefined
+                ? k : vscode.CompletionItemKind.Text;
             }
             return item;
           });
@@ -281,10 +292,13 @@ async function activate(context) {
             const sel = s.selectionRange ? new vscode.Range(
               s.selectionRange.start.line, s.selectionRange.start.character,
               s.selectionRange.end.line, s.selectionRange.end.character) : range;
+            // LSP SymbolKind 为 1-based，VS Code 枚举为 0-based，
+            // 需平移 -1（如 Enum 10 → 9、Struct 23 → 22）。
+            const k = typeof s.kind === 'number'
+              ? s.kind - 1 : vscode.SymbolKind.Variable;
             return new vscode.DocumentSymbol(s.name,
               typeof s.detail === 'string' ? s.detail : '',
-              s.kind !== undefined ? s.kind : vscode.SymbolKind.Variable,
-              range, sel);
+              k, range, sel);
           };
           return r.map(toSym);
         } catch { return []; }
