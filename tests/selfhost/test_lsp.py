@@ -1,4 +1,19 @@
-import json, subprocess, sys, time
+#!/usr/bin/env python3
+# test_lsp.py — corelsp 集成测试套件（Task 1-6 功能 + Task 7 统一驱动）
+#
+# 组织方式（Task 7 统一驱动）：七组测试按序执行，每组独立 spawn corelsp
+# （隔离全局状态——corelsp 是单文档全局状态机，跨组复用会串状态）：
+#   1. lifecycle                    — initialize/initialized/未知方法/shutdown/exit
+#   2. jsonrpc error codes          — initialize 前请求 → -32602
+#   3. diagnostics + reset          — didOpen 好/坏文件，发布诊断 + 幽灵诊断回归
+#   4. hover + definition           — 语义查询（声明定位）
+#   5. completion + documentSymbol  — 候选/前缀过滤/@ 内建/符号表
+#   6. semanticTokens/full          — 差分编码令牌流
+#   7. stdout 污染守卫              — 原始字节流严格帧扫描，0 脏字节
+#
+# 结尾打印 "lsp suite: ALL PASS (N tests)"；任一失败 → 打印 FAIL 行并非零退出。
+
+import json, re, subprocess, sys
 
 BIN = "build/corelsp"
 
@@ -19,6 +34,17 @@ def send(proc, msg: dict) -> dict:
     proc.stdin.write(f"Content-Length: {len(body)}\r\n\r\n".encode() + body)
     proc.stdin.flush()
     return read_frame(proc)
+
+def raw_send(proc, msg: dict):
+    """写一帧但不读（用于通知——didOpen 等会先产生别的帧）"""
+    body = json.dumps(msg).encode()
+    proc.stdin.write(f"Content-Length: {len(body)}\r\n\r\n".encode() + body)
+    proc.stdin.flush()
+
+def shutdown_and_wait(proc):
+    send(proc, {"jsonrpc": "2.0", "id": 9, "method": "shutdown"})
+    proc.stdin.close()
+    proc.wait(timeout=5)
 
 def test_lifecycle():
     proc = subprocess.Popen([BIN], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
@@ -42,9 +68,6 @@ def test_jsonrpc_error_codes():
     r = send(proc, {"jsonrpc": "2.0", "id": 11, "method": "shutdown"})
     proc.stdin.close(); proc.wait(timeout=5)
 
-SAMPLE = 'fn main() -> int { return 42; }'
-BAD = 'fn main() -> int { return ; }'
-
 def test_diagnostics_and_reset():
     proc = subprocess.Popen([BIN], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
     send(proc, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
@@ -64,8 +87,7 @@ def test_diagnostics_and_reset():
     # 重置回归：改坏 → 诊断必须更新（抓幽灵诊断）
     r = open_doc(BAD)
     assert r["params"]["diagnostics"] != [], r
-    send(proc, {"jsonrpc": "2.0", "id": 9, "method": "shutdown"})
-    proc.stdin.close(); proc.wait(timeout=5)
+    shutdown_and_wait(proc)
 
 def test_hover_and_definition():
     proc = subprocess.Popen([BIN], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
@@ -99,8 +121,7 @@ def test_hover_and_definition():
                                "position": {"line": 5, "character": 10}}})
     assert r["result"]["uri"] == uri, r
     assert r["result"]["range"]["start"]["line"] == 0, r
-    send(proc, {"jsonrpc": "2.0", "id": 9, "method": "shutdown"})
-    proc.stdin.close(); proc.wait(timeout=5)
+    shutdown_and_wait(proc)
 
 def test_completion_and_document_symbol():
     proc = subprocess.Popen([BIN], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
@@ -170,8 +191,7 @@ def test_completion_and_document_symbol():
     kinds = {s["name"]: s["kind"] for s in syms}
     assert kinds["add"] == 12 and kinds["main"] == 12, r
     assert kinds["Point"] == 23 and kinds["Color"] == 23, r
-    send(proc, {"jsonrpc": "2.0", "id": 9, "method": "shutdown"})
-    proc.stdin.close(); proc.wait(timeout=5)
+    shutdown_and_wait(proc)
 
 def test_semantic_tokens():
     proc = subprocess.Popen([BIN], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
@@ -214,14 +234,92 @@ def test_semantic_tokens():
     assert toks[8] == (0, 26, 2, 7), toks
     assert toks[9] == (0, 28, 1, 6), toks
     assert toks[10] == (0, 30, 1, 6), toks
-    send(proc, {"jsonrpc": "2.0", "id": 9, "method": "shutdown"})
-    proc.stdin.close(); proc.wait(timeout=5)
+    shutdown_and_wait(proc)
+
+# ── 第 7 组：stdout 污染守卫 ────────────────────────────────────────────────
+# 背景（Task 3 Fix 1）：res_imports 的加载进度/失败/toML 警告曾直接 print 到
+# stdout，污染 LSP 帧协议通道（严格客户端无法解析）。修复为 g_silent_stdout
+# 门控后，本组做协议卫生回归：完整 didOpen 流程的原始 stdout 字节流必须
+# 逐字节全部落在合法帧内（0 脏字节），且不含进度/失败/警告标记。
+# （原 pollution_check.py 工作副本脚本，Task 7 并入本套件）
+
+def test_stdout_pollution_guard():
+    proc = subprocess.Popen([BIN], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    raw_send(proc, {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                    "params": {"capabilities": {}}})
+    raw_send(proc, {"jsonrpc": "2.0", "method": "initialized", "params": {}})
+    uri = "file:///tmp/pollution_check.cr"
+    for text in (SAMPLE, BAD):
+        raw_send(proc, {"jsonrpc": "2.0", "method": "textDocument/didOpen",
+                        "params": {"textDocument": {"uri": uri, "version": 1,
+                                                    "text": text}}})
+    raw_send(proc, {"jsonrpc": "2.0", "id": 9, "method": "shutdown"})
+    raw_send(proc, {"jsonrpc": "2.0", "method": "exit"})
+    proc.stdin.close()
+    data = proc.stdout.read()
+    assert proc.wait(timeout=5) == 0
+    # 1) 污染标记：无加载进度 '->'、无 '!! import fail'、无 'warning:'
+    for marker in (b"->", b"!! import fail", b"warning:"):
+        assert marker not in data, f"stdout contains marker {marker!r}: {data!r}"
+    # 2) 严格帧扫描：每个字节都必须属于 Content-Length 帧 + 合法 JSON 体；
+    #    帧前/帧间/帧后任何脏字节即断言失败（VS Code 严格客户端解析标准）
+    frames = []
+    i = 0
+    while i < len(data):
+        m = re.match(rb"Content-Length: (\d+)\r\n\r\n", data[i:])
+        assert m, f"dirty bytes at offset {i}: {data[i:i+60]!r}"
+        n = int(m.group(1))
+        start = i + m.end()
+        body = data[start:start + n]
+        assert len(body) == n, f"truncated frame body at offset {start}"
+        json.loads(body)  # 必须可解析为合法 JSON
+        frames.append(body)
+        i = start + n
+    assert len(frames) == 5, frames   # init 响应 + initialized ack + 好/坏文件
+    #                               # publishDiagnostics ×2 + shutdown 响应
+    # 3) 帧形状抽查：好文件空诊断 / 坏文件非空诊断（与 test_diagnostics_and_reset
+    #    互补——那边走 lenient 读取，这边证明帧本身结构健全）
+    pub_good = json.loads(frames[2])
+    pub_bad = json.loads(frames[3])
+    assert pub_good["method"] == "textDocument/publishDiagnostics", pub_good
+    assert pub_good["params"]["diagnostics"] == [], pub_good
+    assert pub_bad["method"] == "textDocument/publishDiagnostics", pub_bad
+    assert pub_bad["params"]["diagnostics"] != [], pub_bad
+    print(f"  POLLUTION CHECK: {len(frames)} frames, 0 dirty bytes, "
+          f"{len(data)} bytes")
+
+# ── 统一驱动（Task 7）───────────────────────────────────────────────────────
+# 按序执行全部测试组（每组独立 spawn，隔离全局状态）；失败即非零退出。
+
+TESTS = [
+    test_lifecycle,
+    test_jsonrpc_error_codes,
+    test_diagnostics_and_reset,
+    test_hover_and_definition,
+    test_completion_and_document_symbol,
+    test_semantic_tokens,
+    test_stdout_pollution_guard,
+]
+
+def main() -> int:
+    failures = []
+    for fn in TESTS:
+        try:
+            fn()
+            print(f"  PASS {fn.__name__}")
+        except Exception as e:
+            failures.append((fn.__name__, e))
+            print(f"  FAIL {fn.__name__}: {e!r}")
+    if failures:
+        for name, e in failures:
+            print(f"FAILED: {name}: {e!r}")
+        print(f"lsp suite: FAIL ({len(failures)}/{len(TESTS)} tests failed)")
+        return 1
+    print(f"lsp suite: ALL PASS ({len(TESTS)} tests)")
+    return 0
+
+SAMPLE = 'fn main() -> int { return 42; }'
+BAD = 'fn main() -> int { return ; }'
 
 if __name__ == "__main__":
-    test_lifecycle()
-    test_jsonrpc_error_codes()
-    test_diagnostics_and_reset()
-    test_hover_and_definition()
-    test_completion_and_document_symbol()
-    test_semantic_tokens()
-    print("lsp lifecycle: ALL PASS")
+    sys.exit(main())
