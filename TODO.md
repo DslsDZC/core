@@ -201,3 +201,12 @@
 - analysis.cr：completion/documentSymbol 关键字/@ 表以字面量 if 链镜像（新增关键字时漂移风险——已注释指向真源）、semanticTokens 未闭合字符串以 `\` 结尾 span+1、T_INT_I8.. 死条目（lexer 发 T_INT）、T_LET 死 kind
 - test_lsp.py：第七组 read 超时已修（select 5s）；`->` 标记扫描已限定帧间（终审顺手修完成）
 - 顺手修遗留：报告文档类笔误（lsp-task-7-report 字节数、lsp-task-6-report §1 表未同步 T_WHILE）——scratch 文件，不阻塞
+
+### 数值类型（dex/apx）迁移遗留 TODO（2026-08-16 终审分流）
+
+- **corearch `--link <so>` 静态路径崩溃**（so_parse_text SIGILL/SIGSEGV，ld.cr:400 附近）：阻塞 extern dex 运行时 FFI 实测（M2 的 IR 层修复已合入并有 cir 断言，运行时验证待此修复）；仓库无 .so 产物、--link 路径零测试覆盖；复现记录 + 备好的 C shim 在 /tmp/dex_ffi_shim.c。**执行注意**：shim 用精确位判等，字面量快路径（str_to_f64_bits 截断 ~2ulp）与计算路径（I2F/1e6）有 1-ulp 差（3.14 → 字面量 4614253070214989086 vs canonical 4614253070214989087）——判等须用 lexer 一致常量或容差
+- sizes.cr: IR_APPROX 无显式条目（默认 return 0 兜底、行为正确，纯对称性——与 IR_FAST/IR_UNROLL 显式条目对齐）
+- 泛型+dex 返回类型：pre-existing（实例化调用点按 int 处理返回类型，与 float 时代逐位一致；bootstrap 侧正确）
+- str_to_f64_bits ~2ulp 截断（保留站点文档化限制）：binary64 判别子用 1/3（0.1b+0.2b==0.3 仅 −1ulp 组合恰好落位模式，不可作断言）
+- INT_LIT 缺 hex/octal/binary 前缀分支（0x1F 等——既有缺口，tokens.ebnf 已如实记录）；`1_000` 下划线产生 T_INT(-1) 静默值 0（两编译器分歧已文档化）
+- interp 裸 opcode 数字风格（与既有 op == 26 风格一致，非缺陷）；`_f32/_f64` 宽度透传死路径（EBNF/inventory 争议点 7 已标注，apx 位宽标注需新发射路径）
