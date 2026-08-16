@@ -139,7 +139,7 @@ fn pop_ir_scope() {
 fn is_ptr_var(var_idx: int) -> int {
     if var_idx < 0 { return 0; }
     ti := irv_type(var_idx);
-    if ti == TI_DEX_S { return 0; }  // 哨兵类型：不查类型表（8 也是首个动态类型下标）
+    if ti == TI_DEX_S { return 0; }  // 哨兵类型：不查类型表（终审 M1：8 为占位表项，用户类型从 9 起）
     if ti >= 0 {
         tk := get_type_kind(ti);
         if tk == TYP_PTR || tk == TYP_REF { return 1; }
@@ -312,7 +312,7 @@ fn ti_from_type_expr(node: int) -> int {
 
 // Type size in bytes
 fn type_size(ti: int) -> int {
-    if ti == TI_DEX_S { return 8; }  // 哨兵类型：8 字节槽（不查类型表）
+    if ti == TI_DEX_S { return 8; }  // 哨兵类型：8 字节槽（不查类型表；终审 M1：8 为占位表项，用户类型从 9 起）
     if ti == TI_CHAR { return 4; }  // not in type table
     if ti < 0 || ti >= g_type_count { return 8; }
     k := get_type_kind(ti);
@@ -364,7 +364,7 @@ fn ptr_access_width(var_idx: int) -> int {
 
 // Type alignment in bytes
 fn type_align(ti: int) -> int {
-    if ti == TI_DEX_S { return 8; }  // 哨兵类型：8 字节对齐（不查类型表）
+    if ti == TI_DEX_S { return 8; }  // 哨兵类型：8 字节对齐（不查类型表；终审 M1：8 为占位表项）
     if ti == TI_CHAR { return 4; }
     if ti < 0 || ti >= g_type_count { return 8; }
     k := get_type_kind(ti);
@@ -1263,26 +1263,43 @@ fn gen_expr(node: int) -> int {
             ac = ac + 1;
             an = ast_b(an);
         }
-        // dex 边界规则（数值迁移 Task 4）：Core 函数调用的 dex 参数一律精确形式——
-        // apx 位模式参数在调用点转 scaled（F2I(bits×S)；extern 原样直传，FFI 后议）
+        // dex 边界规则（数值迁移 Task 4 + 终审 M2）：dex 参数在调用点按被调方形式对齐——
+        //   Core 函数：一律精确形式（scaled），apx 位模式参数转 scaled（F2I(bits×S)）；
+        //   extern 函数：C ABI 契约（module.cr：dex 编码 3 = binary64 跨 C 边界），
+        //     精确形式（scaled）实参转 binary64 bits（I2F/S——字面量重发射位模式常量）
         if func_ni >= 0 && ast_kind(func_node) == EXPR_IDENT {
             cfi := find_func(func_ni);
             if cfi >= 0 {
                 cfn := fi_ast_node(cfi);
-                if cfn >= 0 && ast_kind(cfn) == EXPR_FN {
+                cfn_ext : ., mut = 0;
+                if cfn >= 0 && ast_kind(cfn) == EXPR_EXTERN { cfn_ext = 1; }
+                if cfn >= 0 && (cfn_ext != 0 || ast_kind(cfn) == EXPR_FN) {
                     cpi : ., mut = 0;
                     cpn : ., mut = ast_b(cfn);
+                    an2 : ., mut = first_arg;  // 并行走 EXPR_ARG 链取实参节点（字面量重发射）
                     loop {
                         if cpi >= ac { break; }
                         if cpn < 0 { break; }
                         if ast_type_val(cpn) == TI_DEX {
                             av := r64(arg_vars, cpi * 8);
-                            if av >= 0 && irv_type(av) == TI_DEX {
-                                av = dex_bits_to_scaled(av);
-                                w64(arg_vars, cpi * 8, av);
+                            if av >= 0 {
+                                if cfn_ext != 0 {
+                                    // extern：scaled → bits（字面量直接重发射位模式常量）
+                                    if irv_type(av) == TI_DEX_S {
+                                        arg_node : ., mut = -1;
+                                        if an2 >= 0 { arg_node = ast_a(an2); }
+                                        av = dex_scaled_to_bits(av, arg_node);
+                                        w64(arg_vars, cpi * 8, av);
+                                    }
+                                } else if irv_type(av) == TI_DEX {
+                                    // Core 函数：apx bits → scaled
+                                    av = dex_bits_to_scaled(av);
+                                    w64(arg_vars, cpi * 8, av);
+                                }
                             }
                         }
                         cpi = cpi + 1;
+                        if an2 >= 0 { an2 = ast_b(an2); }
                         cpn = cpn + 1;
                         loop {
                             if cpn >= g_ast_count { break; }

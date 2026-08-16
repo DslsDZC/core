@@ -25,7 +25,18 @@ struct Point { x: int, y: int }
 
 fn test_sizeof_struct() -> int {
     sz := @sizeOf(Point);
-    if sz < 8 { return 1; }  // at least 2 ints
+    // 终审 M1 收紧：Point = 2×int = 16（旧实现首个用户类型拿下标 8 = TI_DEX_S
+    // 哨兵，@sizeOf 恒返回 8——弱断言 sz < 8 漏检）
+    if sz != 16 { return 1; }
+    return 0;
+}
+
+// M1 回归（终审）：3 字段 struct 的首个动态类型场景——@sizeOf 必须返回 24
+struct P3 { a: int, b: int, c: int }
+
+fn test_sizeof_3field_struct() -> int {
+    sz := @sizeOf(P3);
+    if sz != 24 { return 1; }
     return 0;
 }
 
@@ -53,6 +64,7 @@ fn main() -> int {
     r2 := test_sizeof_bool();  if r2 != 0 { print("FAIL sizeof_bool: "); println(int_str(r2)); return r2; }
     r3 := test_alignof_int();  if r3 != 0 { print("FAIL alignof_int: "); println(int_str(r3)); return r3; }
     r4 := test_sizeof_struct();  if r4 != 0 { print("FAIL sizeof_struct: "); println(int_str(r4)); return r4; }
+    r8 := test_sizeof_3field_struct();  if r8 != 0 { print("FAIL sizeof_3field: "); println(int_str(r8)); return r8; }
     r5 := test_no_bounds_check();  if r5 != 0 { print("FAIL no_bounds_check: "); println(int_str(r5)); return r5; }
     r6 := test_inline_hint();  if r6 != 0 { print("FAIL inline: "); println(int_str(r6)); return r6; }
     r7 := test_fields_basic();  if r7 != 0 { print("FAIL fields: "); println(int_str(r7)); return r7; }

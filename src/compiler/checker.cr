@@ -26,6 +26,11 @@ fn init_types() {
     alloc_type(TYP_BASE, TY_NEVER, 0);   // TI_NEVER = 5
     alloc_type(TYP_BASE, TY_CHAR, 0);    // TI_CHAR = 6
     alloc_type(TYP_DYN, 0, 0);           // TI_DYN = 7
+    // TI_DEX_S = 8 占位表项（终审 M1 修复）：TI_DEX_S 是 dex 定点精确形式（缩放整数）
+    // 的 IR 变量类型哨兵，值恰为 8——曾与"首个动态分配类型下标"碰撞，@sizeOf/@alignOf/
+    // is_ptr_var 的哨兵守卫对首个真实类型误触发。占住下标 8 后用户类型从 9 起，
+    // 守卫永不再命中真实类型（TI_DEX_S 本身仍不查类型表，见 ir_gen.cr 注释）。
+    alloc_type(TYP_BASE, TY_DEX_S, 0);   // TI_DEX_S = 8 占位
 }
 
 // ── Runtime builtin declarations (no .cr body, implemented in rt.s) ──

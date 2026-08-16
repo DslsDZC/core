@@ -180,7 +180,7 @@ def build_run_exit(src):
     p = run_corec(["build", "-o", "/tmp/dex_arith_bin", "--static"], src)
     if p.returncode != 0:
         return None, p.stdout + p.stderr
-    os.chmod("/tmp/dex_arith_bin", 0o755)  # corec build 输出 0644（既有怪癖，见 Task 3 报告）
+    # （终审 Minor 1：chmod 0o755 删除——Task 6 已修 ELF 输出 0755，此行为无操作）
     r = subprocess.run(["/tmp/dex_arith_bin"], capture_output=True, text=True, timeout=60)
     return r.returncode, r.stdout + r.stderr
 
@@ -310,6 +310,46 @@ def test_interp_rejects_apx_dex():
     return True
 
 
+def test_extern_dex_arg_cir():
+    """M2 终审回归：extern fn 的 dex 实参必须按 C ABI 传 binary64 bits。
+
+    module.cr ABI 契约：dex 编码 3 = binary64 跨 C 边界。旧实现"原样直传"——
+    字面量 3.14（缩放整数 3140000）被当 bits 直传。修复：extern 分支 TI_DEX_S 实参
+    → dex_scaled_to_bits（字面量重发射位模式常量）。断言（cir dump）：
+    main 内 extern 调用点前必须出现"缩放常量 + 位模式常量"序列（bits != 3140000）。
+    注：运行时 C 侧实测被既有 corearch --link 静态路径崩溃阻塞（终审 Fix F 记录），
+    故以 IR 层断言为准——转换是否在调用点发生正是本次修复的全部内容。
+    """
+    src = (
+        "extern fn dex_ffi_bits_check(d: dex) -> int;\n"
+        "fn main() -> int {\n"
+        "    r := dex_ffi_bits_check(3.14);\n"
+        "    return r;\n"
+        "}\n"
+    )
+    r = run_corec(["cir"], src)
+    out = r.stdout + r.stderr
+    m = re.search(
+        r"const\s+dex\s*=\s*(\d+)\s*\n\s*const\s+dex\s*=\s*(\d+)\s*\n\s*call_extern",
+        out,
+    )
+    if m is None:
+        print("[FAIL] extern dex call site should show scaled-const + bits-const + call_extern")
+        print(out)
+        return False
+    scaled, bits = int(m.group(1)), int(m.group(2))
+    if scaled != 3140000:
+        print(f"[FAIL] first const should be the scaled literal 3140000, got {scaled}")
+        print(out)
+        return False
+    if bits == 3140000 or bits <= 0 or bits >= 1 << 63:
+        print(f"[FAIL] second const should be binary64 bits of 3.14, got {bits}")
+        print(out)
+        return False
+    print(f"[PASS] extern dex arg converted at call site: {scaled} (scaled) -> {bits} (binary64 bits)")
+    return True
+
+
 def main():
     if not COREC.exists():
         print(f"[FAIL] missing native compiler: {COREC}")
@@ -324,6 +364,7 @@ def main():
         test_apx_cross_fn_boundary(),
         test_apx_print_rounding(),
         test_interp_rejects_apx_dex(),
+        test_extern_dex_arg_cir(),
     ]
     passed = sum(results)
     print(f"{passed}/{len(results)} passed")

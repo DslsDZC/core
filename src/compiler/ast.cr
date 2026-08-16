@@ -127,6 +127,8 @@ TY_UNIT : int = 4;
 TY_NEVER : int = 5;
 TY_CHAR : int = 6;
 TY_GENERIC_PARAM : int = 7;  // special sentinel for generic type params
+TY_DEX_S : int = 8;  // dex 定点形式（TI_DEX_S）的类型表占位 data（终审 M1：占住表项
+                     // 下标 8，用户类型从 9 起；占位项永不参与解析/运算）
 MAX_GENERICS : int = 4;      // max generic params per declaration (language limit)
 MAX_STRUCT_FIELDS : int = 16; // max fields per struct (struct info size limit)
 MAX_ENUM_VARIANTS : int = 16; // max variants per enum (enum info size limit)
@@ -302,8 +304,10 @@ TI_NEVER : int = 5;
 TI_CHAR : int = 6;
 TI_DYN : int = 7;    // dynamic type
 // TI_DEX_S = 8：dex 定点精确形式（缩放整数）的 IR 变量类型（数值迁移 Task 4）。
-// 注意：8 也是类型表首个动态分配类型的下标——TI_DEX_S 不查类型表（type_size/
-// type_align/is_ptr_var 处有显式守卫，见 ir_gen.cr），值永远以 8 字节槽存储。
+// 终审 M1 修复：8 现在是类型表的占位表项下标（init_types 末尾 alloc_type(TYP_BASE,
+// TY_DEX_S, 0) 占位）——用户类型从 9 起，TI_DEX_S 哨兵永不再与真实类型碰撞。
+// TI_DEX_S 仍不查类型表（type_size/type_align/is_ptr_var 处保留显式守卫，见 ir_gen.cr），
+// 值永远以 8 字节槽存储。
 TI_DEX_S : int = 8;
 
 // Type table entry kinds
