@@ -848,8 +848,8 @@ fn analysis_document_symbol() -> string {
 //
 // tokenType 映射表（token kind → legend 下标；legend 在 rpc.cr
 // rpc_send_initialize 声明，顺序必须与这里一致）：
-//   keyword  (0): T_FN T_MUT T_IF T_ELSE T_LOOP T_FOR T_IN T_RETURN
-//                 T_BREAK T_CONTINUE T_STRUCT T_ENUM T_IMPL T_PUB
+//   keyword  (0): T_FN T_MUT T_IF T_ELSE T_LOOP T_WHILE T_FOR T_IN
+//                 T_RETURN T_BREAK T_CONTINUE T_STRUCT T_ENUM T_IMPL T_PUB
 //                 T_TRUE T_FALSE T_MOVE T_SELF T_MATCH T_TYPE T_MOD
 //                 T_IMPORT T_AS T_GO T_AWAIT T_FLOW T_YIELD T_UNSAFE
 //                 T_INTERFACE T_AUTO T_FILEID T_NONE T_SOME T_EXTERN
@@ -876,7 +876,8 @@ fn analysis_document_symbol() -> string {
 // kind → legend 下标；T_IDENT 返回 -1（需按名字分类，见 analysis_token_type）
 fn analysis_kind_type(k: int) -> int {
     if k == T_FN || k == T_MUT || k == T_IF || k == T_ELSE || k == T_LOOP ||
-       k == T_FOR || k == T_IN || k == T_RETURN || k == T_BREAK ||
+       k == T_WHILE || k == T_FOR || k == T_IN || k == T_RETURN ||
+       k == T_BREAK ||
        k == T_CONTINUE || k == T_STRUCT || k == T_ENUM || k == T_IMPL ||
        k == T_PUB || k == T_TRUE || k == T_FALSE || k == T_MOVE ||
        k == T_SELF || k == T_MATCH || k == T_TYPE || k == T_MOD ||
