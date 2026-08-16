@@ -62,7 +62,10 @@ class IRGen:
             var_ir = IRVar(name, VarKind.GLOBAL, typ)
             # Store constant value directly on the IRVar for interpreter initialization
             if i < len(decl.values) and isinstance(decl.values[i], Literal):
-                var_ir.constant_value = decl.values[i].value
+                v = decl.values[i].value
+                if decl.values[i].kind == 'dex':
+                    v = Dex(int(v))  # 全局 dex 常量：定点缩放整数
+                var_ir.constant_value = v
             sym = self.symtab.lookup(name)
             if sym:
                 sym.ir_var = var_ir
@@ -162,7 +165,7 @@ class IRGen:
     def gen_literal(self, lit):
         val = lit.value
         if lit.kind == 'int': val = int(val)
-        elif lit.kind == 'dex': val = float(val)
+        elif lit.kind == 'dex': val = Dex(int(val))  # 定点缩放整数（精确语义，Task 4）
         v = self.new_temp()
         self.add_instr(ConstInstr(val, lit.kind, v))
         return v

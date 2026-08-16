@@ -300,6 +300,10 @@ TI_UNIT : int = 4;
 TI_NEVER : int = 5;
 TI_CHAR : int = 6;
 TI_DYN : int = 7;    // dynamic type
+// TI_DEX_S = 8：dex 定点精确形式（缩放整数）的 IR 变量类型（数值迁移 Task 4）。
+// 注意：8 也是类型表首个动态分配类型的下标——TI_DEX_S 不查类型表（type_size/
+// type_align/is_ptr_var 处有显式守卫，见 ir_gen.cr），值永远以 8 字节槽存储。
+TI_DEX_S : int = 8;
 
 // Type table entry kinds
 TYP_BASE : int = 0;   // data = TY_* constant

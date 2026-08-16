@@ -2,6 +2,26 @@ from dataclasses import dataclass, field
 from typing import Optional, List, Any
 from corec.ir.base import IRNode, IRVar
 
+# dex 定点缩放精度（与自举侧一致：S = 10^6，6 位小数）
+DEX_SCALE = 10 ** 6
+
+
+class Dex(int):
+    """dex 定点缩放值（S = 10^6）——精确十进制语义的解释器表示（数值迁移 Task 4）。
+
+    与 int 的差异：
+    - 解释器以 isinstance(operand, Dex) 判定 dex 运算（缩放整数算术）
+    - 测试比较：与 float 期望值按缩放语义换算（3.14 → 3140000/10^6 == 3.14）
+    """
+
+    def __eq__(self, other):
+        if isinstance(other, float):
+            return float(self) / DEX_SCALE == other
+        return int.__eq__(self, other)
+
+    __hash__ = int.__hash__
+
+
 @dataclass
 class Instr(IRNode): pass
 

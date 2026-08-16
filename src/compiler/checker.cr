@@ -2289,6 +2289,13 @@ fn infer_expr(node: int) -> int {
             return TI_INT;  // placeholder — returns handle
         }
 
+        // @raw_int(expr) — dex 表达式 → 缩放整数原值（显式转换，数值迁移 Task 4）
+        if str_eq(name, "raw_int") != 0 {
+            if args < 0 { check_error(EC_N_UNDEFINED, "@raw_int requires an expression", ast_line(node), ast_col(node)); return TI_NEVER; }
+            infer_expr(ast_a(args));
+            return TI_INT;
+        }
+
         // @comptime(expr) — force compile-time eval
         if str_eq(name, "comptime") != 0 {
             if args < 0 { check_error(EC_N_UNDEFINED, "@comptime requires an expression", ast_line(node), ast_col(node)); return TI_NEVER; }

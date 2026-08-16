@@ -409,7 +409,13 @@ fn parse_primary() -> int {
         w : ., mut = 0;
         if kn == T_FLOAT_F32 { w = W_F32; }
         else if kn == T_FLOAT_F64 { w = W_F64; }
-        return alloc_node(EXPR_DEX, 0, 0, 0, tok_iv(t), TY_DEX, w, tok_ln(t), tok_cl(t));
+        // 节点字段（数值迁移 Task 4）：a = binary64 位模式（apx 快路径字面量表示，
+        // 由 lexer 存入 token 的 lexeme 槽的数字串还原）；int_val = 定点缩放整数
+        // （精确表示，默认路径）；data = 宽度标注（_f32/_f64，保留）
+        bits : int = 0;
+        tl := r64(g_tokens, t * ESZ_TOKEN + OFF_TK_LEXEME);   // 词素串下标（-1 = 无）
+        if tl >= 0 { bits = str_to_f64_bits(istr_get(tl)); }
+        return alloc_node(EXPR_DEX, bits, 0, 0, tok_iv(t), TY_DEX, w, tok_ln(t), tok_cl(t));
     }
     if tok_k(t) == T_STRING {
         advance_tok();

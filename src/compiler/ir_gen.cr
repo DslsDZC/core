@@ -113,7 +113,8 @@ fn find_global_const_node(name_idx: int) -> int {
             value_node := ast_c(node);
             if value_node >= 0 {
                 value_kind := ast_kind(value_node);
-                if value_kind == EXPR_INT || value_kind == EXPR_BOOL {
+                if value_kind == EXPR_INT || value_kind == EXPR_BOOL ||
+                   value_kind == EXPR_DEX {
                     return value_node;
                 }
             }
@@ -138,6 +139,7 @@ fn pop_ir_scope() {
 fn is_ptr_var(var_idx: int) -> int {
     if var_idx < 0 { return 0; }
     ti := irv_type(var_idx);
+    if ti == TI_DEX_S { return 0; }  // 哨兵类型：不查类型表（8 也是首个动态类型下标）
     if ti >= 0 {
         tk := get_type_kind(ti);
         if tk == TYP_PTR || tk == TYP_REF { return 1; }
@@ -193,7 +195,14 @@ fn ir_call_return_type(func_ni: int) -> int {
     if fi >= 0 {
         rt := fi_return_type(fi);
         if rt == TY_INT { return TI_INT; }
-        if rt == TY_DEX { return TI_DEX; }
+        if rt == TY_DEX {
+            // dex 边界规则（数值迁移 Task 4）：Core 函数返回精确形式（缩放整数）；
+            // extern 函数保留 TI_DEX（binary64 位模式——C ABI / apx 授权 FFI）
+            if fi_ast_node(fi) >= 0 && ast_kind(fi_ast_node(fi)) == EXPR_EXTERN {
+                return TI_DEX;
+            }
+            return TI_DEX_S;
+        }
         if rt == TY_BOOL { return TI_BOOL; }
         if rt == TY_STRING { return TI_STR; }
         if rt == TY_UNIT { return TI_UNIT; }
@@ -303,6 +312,7 @@ fn ti_from_type_expr(node: int) -> int {
 
 // Type size in bytes
 fn type_size(ti: int) -> int {
+    if ti == TI_DEX_S { return 8; }  // 哨兵类型：8 字节槽（不查类型表）
     if ti == TI_CHAR { return 4; }  // not in type table
     if ti < 0 || ti >= g_type_count { return 8; }
     k := get_type_kind(ti);
@@ -354,6 +364,7 @@ fn ptr_access_width(var_idx: int) -> int {
 
 // Type alignment in bytes
 fn type_align(ti: int) -> int {
+    if ti == TI_DEX_S { return 8; }  // 哨兵类型：8 字节对齐（不查类型表）
     if ti == TI_CHAR { return 4; }
     if ti < 0 || ti >= g_type_count { return 8; }
     k := get_type_kind(ti);
@@ -460,6 +471,65 @@ fn force_if_thunk(var_idx: int) -> int {
     return var_idx;
 }
 
+// --- dex 定点精确运算辅助（数值迁移 Task 4）---
+// dex 值有两种 IR 形式：
+//   TI_DEX_S = 定点缩放整数（精确形式，S = 10^6，默认世界——跨函数边界统一此形式）
+//   TI_DEX   = binary64 位模式（apx 形式——apx 变量及其运算的快路径表示）
+// 转换规则（文档化）：运算按操作数形式分流（有 TI_DEX 操作数 → binary64 快路径，
+// 否则 → 定点整数指令序列）；存储/边界处按槽位形式转换（apx 结果在边界按定点
+// 6 位截断/舍入——「精确，或经授权的近似」契约的兑现）。
+
+// bits（TI_DEX）→ 缩放整数（TI_DEX_S）：F2I(bits × S)
+fn dex_bits_to_scaled(var: int) -> int {
+    if irv_type(var) != TI_DEX { return var; }
+    c := new_ir_var("_dxs", TI_DEX);
+    emit(IR_CONST, c, 4696837146684686336, 0, 0, TI_DEX);  // 1e6 的 binary64 位模式
+    m := new_ir_var("_dxm", TI_DEX);
+    emit(IR_BINARY, m, var, c, OP_MUL, TI_DEX);
+    r := new_ir_var("_dxsc", TI_DEX_S);
+    emit(IR_F2I, r, m, 0, 0, TI_DEX);
+    return r;
+}
+
+// 缩放整数（TI_DEX_S）→ bits（TI_DEX）：I2F(scaled) / S
+// 字面量节点（EXPR_DEX）直接重发射为 bits 常量（与 lexer 位模式一致，免转换序列）
+fn dex_scaled_to_bits(var: int, node: int) -> int {
+    if irv_type(var) != TI_DEX_S { return var; }
+    if node >= 0 && ast_kind(node) == EXPR_DEX {
+        v := new_ir_var("dex", TI_DEX);
+        emit(IR_CONST, v, ast_a(node), 0, 0, TI_DEX);
+        return v;
+    }
+    f := new_ir_var("_dxf", TI_DEX);
+    emit(IR_I2F, f, var, 0, 0, TI_DEX);
+    c := new_ir_var("_dxsc", TI_DEX);
+    emit(IR_CONST, c, 4696837146684686336, 0, 0, TI_DEX);  // 1e6 bits
+    d := new_ir_var("_dxdiv", TI_DEX);
+    emit(IR_BINARY, d, f, c, OP_DIV, TI_DEX);
+    return d;
+}
+
+// int 操作数 → 定点缩放（×S）：精确路径的 int 隐式对齐（与 apx 路径的 I2F 同位）
+fn dex_scale_int(var: int) -> int {
+    if irv_type(var) != TI_INT { return var; }
+    c := new_ir_var("_dsc", TI_INT);
+    emit(IR_CONST, c, 1000000, 0, 0, TI_INT);
+    t := new_ir_var("_dxt", TI_DEX_S);
+    emit(IR_BINARY, t, var, c, OP_MUL, TI_INT);
+    return t;
+}
+
+// 存储到 dex 槽位前按槽位形式转换（数值迁移 Task 4）：
+//   TI_DEX 槽（apx 变量）← 缩放值：scaled → bits（字面量重发射，计算值 I2F/S）
+//   TI_DEX_S 槽（精确变量）← bits 值：bits → scaled（apx 结果按定点 6 位舍入入精确世界）
+fn dex_store_adjust(target: int, val: int, val_node: int) -> int {
+    tt := irv_type(target);
+    vt := irv_type(val);
+    if tt == TI_DEX && vt == TI_DEX_S { return dex_scaled_to_bits(val, val_node); }
+    if tt == TI_DEX_S && vt == TI_DEX { return dex_bits_to_scaled(val); }
+    return val;
+}
+
 // --- IR generation for expressions ---
 // Returns the IR variable index holding the result
 
@@ -479,8 +549,10 @@ fn gen_expr(node: int) -> int {
         return v;
     }
     if ast_kind(node) == EXPR_DEX {
-        v := new_ir_var("dex", TI_DEX);
-        emit(IR_CONST, v, ast_int_val(node), 0, 0, TI_DEX);
+        // 精确字面量（数值迁移 Task 4）：定点缩放整数常量（TI_DEX_S）。
+        // apx 场景（变量级 apx 标签的运算）在运算点按 node.a 的 binary64 位模式重发射。
+        v := new_ir_var("dex", TI_DEX_S);
+        emit(IR_CONST, v, ast_int_val(node), 0, 0, TI_DEX_S);
         return v;
     }
     if ast_kind(node) == EXPR_BOOL {
@@ -512,6 +584,7 @@ fn gen_expr(node: int) -> int {
         if const_node >= 0 {
             const_type : ., mut = TI_INT;
             if ast_kind(const_node) == EXPR_BOOL { const_type = TI_BOOL; }
+            if ast_kind(const_node) == EXPR_DEX { const_type = TI_DEX_S; }  // 定点缩放常量
             cv := new_ir_var("const", const_type);
             emit(IR_CONST, cv, ast_int_val(const_node), 0, 0, const_type);
             return cv;
@@ -544,11 +617,14 @@ fn gen_expr(node: int) -> int {
                         if tag < 0 { tag = TI_INT; }
                         emit(IR_DYN_PACK, target, val_var, tag, 0, 0);
                     } else {
+                        // dex 槽位形式转换（数值迁移 Task 4：apx 槽存 bits，精确槽存缩放）
+                        val_var = dex_store_adjust(target, val_var, right);
                         emit(IR_STORE, -1, target, val_var, 0, 0);
                     }
                 } else {
                     gtarget := find_global(name_idx);
                     if gtarget >= 0 {
+                        val_var = dex_store_adjust(gtarget, val_var, right);
                         emit(IR_STORE, -1, gtarget, val_var, 0, 0);
                     }
                 }
@@ -682,20 +758,81 @@ fn gen_expr(node: int) -> int {
             if is_ptr_var(left_var) != 0 { fti = irv_type(left_var); }
             else if is_ptr_var(right_var) != 0 { fti = irv_type(right_var); }
         }
-        // dex 运算（binary64 快路径 = apx 授权时的实现）：类型标记 TI_DEX（后端按 ti 分派 SSE2，IEEE 754 标准）
-        // int 操作数隐式转换（cvtsi2sd）——阶段 4
+        // dex 运算分流（数值迁移 Task 4）：
+        //   有 TI_DEX（apx 形式）操作数 → binary64 快路径（SSE2，IEEE 754——现成 float 路径）
+        //   有 TI_DEX_S（定点形式）操作数 → 精确路径（缩放整数指令序列）
         if lt == TI_DEX || rt == TI_DEX {
             fti = TI_DEX;
-            if lt != TI_DEX {
+            // apx 路径操作数对齐：字面量 → 重发射 bits 常量；定点（TI_DEX_S）→
+            // I2F/S 转 bits（按精确值参与——apx 授权的近似）；int → I2F（隐式转换）
+            if lt == TI_DEX_S { left_var = dex_scaled_to_bits(left_var, left); }
+            else if lt == TI_INT {
                 t1 := new_ir_var("_f0", TI_DEX);
                 emit(IR_I2F, t1, left_var, 0, 0, TI_DEX);
                 left_var = t1;
             }
-            if rt != TI_DEX {
+            if rt == TI_DEX_S { right_var = dex_scaled_to_bits(right_var, right); }
+            else if rt == TI_INT {
                 t2 := new_ir_var("_f1", TI_DEX);
                 emit(IR_I2F, t2, right_var, 0, 0, TI_DEX);
                 right_var = t2;
             }
+            v := new_ir_var("bin", fti);
+            emit(IR_BINARY, v, left_var, right_var, op, fti);
+            return v;
+        }
+        if lt == TI_DEX_S || rt == TI_DEX_S {
+            fti = TI_DEX_S;
+            // 精确路径操作数对齐：int → ×S（隐式缩放）；定点（TI_DEX_S）直接参与
+            if lt == TI_INT { left_var = dex_scale_int(left_var); }
+            if rt == TI_INT { right_var = dex_scale_int(right_var); }
+            if op == OP_MUL {
+                // (a×b)/S：先乘后缩回（中间值 a·b ≤ 9.2e18 → |值| ≤ 3.03e3 级，文档化）
+                p := new_ir_var("_dxm", TI_DEX_S);
+                emit(IR_BINARY, p, left_var, right_var, OP_MUL, TI_INT);
+                c := new_ir_var("_dxs", TI_INT);
+                emit(IR_CONST, c, 1000000, 0, 0, TI_INT);
+                v := new_ir_var("bin", TI_DEX_S);
+                emit(IR_BINARY, v, p, c, OP_DIV, TI_INT);
+                return v;
+            }
+            if op == OP_DIV {
+                // (a×S)/b：先放大再除（中间值 a·S ≤ 9.2e18 → |a| ≤ 9.2e6，向零截断）
+                c := new_ir_var("_dxs", TI_INT);
+                emit(IR_CONST, c, 1000000, 0, 0, TI_INT);
+                t := new_ir_var("_dxn", TI_DEX_S);
+                emit(IR_BINARY, t, left_var, c, OP_MUL, TI_INT);
+                v := new_ir_var("bin", TI_DEX_S);
+                emit(IR_BINARY, v, t, right_var, OP_DIV, TI_INT);
+                return v;
+            }
+            if op == OP_MOD {
+                // a mod b = a - trunc(a/b)·b（截断除法恒等式，缩放形式）
+                c := new_ir_var("_dxs", TI_INT);
+                emit(IR_CONST, c, 1000000, 0, 0, TI_INT);
+                t1 := new_ir_var("_dxn", TI_DEX_S);
+                emit(IR_BINARY, t1, left_var, c, OP_MUL, TI_INT);
+                t2 := new_ir_var("_dxq", TI_DEX_S);
+                emit(IR_BINARY, t2, t1, right_var, OP_DIV, TI_INT);
+                t3 := new_ir_var("_dxi", TI_DEX_S);
+                emit(IR_BINARY, t3, t2, c, OP_DIV, TI_INT);   // trunc(a/b)（纯整数）
+                t4 := new_ir_var("_dxr", TI_DEX_S);
+                emit(IR_BINARY, t4, t3, right_var, OP_MUL, TI_INT);
+                v := new_ir_var("bin", TI_DEX_S);
+                emit(IR_BINARY, v, left_var, t4, OP_SUB, TI_INT);
+                return v;
+            }
+            if op == OP_EQ || op == OP_NE || op == OP_LT || op == OP_GT ||
+               op == OP_LE || op == OP_GE {
+                // 比较：缩放整数比较，结果 0/1（int——非 dex 值）
+                v := new_ir_var("cmp", TI_INT);
+                emit(IR_BINARY, v, left_var, right_var, op, TI_INT);
+                return v;
+            }
+            // ADD/SUB 及余下：缩放整数直接运算
+            v := new_ir_var("bin", TI_DEX_S);
+            emit(IR_BINARY, v, left_var, right_var, op, TI_INT);
+            return v;
         }
         v := new_ir_var("bin", fti);
         emit(IR_BINARY, v, left_var, right_var, op, fti);
@@ -724,11 +861,15 @@ fn gen_expr(node: int) -> int {
                     if tag < 0 { tag = TI_INT; }
                     emit(IR_DYN_PACK, lv, val_var, tag, 0, 0);
                 } else {
+                    val_var = dex_store_adjust(lv, val_var, val_node);
                     emit(IR_STORE, -1, lv, val_var, 0, 0);
                 }
             } else {
                 gv := find_global(name_idx);
-                if gv >= 0 { emit(IR_STORE, -1, gv, val_var, 0, 0); }
+                if gv >= 0 {
+                    val_var = dex_store_adjust(gv, val_var, val_node);
+                    emit(IR_STORE, -1, gv, val_var, 0, 0);
+                }
             }
             return val_var;
         }
@@ -799,7 +940,15 @@ fn gen_expr(node: int) -> int {
         }
         op_var := gen_expr(ast_a(node));
         op_var = force_if_thunk(op_var);
-        v := new_ir_var("un", TI_INT);
+        vt : ., mut = TI_INT;
+        if op == UOP_NEG {
+            // 一元负保持数值操作数类型：dex 精确（TI_DEX_S）→ 缩放整数取负 ✓；
+            // dex apx（TI_DEX）→ 整型取负（binary64 符号位翻转未实现——既有 apx
+            // 限制，数值迁移 Task 4 文档化；apx 负值请用 0 - x 表达）
+            ot := irv_type(op_var);
+            if ot == TI_DEX_S || ot == TI_DEX || ot == TI_INT { vt = ot; }
+        }
+        v := new_ir_var("un", vt);
         emit(IR_UNARY, v, op_var, 0, op, 0);
         return v;
     }
@@ -971,7 +1120,7 @@ fn gen_expr(node: int) -> int {
                     type_str = istr_get(name_ni);
                 } else if ti == TI_INT { type_str = "int"; }
                 else if ti == TI_BOOL { type_str = "bool"; }
-                else if ti == TI_DEX { type_str = "dex"; }
+                else if ti == TI_DEX || ti == TI_DEX_S { type_str = "dex"; }
                 else if ti == TI_STR { type_str = "string"; }
                 else if ti == TI_CHAR { type_str = "char"; }
                 else if ti == TI_UNIT { type_str = "unit"; }
@@ -981,6 +1130,22 @@ fn gen_expr(node: int) -> int {
                 v := new_ir_var("_tinfo", TI_STR);
                 emit(IR_CONST, v, ni, 0, 0, TI_STR);
                 return v;
+            }
+
+            // @raw_int(expr): 显式转换——dex 表达式 → 其定点缩放整数原值（int）。
+            // 数值迁移 Task 4：dex.cr 的打印等辅助以此访问缩放表示的原始整数；
+            // apx 值（TI_DEX bits）先按边界规则转 scaled（F2I(bits×S)）。
+            // 结果必须复制为 TI_INT 定型变量——直接返回内层变量会携带其 dex 类型
+            // （TI_DEX_S），后续 int 运算被误分派到 dex 精确路径。
+            if str_eq(name, "raw_int") != 0 {
+                inner_var := gen_expr(ast_a(first_arg));
+                inner_var = force_if_thunk(inner_var);
+                if irv_type(inner_var) == TI_DEX {
+                    inner_var = dex_bits_to_scaled(inner_var);
+                }
+                rv := new_ir_var("_raw", TI_INT);
+                emit(IR_STORE, -1, rv, inner_var, 0, 0);
+                return rv;
             }
 
             // @comptime(expr): force compile-time evaluation
@@ -1073,6 +1238,36 @@ fn gen_expr(node: int) -> int {
             ac = ac + 1;
             an = ast_b(an);
         }
+        // dex 边界规则（数值迁移 Task 4）：Core 函数调用的 dex 参数一律精确形式——
+        // apx 位模式参数在调用点转 scaled（F2I(bits×S)；extern 原样直传，FFI 后议）
+        if func_ni >= 0 && ast_kind(func_node) == EXPR_IDENT {
+            cfi := find_func(func_ni);
+            if cfi >= 0 {
+                cfn := fi_ast_node(cfi);
+                if cfn >= 0 && ast_kind(cfn) == EXPR_FN {
+                    cpi : ., mut = 0;
+                    cpn : ., mut = ast_b(cfn);
+                    loop {
+                        if cpi >= ac { break; }
+                        if cpn < 0 { break; }
+                        if ast_type_val(cpn) == TI_DEX {
+                            av := r64(arg_vars, cpi * 8);
+                            if av >= 0 && irv_type(av) == TI_DEX {
+                                av = dex_bits_to_scaled(av);
+                                w64(arg_vars, cpi * 8, av);
+                            }
+                        }
+                        cpi = cpi + 1;
+                        cpn = cpn + 1;
+                        loop {
+                            if cpn >= g_ast_count { break; }
+                            if ast_kind(cpn) == EXPR_PARAM { break; }
+                            cpn = cpn + 1;
+                        }
+                    }
+                }
+            }
+        }
         // Generic function: redirect to monomorphized (specialized) version
         if func_ni >= 0 && (ast_kind(func_node) == EXPR_IDENT) {
             gen_fi := find_func(func_ni);
@@ -1090,7 +1285,7 @@ fn gen_expr(node: int) -> int {
                     else if ti == TI_STR { type_args = type_args + "string"; }
                     else if ti == TI_BOOL { type_args = type_args + "bool"; }
                     else if ti == TI_CHAR { type_args = type_args + "char"; }
-                    else if ti == TI_DEX { type_args = type_args + "dex"; }
+                    else if ti == TI_DEX || ti == TI_DEX_S { type_args = type_args + "dex"; }
                     else if ti == TI_UNIT { type_args = type_args + "unit"; }
                     else { type_args = type_args + "int"; }
                     ai = ai + 1;
@@ -1477,6 +1672,11 @@ fn gen_expr(node: int) -> int {
                 if is_apx != 0 { emit(IR_APPROX, -1, 0, 0, 0, 0); }
                 return dyn_var;
             }
+            // dex apx 变量：初始值按 bits 形式存储（apx 变量持有 binary64 位模式，
+            // 数值迁移 Task 4——字面量直接重发射 bits，计算值经 I2F/S 转换）
+            if is_apx != 0 && irv_type(val_var) == TI_DEX_S {
+                val_var = dex_scaled_to_bits(val_var, val_node);
+            }
             // Preserve the initializer type so later operations can select
             // type-specific lowering (notably string + -> concat()).
             irv_set_type(var, irv_type(val_var));
@@ -1509,6 +1709,11 @@ fn gen_expr(node: int) -> int {
         if ast_a(node) >= 0 {
             val_var := gen_expr(ast_a(node));
             val_var = force_if_thunk(val_var);
+            // dex 边界规则（数值迁移 Task 4）：函数返回一律精确形式（缩放整数）——
+            // apx 位模式在返回点转 scaled（F2I(bits×S)，按定点 6 位舍入）
+            if g_cur_ret_ti == TI_DEX && irv_type(val_var) == TI_DEX {
+                val_var = dex_bits_to_scaled(val_var);
+            }
             emit(IR_RETURN, -1, val_var, 0, 0, 0);
         } else {
             emit(IR_RETURN, -1, -1, 0, 0, 0);
@@ -1748,6 +1953,8 @@ fn ir_gen_func(fi: int) {
         pname := istr_get(pname_idx);
         param_type : ., mut = ast_type_val(pn);
         if param_type < 0 { param_type = TI_INT; }
+        // dex 边界规则（数值迁移 Task 4）：参数一律精确形式（缩放整数，整数寄存器传递）
+        if param_type == TI_DEX { param_type = TI_DEX_S; }
         pvar := new_ir_var(pname, param_type);
         // Bind param name
         bind_local(pname_idx, pvar);
@@ -1770,10 +1977,12 @@ fn ir_gen_func(fi: int) {
     emit(IR_ARENA_NEW, arena_var, 0, 0, 0, 0);
     arena_instr := g_ir_instr_count - 1;
 
-    // Generate body
+    // Generate body（记录返回 TI——EXPR_RETURN 的 dex 边界转换用）
+    g_cur_ret_ti = ret_ti;
     if body >= 0 {
         gen_expr(body);
     }
+    g_cur_ret_ti = -1;
 
     // Patch arena size and reset before return
     total := r64(g_sg_alloc_total, (g_sg_count - 1) * 8);
@@ -1807,9 +2016,17 @@ fn global_init_val(name_idx: int) -> int {
                 if vk == EXPR_INT || vk == EXPR_BOOL {
                     return ast_int_val(value_node);
                 }
+                if vk == EXPR_DEX {
+                    // dex 全局常量：定点缩放整数（精确形式初始值；apx 位模式由
+                    // reg_one_global 从节点 a 取——见该函数）
+                    return ast_int_val(value_node);
+                }
                 if vk == EXPR_UNARY && ast_c(value_node) == UOP_NEG {
                     inner := ast_a(value_node);
                     if ast_kind(inner) == EXPR_INT || ast_kind(inner) == EXPR_BOOL {
+                        return 0 - ast_int_val(inner);
+                    }
+                    if ast_kind(inner) == EXPR_DEX {
                         return 0 - ast_int_val(inner);
                     }
                 }
@@ -1829,12 +2046,45 @@ fn reg_one_global(name_idx: int) {
     gi = gi + 1; }
     if found == 0 {
         name := istr_get(name_idx);
-        gvar := new_ir_var(name, TI_INT);
+        // dex 全局变量（数值迁移 Task 4）：精确（TI_DEX_S，缩放整数初始值）或
+        // apx（TI_DEX，binary64 位模式初始值）——按声明 LET 的类型节点与 apx 位
+        gtype : ., mut = TI_INT;
+        is_dex_global : ., mut = 0;
+        gli : ., mut = 0;
+        loop {
+            if gli >= g_global_let_count { break; }
+            lnode := r64(g_global_lets, gli * 8);
+            if ast_a(lnode) == name_idx {
+                ltn := ast_b(lnode);
+                if ltn >= 0 && ast_kind(ltn) == 0 && ast_type_val(ltn) == TY_DEX {
+                    if ast_int_val(lnode) != 0 { gtype = TI_DEX; } else { gtype = TI_DEX_S; }
+                    is_dex_global = 1;
+                }
+                break;
+            }
+            gli = gli + 1;
+        }
+        gvar := new_ir_var(name, gtype);
         grow_ir_globals(g_ir_global_count + 1);
         w64(g_ir_globals, g_ir_global_count * 24, name_idx);
         w64(g_ir_globals, g_ir_global_count * 24 + 8, gvar);
         // Const initializer — emitted by the ELF backend's _init_globals.
-        w64(g_ir_globals, g_ir_global_count * 24 + 16, global_init_val(name_idx));
+        iv : int = global_init_val(name_idx);
+        if is_dex_global != 0 && gtype == TI_DEX {
+            // apx 全局：初始值为 binary64 位模式（缩放值 → bits 从节点 a 取）
+            i2 : ., mut = 0;
+            loop {
+                if i2 >= g_global_let_count { break; }
+                lnode2 := r64(g_global_lets, i2 * 8);
+                if ast_a(lnode2) == name_idx {
+                    vn := ast_c(lnode2);
+                    if vn >= 0 && ast_kind(vn) == EXPR_DEX { iv = ast_a(vn); }
+                    break;
+                }
+                i2 = i2 + 1;
+            }
+        }
+        w64(g_ir_globals, g_ir_global_count * 24 + 16, iv);
         g_ir_global_count = g_ir_global_count + 1;
     }
 }

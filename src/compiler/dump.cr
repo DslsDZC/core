@@ -55,6 +55,7 @@ fn type_kind_name(tk: int) -> string {
     if tk == 4 { return "unit"; }
     if tk == 5 { return "never"; }
     if tk == 6 { return "char"; }
+    if tk == 8 { return "dex"; }  // TI_DEX_S（定点精确形式，数值迁移 Task 4）
     return "?";
 }
 
