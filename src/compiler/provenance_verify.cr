@@ -103,7 +103,8 @@ fn provenance_verify_func(nstart: int, ncount: int) {
                             runtime_base = get_alloc_var(bi);
                         }
                     } else {
-                        // Both unknown → null trap only (s3=0, fast path)
+                        // 分配信息未知 → 不填充 s2/s3；编码器（instr.cr）对 s3=0
+                        // 保留 null 陷阱（F6 修复——此前 s3=0 连 null 陷阱都没有）
                     }
                 }
                 mask = mask * 2;

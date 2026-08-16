@@ -136,7 +136,20 @@ fn run_frontend() -> int {
     check_all();
     // Type-check diagnostics are non-fatal (match Python bootstrap behavior).
     // Only parse errors and resolver errors are fatal.
-    if g_diag_count > 0 { print_diagnostics(); }
+    // 例外（F2）：编译期确定的常量索引越界（R002）与字面量切片界越界（TK05/TK06）
+    // 是硬错误——拦截编译（修复前静默生成越界二进制）。
+    if g_diag_count > 0 {
+        hard : ., mut = 0;
+        di : ., mut = 0;
+        loop {
+            if di >= g_diag_count { break; }
+            ec := r64(g_diags, di * DIAG_REC_SIZE);
+            if ec == EC_R_OOB || ec == EC_TK_SLICE_BOUNDS || ec == EC_TK_SLICE_LEN { hard = 1; }
+            di = di + 1;
+        }
+        print_diagnostics();
+        if hard != 0 { return 1; }
+    }
     // AST-level constant folding and optimization (O1+)
     /*
 if g_opt_level >= 1 && g_func_count > 0 {
@@ -368,6 +381,10 @@ fn corec_main() -> int {
 
     // === check: type-check only ===
     if cli_eq(cmd, "check") {
+        // F19：type-check 诊断非致命（run_frontend 已打印，build 路径行为不变），
+        // 但 check 命令必须以非零退出码反映诊断——修复前诊断后仍无条件 return 0。
+        // 无诊断 → rc=0（"ok"）。
+        if g_diag_count > 0 { return 1; }
         println("ok");
         return 0;
     }

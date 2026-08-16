@@ -58,6 +58,21 @@ class Interpreter:
     # Built-in functions that are handled directly in Python
     builtins = {}
 
+    @staticmethod
+    def _div_trunc(a, b):
+        """整数除法向零截断（对照 ELF idiv / CompCert Z.quot；Python // 是向下取整）"""
+        if b == 0:
+            raise ZeroDivisionError("integer division by zero")
+        q = abs(a) // abs(b)
+        return -q if (a < 0) != (b < 0) else q
+
+    @staticmethod
+    def _mod_trunc(a, b):
+        """整数余数符号随被除数（对照 ELF idiv / CompCert Z.rem；Python % 余数符号随除数）"""
+        if b == 0:
+            raise ZeroDivisionError("integer modulo by zero")
+        return a - Interpreter._div_trunc(a, b) * b
+
     def run(self, entry_func, args):
         func = self.funcs[entry_func]
         self.vars.clear()
@@ -152,7 +167,8 @@ class Interpreter:
             elif instr.op == '*': res = left * right
             elif instr.op == '/':
                 if isinstance(left, int) and isinstance(right, int):
-                    res = left // right
+                    # 向零截断（对照 ELF idiv / CompCert Z.quot——Python // 向下取整，负操作数方向错）
+                    res = self._div_trunc(left, right)
                 else:
                     res = left / right
             elif instr.op == '>': res = left > right
@@ -165,7 +181,12 @@ class Interpreter:
             elif instr.op == '||': res = left or right
             elif instr.op == '|': res = left | right
             elif instr.op == '&': res = left & right
-            elif instr.op == '%': res = left % right
+            elif instr.op == '%':
+                if isinstance(left, int) and isinstance(right, int):
+                    # 余数符号随被除数（对照 ELF idiv / CompCert Z.rem——Python % 余数符号随除数）
+                    res = self._mod_trunc(left, right)
+                else:
+                    res = left % right
             else: raise NotImplementedError(f"op {instr.op}")
             self.vars[id(instr.dest)] = res
         elif isinstance(instr, UnaryInstr):
@@ -317,7 +338,7 @@ class Interpreter:
                     except:
                         self.vars[id(instr.dest)] = -1
                 return
-            if instr.func == 'syscall3':
+            if instr.func == 'syscall3' or instr.func == 'syscall4':
                 nr = self.vars.get(id(instr.args[0]), 0)
                 a1 = self.vars.get(id(instr.args[1]), 0)
                 a2 = self.vars.get(id(instr.args[2]), 0)

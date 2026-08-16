@@ -986,7 +986,7 @@ fn elf_gen(buf: string) -> int {
     gi = gi + 1; }
     grow_is_global(g_ir_var_count);
 
-    g_ni_syscall3 = -1; g_ni_load8 = -1; g_ni_store8 = -1; g_ni_load64 = -1;
+    g_ni_syscall3 = -1; g_ni_syscall4 = -1; g_ni_load8 = -1; g_ni_store8 = -1; g_ni_load64 = -1;
     g_ni_load_str_ptr = -1; g_ni_store_str_ptr = -1; g_ni_get_arg = -1;
     g_ni_w64 = -1; g_ni_dyncpy = -1; g_ni_r64 = -1;
     g_ni_goroutine_wrapper_addr = -1;
@@ -994,6 +994,7 @@ fn elf_gen(buf: string) -> int {
     loop { if ni_i >= g_str_count { break; }
         ns := istr_get(ni_i);
         if str_eq(ns, "syscall3") != 0 { g_ni_syscall3 = ni_i; }
+        if str_eq(ns, "syscall4") != 0 { g_ni_syscall4 = ni_i; }
         if str_eq(ns, "load8") != 0 { g_ni_load8 = ni_i; }
         if str_eq(ns, "store8") != 0 { g_ni_store8 = ni_i; }
         if str_eq(ns, "load64") != 0 { g_ni_load64 = ni_i; }

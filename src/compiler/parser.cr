@@ -1346,10 +1346,19 @@ fn parse_declaration() {
         return;
     }
 
-    // fn / flow
+    // fn / flow fn
     if check(T_FN) || check(T_FLOW) {
         is_flow : ., mut = 0;
-        if check(T_FLOW) { is_flow = 1; }
+        // F5c：`flow fn name()` 语法——修复前消费 T_FLOW 后直接 advance_tok()
+        // 把 T_FN 当函数名（name="fn"），flow 函数构造不可达（P01 乱报）。
+        if check(T_FLOW) {
+            is_flow = 1;
+            advance_tok();  // 消费 'flow'
+            if !check(T_FN) {
+                add_error("expected 'fn' after flow");
+                return;
+            }
+        }
         t := advance_tok();
         nt := advance_tok();
         name := tok_lx(nt);

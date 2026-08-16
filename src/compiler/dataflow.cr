@@ -528,5 +528,11 @@ fn df_opcode_name(opcode: int, s3: int) -> string {
     if opcode == IR_CALL_EXTERN { return "call_extern"; }
     if opcode == IR_LAZY_THUNK { return "lazy_thunk"; }
     if opcode == IR_LAZY_FORCE { return "lazy_force"; }
+    if opcode == IR_AWAIT { return "await"; }
+    if opcode == IR_BOUNDS_CHECK { return "bounds_check"; }
+    if opcode == IR_ADDR_INDEX { return "addr_index"; }
+    if opcode == IR_I2F { return "i2f"; }
+    if opcode == IR_F2I { return "f2i"; }
+    if opcode == IR_NOP { return "nop"; }
     return "?";
 }

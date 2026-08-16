@@ -111,6 +111,19 @@
 - math.cr / collections.cr 均为 stub
 - 字符串操作、JSON 序列化待补
 
+## 第四轮 CompCert 对照遗留项（2026-08-17 记）
+
+来源：`docs/compcert-round4-findings.md`（F1-F20 修复后残留）+ 波 1-3 修复审查产出。F1-F20 已全部修复，以下为范围外/需 IR 形态演进的遗留项：
+
+- **M-2**：字符串索引 `s[5]` 静默 OOB（TI_STR 无检查）——F1/F2 范围外残留（来源：波 1-3 修复审查发现清单）
+- **I-3**：模块别名导入断裂（`import fmt : f` / 模块限定调用生成对伪函数 "import" 的调用）——预存在，F16 修复后显性化（来源：波 3 修复审查）
+- **lexer 字面量解析 2 项**：`2305843009213693952.0` 字面量解析为垃圾值（bi>53 时 pow2i(负数)=1）；>18 位整数部分静默截断——预存在，ELF/interp 双侧受损（来源：波 2 lexer 修复审查）
+- **Minor-2**：SPAWN 结果存储用 e2_st(rax) 非 e2_store_ret——float 返回值 spawn 存垃圾（预存）（来源：波 3 修复审查）
+- **F11 运行时界切片长度**：需 IR 形态演进（slice 类型）——已标注设计项（来源：compcert-round4-findings.md F11 / 语义表 BC7）
+- **ccr v5 指令记录 i32 截断** ≥2³¹ 的 s3（被 64MB alloc 上限 + null 陷阱兜底）（来源：波 1 修复审查）
+- **core_pattern 管道**致陷阱程序 core dump 挂起——CI 建议 `ulimit -c 0`（来源：波 3 测试审查）
+- **BC-CONST**：interp TI_STR 字符串表索引近似——未核实，后续轮次（来源：compcert-round4-findings.md §2 注）
+
 ## 架构规划
 
 ### 指针安全模型

@@ -34,7 +34,11 @@ fn system(cmd: string) -> int {
     if pid > 0 {
         // 父进程：等待子进程结束
         status_buf := alloc(16);
-        syscall3(61, pid, status_buf, 0);  // wait4(pid, &status, 0, NULL)
+        // I-2：wait4 有 4 个非编号参数（pid, &status, options, rusage）——
+        // syscall3 只有 3 个非编号参数通道，第 4 参（rusage）经通用装载器落 rcx
+        // 被 syscall 指令破坏 → r10 残留垃圾 → 内核 EFAULT → 退出码传播不可靠
+        // （corec build 对编译错误仍返回 0）。syscall4 把第 4 参经 r10 传递。
+        syscall4(61, pid, status_buf, 0, 0);  // wait4(pid, &status, options=0, rusage=NULL)
         // Linux wait status stores a normal exit code in bits 8..15.
         return load8(status_buf, 1) % 256;
     }
