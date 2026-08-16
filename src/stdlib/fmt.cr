@@ -247,15 +247,22 @@ fn float_str_bits(bits: int) -> string {
         r2 = r2 - dg2 * den;
         if di < 6 { frac_str = frac_str + int_str(dg2); }
         else if dg2 >= 5 {
-            // 第 7 位 ≥ 5：第 6 位 +1（简单舍入）
+            // 第 7 位 ≥ 5：从第 6 位向前传播进位。
             fl2 := str_len(frac_str);
-            if fl2 > 0 {
-                last := load8(frac_str, fl2 - 1) - 48;
-                if last < 9 {
-                    pre := str_sub(frac_str, 0, fl2 - 1);
-                    frac_str = pre + chr(last + 49);
+            carry : ., mut = 1;
+            ri : ., mut = fl2 - 1;
+            loop {
+                if ri < 0 || carry == 0 { break; }
+                digit := load8(frac_str, ri) - 48;
+                if digit < 9 {
+                    store8(frac_str, ri, digit + 49);
+                    carry = 0;
+                } else {
+                    store8(frac_str, ri, 48);
+                    ri = ri - 1;
                 }
             }
+            if carry != 0 { ip = ip + 1; }
         }
         di = di + 1; }
     // 去尾零

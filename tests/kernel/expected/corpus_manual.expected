@@ -1,0 +1,25 @@
+check: accept
+check: reject
+infer: type: (nat)
+check: accept
+check: reject
+check: reject
+check: reject
+infer: type: (pi (nat) (nat))
+check: accept
+check: reject
+subtype: yes
+subtype: no
+subtype: yes
+convert: yes
+convert: yes
+infer: reject
+check: reject
+check: reject
+check: reject
+infer: reject
+check: reject
+infer: type: (typ 0)
+check: accept
+convert: yes
+check: accept

@@ -2,10 +2,10 @@
 
 ## 概述
 
-`.csr` 是 `.cir`（数据流图）的规约约束扩展的二进制序列化格式。它不是独立的 IR，而是 `.cir` 的补充——携带规约约束元数据（check/ensure/invariant/标签），与 `.cir` 的 DFNode 数组通过节点索引精确关联。
+`.csr` 是 `.cir`（HDFG）的规约约束扩展的二进制序列化格式。它不是独立的 IR，而是 `.cir` 的补充——携带规约约束元数据（check/ensure/invariant/标签），与 `.cir` 的 DFNode 数组通过节点索引精确关联。
 
 ```
-.cir（数据流图） = DFNode[] + DFEdge[] + 符号表
+.cir（HDFG） = DFNode[] + DFEdge[] + 符号表
 .csr（规约层）   = TagNode[] + 符号引用表 + 自动推导标签元数据
                       ↑
                  通过 target_node 字段指向 DFNode 索引
@@ -90,7 +90,7 @@
 ## 与 `.cir` 的关系
 
 ```
-.cir 负责：程序语义（数据流图）
+.cir 负责：程序语义（HDFG）
 .csr 负责：规约约束（图上的标注）
 
 关联方式：TagNode.target_node → DFNode 索引
@@ -101,3 +101,15 @@
 ```
 
 编译器只在 `-s` 模式下输出 `.csr`（与 `.cir` 成对）。缺少 `.csr` 不影响代码生成（`.ccr` 不依赖规约），只影响验证。
+
+---
+
+## 与验证架构（spec-design v2）的关系
+
+本文档描述的 `.csr` 二进制格式（v1）为**约束存储层**，在验证体系 v2 中保持不变——spec-design v2（CIC 内核 + SMT 证书架构）引入的验证管线消费的正是本格式：
+
+- **约束存储**（本 schema）：`.csr` 的 TagNode[] 携带 check/ensure/invariant/标签元数据，与 `.cir` 的 DFNode 通过 `target_node`/`condition_node` 索引关联
+- **验证执行**（spec-design v2）：规约表达式（`#check`/`#ensure`/`spec fn` 体）经**翻译桥**编译为 CIC 项，走 CIC 内核 + SMT 证书双通道；`.csr` 的 `status` 字段（0=unproven, 1=auto_proven, 2=user_proven）承接验证结果
+- **自动推导**：编译器从 `.cir` 图结构推导的标签（`#pure`/`#terminating`/`#safe_index` 等）写入 `.csr`（status=auto_proven）
+
+即：**本 schema 定义"约束存在哪里"，spec-design v2 定义"约束如何被验证"**——两者分层，v2 不改变本格式。完整验证工作流见 `docs/spec-design.md`。

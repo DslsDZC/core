@@ -98,7 +98,7 @@ fn gen_lookup_subst(name_ni: int) -> int {
 fn gen_base_type_tv(name_ni: int) -> int {
     s := istr_get(name_ni);
     if s == "int" { return TY_INT; }
-    if s == "float" { return TY_FLOAT; }
+    if s == "dex" { return TY_DEX; }
     if s == "bool" { return TY_BOOL; }
     if s == "string" { return TY_STRING; }
     if s == "char" { return TY_CHAR; }
@@ -139,6 +139,9 @@ fn gen_clone_block(start: int, count: int) -> int {
     if count <= 0 { return -1; }
     new_start := g_block_stmt_count;
     grow_block_stmts(new_start + count);
+    // Reserve the outer block range before cloning children. Nested blocks
+    // append after this range instead of reusing and overwriting new_start.
+    g_block_stmt_count = new_start + count;
     i : ., mut = 0;
     loop {
         if i >= count { break; }
@@ -147,7 +150,6 @@ fn gen_clone_block(start: int, count: int) -> int {
         w64(g_block_stmts, (new_start + i) * 8, new_stmt);
         i = i + 1;
     }
-    g_block_stmt_count = new_start + count;
     return new_start;
 }
 
@@ -215,7 +217,7 @@ fn gen_clone_tree(node: int) -> int {
 
     // ── Leaf nodes (no AST children) ──
     if k == EXPR_INT { n := ast_alloc(k, a, b, c, iv, tv, d, ln, cl); gen_dedup_add(node, n); return n; }
-    if k == EXPR_FLOAT { n := ast_alloc(k, a, b, c, iv, tv, d, ln, cl); gen_dedup_add(node, n); return n; }
+    if k == EXPR_DEX { n := ast_alloc(k, a, b, c, iv, tv, d, ln, cl); gen_dedup_add(node, n); return n; }
     if k == EXPR_BOOL { n := ast_alloc(k, a, b, c, iv, tv, d, ln, cl); gen_dedup_add(node, n); return n; }
     if k == EXPR_STRING { n := ast_alloc(k, a, b, c, iv, tv, d, ln, cl); gen_dedup_add(node, n); return n; }
     if k == EXPR_CHAR { n := ast_alloc(k, a, b, c, iv, tv, d, ln, cl); gen_dedup_add(node, n); return n; }
@@ -254,7 +256,7 @@ fn gen_clone_tree(node: int) -> int {
     if k == EXPR_IF { a2 := gen_clone_tree(a); b2 := gen_clone_tree(b); c2 := gen_clone_tree(c); n := ast_alloc(k, a2, b2, c2, iv, tv, d, ln, cl); gen_dedup_add(node, n); return n; }
 
     // ── EXPR_FN: a=name_ni(NOT), b=first_param(YES), c=param_count(NOT), d=body(YES) ──
-    if k == EXPR_FN { b2 := gen_clone_tree(b); d2 := gen_clone_tree(d); n := ast_alloc(k, a, b2, c, iv, tv, d2, ln, cl); gen_dedup_add(node, n); return n; }
+    if k == EXPR_FN { d2 := gen_clone_tree(d); n := ast_alloc(k, a, b, c, iv, tv, d2, ln, cl); gen_dedup_add(node, n); return n; }
 
     // ── EXPR_PARAM: a=name_ni(NOT), d=type_node(YES) ──
     if k == EXPR_PARAM { d2 := gen_clone_tree(d); n := ast_alloc(k, a, b, c, iv, tv, d2, ln, cl); gen_dedup_add(node, n); return n; }
@@ -346,7 +348,7 @@ fn gen_clone_tree(node: int) -> int {
 // ============================================================
 
 // Find a specialized instance in the cache.
-// func_ni: the original generic function index
+// func_ni: the original generic FuncInfo index
 // type_args: comma-separated concrete type names (e.g. "int,string")
 // Returns the specialized function index, or -1 if not found.
 fn gen_find_cached(func_ni: int, type_args: string) -> int {
@@ -365,7 +367,7 @@ fn gen_find_cached(func_ni: int, type_args: string) -> int {
 }
 
 // Find or create a specialized instance of a generic function.
-// func_ni: the original generic function index
+// func_ni: the original generic FuncInfo index
 // type_args: comma-separated concrete type names (e.g. "int,string")
 // Returns the specialized function index.
 fn gen_find_or_create(func_ni: int, type_args: string) -> int {

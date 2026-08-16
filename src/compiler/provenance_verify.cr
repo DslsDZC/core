@@ -27,6 +27,12 @@ fn get_alloc_size(alloc_seq: int) -> int {
     return -1;  // unknown (defer to runtime check)
 }
 
+fn get_alloc_var(alloc_seq: int) -> int {
+    if alloc_seq < 0 || alloc_seq >= g_pa_alloc_count { return -1; }
+    an := r64(g_pa_alloc_nodes, alloc_seq * 8);
+    return r64(g_df_nodes, an * ESZ_DFNODE + OFF_DF_DEST);
+}
+
 fn pv_is_in_unsafe(node_seq: int) -> int {
     si : ., mut = 0;
     loop { if si >= g_sg_count { break; }
@@ -47,19 +53,29 @@ fn provenance_verify_func(nstart: int, ncount: int) {
     ni : ., mut = nstart;
     loop { if ni >= nstart + ncount { break; }
         op := r64(g_df_nodes, ni * ESZ_DFNODE + OFF_DF_OPCODE);
-        d  := r64(g_df_nodes, ni * ESZ_DFNODE + OFF_DF_DEST);
         s1 := r64(g_df_nodes, ni * ESZ_DFNODE + OFF_DF_S1);
+        width : ., mut = r64(g_df_nodes, ni * ESZ_DFNODE + OFF_DF_TK);
 
-        if op == IR_DEREF && d >= 0 && s1 >= 0 {
+        if (op == IR_DEREF || op == IR_STORE_PTR) && s1 >= 0 {
             // Skip checks in unsafe blocks
             if pv_is_in_unsafe(ni) != 0 { ni = ni + 1; continue; }
 
+            ptr_ti := irv_type(s1);
+            if ptr_ti >= 0 && get_type_kind(ptr_ti) == TYP_PTR && get_type_extra(ptr_ti) != 0 {
+                check_error(EC_TU_DEREF,
+                    "external pointer dereference requires unsafe",
+                    0, 0);
+                ni = ni + 1;
+                continue;
+            }
+
+            if width <= 0 { width = 8; }
+
             pts := r64(g_pts, s1 * 8);
             off := r64(g_offsets, s1 * 8);
-
-            // Prov-GC: precise offset check using improved g_offsets
-            // If offset is precisely known from constants, check against alloc size
-            prec_off := r64(g_offsets, s1 * 8);
+            runtime_targets : ., mut = 0;
+            runtime_size : ., mut = 0;
+            runtime_base : ., mut = -1;
 
             // Check each potential allocation target in the points-to set
             mask : int, mut = 1;
@@ -68,22 +84,45 @@ fn provenance_verify_func(nstart: int, ncount: int) {
                 if (pts / mask) % 2 != 0 {
                     alloc_size := get_alloc_size(bi);
                     if alloc_size >= 0 && off >= 0 {
-                        if off >= alloc_size {
+                        if width > alloc_size || off > alloc_size - width {
                             check_error(EC_TK_INDEX,
                                 "pointer out of bounds: offset " + int_str(off) +
-                                " >= size " + int_str(alloc_size),
+                                " + width " + int_str(width) +
+                                " > size " + int_str(alloc_size),
                                 0, 0);
                         }
                     } else if alloc_size >= 0 {
-                        // Known alloc_size, unknown offset → runtime check
-                        // Encode alloc_size in s3 for backend cmp+jae+ud2
-                        w64(g_df_nodes, ni * ESZ_DFNODE + OFF_DF_S3, alloc_size);
+                        if width > alloc_size {
+                            check_error(EC_TK_INDEX,
+                                "pointer access width " + int_str(width) +
+                                " exceeds allocation size " + int_str(alloc_size),
+                                0, 0);
+                        } else {
+                            runtime_targets = runtime_targets + 1;
+                            runtime_size = alloc_size;
+                            runtime_base = get_alloc_var(bi);
+                        }
                     } else {
-                        // Both unknown → null trap only (s3=0, fast path)
+                        // 分配信息未知 → 不填充 s2/s3；编码器（instr.cr）对 s3=0
+                        // 保留 null 陷阱（F6 修复——此前 s3=0 连 null 陷阱都没有）
                     }
                 }
                 mask = mask * 2;
                 bi = bi + 1;
+            }
+
+            if off < 0 && runtime_targets == 1 && runtime_base >= 0 {
+                w64(g_df_nodes, ni * ESZ_DFNODE + OFF_DF_S3, runtime_size);
+                if op == IR_DEREF {
+                    w64(g_df_nodes, ni * ESZ_DFNODE + OFF_DF_S2, runtime_base);
+                } else {
+                    // IR_STORE_PTR has no result, so dest carries the runtime base.
+                    w64(g_df_nodes, ni * ESZ_DFNODE + OFF_DF_DEST, runtime_base);
+                }
+            } else if off < 0 && runtime_targets > 1 {
+                check_error(EC_TK_INDEX,
+                    "runtime pointer bounds check has multiple allocation targets",
+                    0, 0);
             }
         }
         ni = ni + 1;

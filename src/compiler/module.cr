@@ -1,6 +1,68 @@
 // === module.cr ===
 // File system utilities, fileid management, and import resolution.
 
+// ─── LSP open documents ────────────────────────────────────────
+// g_open_docs：路径 → 源文本的扁平记录，24 字节/条 {path_ptr, src_ptr, src_len}。
+// didOpen/didChange 由 LSP 层把路径与源文本复制到稳定堆字符串后注册；
+// module_get_source 先查打开文档、未打开才读盘——进程内重跑前端不再依赖磁盘。
+
+fn grow_open_docs(needed: int) {
+    if needed < g_open_doc_cap { return; }
+    ncap : ., mut = g_open_doc_cap * 2; if ncap < 8 { ncap = 8; } if ncap < needed { ncap = needed + 8; }
+    nb := alloc(ncap * 24); _dyncpy(g_open_docs, g_open_doc_cap * 24, nb);
+    g_open_docs = nb; g_open_doc_cap = ncap; }
+
+fn module_open_doc_set(path: string, src: string) {
+    i : ., mut = 0;
+    loop {
+        if i >= g_open_doc_count { break; }
+        if str_eq(load_str_ptr(g_open_docs, i * 24), path) != 0 {
+            store_str_ptr(g_open_docs, i * 24 + 8, src);
+            w64(g_open_docs, i * 24 + 16, str_len(src));
+            return;
+        }
+        i = i + 1;
+    }
+    grow_open_docs(g_open_doc_count + 1);
+    store_str_ptr(g_open_docs, g_open_doc_count * 24, path);
+    store_str_ptr(g_open_docs, g_open_doc_count * 24 + 8, src);
+    w64(g_open_docs, g_open_doc_count * 24 + 16, str_len(src));
+    g_open_doc_count = g_open_doc_count + 1;
+}
+
+fn module_open_doc_remove(path: string) {
+    i : ., mut = 0;
+    loop {
+        if i >= g_open_doc_count { break; }
+        if str_eq(load_str_ptr(g_open_docs, i * 24), path) != 0 {
+            j : ., mut = i + 1;
+            loop {
+                if j >= g_open_doc_count { break; }
+                store_str_ptr(g_open_docs, (j - 1) * 24, load_str_ptr(g_open_docs, j * 24));
+                store_str_ptr(g_open_docs, (j - 1) * 24 + 8, load_str_ptr(g_open_docs, j * 24 + 8));
+                w64(g_open_docs, (j - 1) * 24 + 16, r64(g_open_docs, j * 24 + 16));
+                j = j + 1;
+            }
+            g_open_doc_count = g_open_doc_count - 1;
+            return;
+        }
+        i = i + 1;
+    }
+}
+
+// 先查打开文档（路径精确匹配），未打开读盘；两者皆无返回 ""
+fn module_get_source(path: string) -> string {
+    i : ., mut = 0;
+    loop {
+        if i >= g_open_doc_count { break; }
+        if str_eq(load_str_ptr(g_open_docs, i * 24), path) != 0 {
+            return load_str_ptr(g_open_docs, i * 24 + 8);
+        }
+        i = i + 1;
+    }
+    return read_file(path);
+}
+
 fn count_newlines(s: string) -> int {
     slen := str_len(s);
     n : ., mut = 0;
@@ -106,7 +168,7 @@ fn parent_dir(dir: string) -> string {
 
 fn load_imports(dir_path: string) -> string {
     imp_path : ., mut = dir_path + "_import.cr";
-    content := read_file(imp_path);
+    content := module_get_source(imp_path);
     if str_len(content) > 0 {
     }
     return content;
@@ -296,12 +358,12 @@ fn reg_so_funcs(index_content: string, so_name: string) {
             while str_len(pname) > 0 && load8(pname, 0) == 32 { pname = str_sub(pname, 1, str_len(pname)-1); }
             while str_len(pname) > 0 && load8(pname, str_len(pname)-1) == 32 { pname = str_sub(pname, 0, str_len(pname)-1); }
             if str_len(pname) > 0 && param_count < 8 {
-                // Encode type: int=0, string=1, float=2, bool=3, unit=4, other=5
+                // Encode type: int=0, string=1, unit=2, dex=3（binary64 跨 C 边界 = apx 授权）, bool=4, other=5
                 ptype_code : ., mut = 5;
                 if pname == "int" { ptype_code = 0; }
                 else if pname == "string" { ptype_code = 1; }
                 else if pname == "unit" { ptype_code = 2; }
-                else if pname == "float" { ptype_code = 3; }
+                else if pname == "dex" { ptype_code = 3; }
                 else if pname == "bool" { ptype_code = 4; }
                 // Decimal encoding: packed positionally
                 param_type_bits = param_type_bits * 100 + ptype_code;
@@ -315,7 +377,7 @@ fn reg_so_funcs(index_content: string, so_name: string) {
         if ret_type == "int" { ret_code = 0; }
         else if ret_type == "string" { ret_code = 1; }
         else if ret_type == "unit" || str_eq(ret_type, "") != 0 { ret_code = 2; }
-        else if ret_type == "float" { ret_code = 3; }
+        else if ret_type == "dex" { ret_code = 3; }
         else if ret_type == "bool" { ret_code = 4; }
         type_encoding : ., mut = param_count * 1000000000000 + param_type_bits * 100 + ret_code;
 
@@ -436,15 +498,17 @@ fn res_imports() {
                         if str_len(ptc) > 0 {
                             pn := extract_toml_name(ptc);
                             if str_len(pn) > 0 && str_eq(pn, project_name) == 0 {
-                                print("  warning: @");
-                                print(project_name);
-                                print(" toml name='");
-                                print(pn);
-                                println("' mismatch");
+                                if g_silent_stdout == 0 {
+                                    print("  warning: @");
+                                    print(project_name);
+                                    print(" toml name='");
+                                    print(pn);
+                                    println("' mismatch");
+                                }
                             }
                         }
                         path = "src/" + project_name + "/" + import_fileid + ".cr";
-                        content = read_file(path);
+                        content = module_get_source(path);
                     } else {
                         // Convert :: to / for subdirectory paths (e.g. backend::x86_64::instr -> backend/x86_64/instr)
                         fs_path : ., mut = import_fileid;
@@ -466,26 +530,27 @@ fn res_imports() {
                             reg_so_funcs(so_idx, fs_path);
                         }
                         // Always load .cr for runtime implementation
+                        // （module_get_source：打开文档优先，未打开读盘）
                         path = g_source_dir + fs_path + ".cr";
-                        content = read_file(path);
+                        content = module_get_source(path);
                         if str_len(content) == 0 {
                             path = "src/stdlib/" + fs_path + ".cr";
-                            content = read_file(path);
+                            content = module_get_source(path);
                         }
                         if str_len(content) == 0 {
                             path = "src/runtime/" + fs_path + ".cr";
-                            content = read_file(path);
+                            content = module_get_source(path);
                         }
                         if str_len(content) == 0 {
                             path = "src/compiler/" + fs_path + ".cr";
-                            content = read_file(path);
+                            content = module_get_source(path);
                         }
                         if str_len(content) == 0 {
                             path = fs_path + ".cr";
-                            content = read_file(path);
+                            content = module_get_source(path);
                         }
                         if str_len(content) == 0 {
-                            print("!! import fail: "); println(import_fileid);
+                            if g_silent_stdout == 0 { print("!! import fail: "); println(import_fileid); }
                         }
                     }
                 }
@@ -504,7 +569,7 @@ fn res_imports() {
                         i = pos;
                         continue;
                     }
-                    print("  -> "); println(path);
+                    if g_silent_stdout == 0 { print("  -> "); println(path); }
                     any_new = 1;
                     seg_byte := main_len + total_accumulated + pass_bytes + 1;
                     grow_segs(g_seg_count + 1); w64(g_seg_starts, g_seg_count * 8, seg_byte);

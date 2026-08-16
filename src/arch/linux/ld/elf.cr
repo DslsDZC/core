@@ -20,7 +20,7 @@ fn w8_signed(buf: string, pos: int, val: int) {
 
 // Emit arena-aware dual-path allocator function body
 // Checks g_current_arena: if >=0 uses arena bump, otherwise global bump.
-// Returns bytes written (now ~271 with zero-init + chain-expand fix).
+// Returns bytes written.
 fn emit_alloc_body(buf: string, pos: int, bss_va: int, globals_size: int) -> int {
     // When arena globals aren't registered (e.g. non-static builds), emit the
     // original simple bump allocator to avoid relying on unpatched rip-relatives.
@@ -100,17 +100,17 @@ fn emit_alloc_body(buf: string, pos: int, bss_va: int, globals_size: int) -> int
     w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 18); cp = cp + 3;
     // mov rcx, [rdx + r10*8] — 4A 8B 0C D2 (SIB: scale=3, index=r10, base=rdx)
     w8(buf, pos+cp, 74); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 12); w8(buf, pos+cp+3, 210); cp = cp + 4;
-    // lea r11, [rip + g_arena_sizes] — e2_lrb, rip_patch
+    // lea rsi, [rip + g_arena_sizes] — preserve r11 as chunk_start
     rip_pos2 := pos + cp + 3;
-    cp = cp + e2_lrb(buf, pos + cp, 0);
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 53); e2_w32(buf, pos+cp+3, 0); cp = cp + 7;
     grow_rip_patch(g_x86_rip_patch_count + 1);
     w64(g_x86_rip_patch_pos, g_x86_rip_patch_count * 8, rip_pos2);
     w64(g_x86_rip_patch_globals, g_x86_rip_patch_count * 8, gv_arena_sizes);
     g_x86_rip_patch_count = g_x86_rip_patch_count + 1;
-    // mov r11, [r11] — 4D 8B 1B
-    w8(buf, pos+cp, 77); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 27); cp = cp + 3;
-    // mov r8, [r11 + r10*8] — 4F 8B 04 D3
-    w8(buf, pos+cp, 79); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 4); w8(buf, pos+cp+3, 211); cp = cp + 4;
+    // mov rsi, [rsi] — 48 8B 36
+    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 54); cp = cp + 3;
+    // mov r8, [rsi + r10*8] — 4E 8B 04 D6
+    w8(buf, pos+cp, 78); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 4); w8(buf, pos+cp+3, 214); cp = cp + 4;
 
     // ── Part 4: Align size + bump check (22 bytes) ──
     // mov rdi, r9 — 49 8B F9 (restore original size for alignment)
@@ -125,22 +125,22 @@ fn emit_alloc_body(buf: string, pos: int, bss_va: int, globals_size: int) -> int
     w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 1); w8(buf, pos+cp+2, 249); cp = cp + 3;
     // cmp rcx, r8 — 4C 39 C1
     w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 57); w8(buf, pos+cp+2, 193); cp = cp + 3;
-    // ja .Lchain — 77 21 (rel8=33, shifted by Bug 1 zero-init block)
-    w8(buf, pos+cp, 119); w8(buf, pos+cp+1, 33); cp = cp + 2;
+    // ja .Lchain — 77 22 (rel8=34)
+    w8(buf, pos+cp, 119); w8(buf, pos+cp+1, 34); cp = cp + 2;
 
     // ── Part 5: Commit cursor update (4 bytes) ──
     // mov [rdx + r10*8], rcx — 4A 89 0C D2
     w8(buf, pos+cp, 74); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 12); w8(buf, pos+cp+3, 210); cp = cp + 4;
 
     // ── Part 5b: Zero-init newly allocated arena block (18 bytes) ──
-    // Zero old_cursor bytes starting at chunk_start+8 (after header).
+    // Zero only the newly allocated data bytes.
     // rax=old_cursor, r11=chunk_start, rdx=cursors_ptr (no longer needed)
     // mov rdx, rax (save old_cursor) — 48 89 C2
     w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 194); cp = cp + 3;
-    // lea rdi, [r11 + 8] — 49 8D 7B 08
-    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 123); w8(buf, pos+cp+3, 8); cp = cp + 4;
-    // mov rcx, rax (old_cursor as count) — 48 89 C1
-    w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 193); cp = cp + 3;
+    // lea rdi, [r11 + rax + 8] — allocation data after its header
+    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 141); w8(buf, pos+cp+2, 124); w8(buf, pos+cp+3, 3); w8(buf, pos+cp+4, 8); cp = cp + 5;
+    // mov rcx, r9 (requested data size) — 4C 89 C9
+    w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 137); w8(buf, pos+cp+2, 201); cp = cp + 3;
     // xor eax, eax — 31 C0
     w8(buf, pos+cp, 49); w8(buf, pos+cp+1, 192); cp = cp + 2;
     // cld — FC
@@ -267,9 +267,8 @@ fn emit_alloc_body(buf: string, pos: int, bss_va: int, globals_size: int) -> int
     }
     // cmp rdx, [rcx] -- 48 3B 11
     w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 59); w8(buf, pos+cp+2, 17); cp = cp + 3;
-    // jbe +17 (skip call+reload+rdi+jmp if within bounds)
-    // 修复：原 +14 漏了 mov rdi,r9（3 字节）→ 跳到指令中间（0xf9）→ 死循环
-    w8(buf, pos+cp, 118); w8(buf, pos+cp+1, 17); cp = cp + 2;
+    // jbe +14 (skip call+reload+jmp if within bounds)
+    w8(buf, pos+cp, 118); w8(buf, pos+cp+1, 14); cp = cp + 2;
     // call heap_expand -- E8 xx xx xx xx (patched in elf_gen after heap_expand emitted)
     g_heap_expand_call_pos = pos + cp;
     e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;
@@ -285,10 +284,6 @@ fn emit_alloc_body(buf: string, pos: int, bss_va: int, globals_size: int) -> int
         rel_hr := bss_va - (fva + cp + 7);
         w8(buf, pos+cp, 76); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 29); w8_signed(buf, pos+cp+3, rel_hr); cp = cp + 7;
     }
-    // mov rdi, r9 -- 49 8B F9 (restore the original size: heap_expand clobbers
-    // rdi with the mmap args; without this the retry bumps heap_ptr by 0 and
-    // every later alloc carves into the arena pool's 1MB region)
-    w8(buf, pos+cp, 73); w8(buf, pos+cp+1, 139); w8(buf, pos+cp+2, 249); cp = cp + 3;
     // jmp .Lretry -- EB xx (short backwards jump to mov r8, r11)
     jmp_off_val := retry_cp - (cp + 2);
     w8(buf, pos+cp, 235); w8(buf, pos+cp+1, jmp_off_val % 256); cp = cp + 2;
@@ -436,6 +431,11 @@ fn emit_alloc_body_simple(buf: string, pos: int, bss_va: int, globals_size: int)
 fn emit_heap_expand(buf: string, pos: int, bss_va: int) -> int {
     cp := 0;
     fva := TEXT_BASE + pos;
+    // Private allocator helper: preserve the live allocation span, original
+    // request size, and current arena index across mmap argument setup.
+    w8(buf, pos+cp, 87); cp = cp + 1;  // push rdi
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 81); cp = cp + 2;  // push r9
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 82); cp = cp + 2;  // push r10
     // xor edi, edi -- 31 FF (addr = NULL, let kernel choose)
     w8(buf, pos+cp, 49); w8(buf, pos+cp+1, 255); cp = cp + 2;
     // mov esi, 1073741824 -- BE xx xx xx xx (length = 1 GiB)
@@ -455,8 +455,8 @@ fn emit_heap_expand(buf: string, pos: int, bss_va: int) -> int {
     // test rax, rax -- 48 85 C0 (check if mmap returned negative error)
     w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 133); w8(buf, pos+cp+2, 192); cp = cp + 3;
     // js .Lhf -- 78 XX (skip success path if mmap failed, rax has -errno)
-    // Success path: 7+7+7+2+1 = 24 bytes
-    w8(buf, pos+cp, 120); w8(buf, pos+cp+1, 24); cp = cp + 2;
+    // Success path: 7+7+7+2+5+1 = 29 bytes
+    w8(buf, pos+cp, 120); w8(buf, pos+cp+1, 29); cp = cp + 2;
     // mov [rip + g_heap_ptr], rax — store via rip_patch
     if gv_heap_ptr >= 0 {
         rip_hp_ex := pos + cp + 3;
@@ -485,11 +485,18 @@ fn emit_heap_expand(buf: string, pos: int, bss_va: int) -> int {
     }
     // xor eax, eax -- 31 C0 (return 0 for success)
     w8(buf, pos+cp, 49); w8(buf, pos+cp+1, 192); cp = cp + 2;
+    // Restore allocator state.
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 90); cp = cp + 2;  // pop r10
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 89); cp = cp + 2;  // pop r9
+    w8(buf, pos+cp, 95); cp = cp + 1;  // pop rdi
     // ret -- C3
     w8(buf, pos+cp, 195); cp = cp + 1;
     // .Lhf: mmap failed, return -1
     // mov rax, -1 -- 48 C7 C0 FF FF FF FF
     w8(buf, pos+cp, 72); w8(buf, pos+cp+1, 199); w8(buf, pos+cp+2, 192); e2_w32(buf, pos+cp+3, -1); cp = cp + 7;
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 90); cp = cp + 2;  // pop r10
+    w8(buf, pos+cp, 65); w8(buf, pos+cp+1, 89); cp = cp + 2;  // pop r9
+    w8(buf, pos+cp, 95); cp = cp + 1;  // pop rdi
     // ret -- C3
     w8(buf, pos+cp, 195); cp = cp + 1;
     return cp;
@@ -979,7 +986,7 @@ fn elf_gen(buf: string) -> int {
     gi = gi + 1; }
     grow_is_global(g_ir_var_count);
 
-    g_ni_syscall3 = -1; g_ni_load8 = -1; g_ni_store8 = -1; g_ni_load64 = -1;
+    g_ni_syscall3 = -1; g_ni_syscall4 = -1; g_ni_load8 = -1; g_ni_store8 = -1; g_ni_load64 = -1;
     g_ni_load_str_ptr = -1; g_ni_store_str_ptr = -1; g_ni_get_arg = -1;
     g_ni_w64 = -1; g_ni_dyncpy = -1; g_ni_r64 = -1;
     g_ni_goroutine_wrapper_addr = -1;
@@ -987,6 +994,7 @@ fn elf_gen(buf: string) -> int {
     loop { if ni_i >= g_str_count { break; }
         ns := istr_get(ni_i);
         if str_eq(ns, "syscall3") != 0 { g_ni_syscall3 = ni_i; }
+        if str_eq(ns, "syscall4") != 0 { g_ni_syscall4 = ni_i; }
         if str_eq(ns, "load8") != 0 { g_ni_load8 = ni_i; }
         if str_eq(ns, "store8") != 0 { g_ni_store8 = ni_i; }
         if str_eq(ns, "load64") != 0 { g_ni_load64 = ni_i; }
@@ -1123,7 +1131,7 @@ fn elf_gen(buf: string) -> int {
     w64(g_x86_func_offsets, g_x86_func_off_count * 16, str_intern("heap_expand"));
     w64(g_x86_func_offsets, g_x86_func_off_count * 16 + 8, total_code);
     g_x86_func_off_count = g_x86_func_off_count + 1;
-    total_code = total_code + 80;  // heap_expand size estimate (~71 bytes)
+    total_code = total_code + 86;  // heap_expand with allocator-state save/restore
     // sched_call trampolines (0..4)
     grow_func_offsets(g_x86_func_off_count * 2 + 2);
     w64(g_x86_func_offsets, g_x86_func_off_count * 16, str_intern("sched_call_0"));
@@ -1239,20 +1247,20 @@ fi = 0; loop { if fi >= g_ir_func_count { break; }
         pi := 0; loop { if pi >= pc { break; }
             po2 := -(vs + pi + 1 - g_current_func_var_start) * 8;  // force stack slot, ignore reg alloc
             pty := irv_type(vs + pi);
-            if pty == TI_FLOAT && pi < 6 {
+            if pty == TI_DEX && pi < 6 {
                 // float 参数在 XMM：movsd [rbp+po2], xmm{frn}（SysV）
                 // frn = 第 pi 个参数前的 float 参数数
                 frn : ., mut = 0;
                 fj : ., mut = 0;
                 loop { if fj >= pi { break; }
-                    if irv_type(vs + fj) == TI_FLOAT { frn = frn + 1; }
+                    if irv_type(vs + fj) == TI_DEX { frn = frn + 1; }
                     fj = fj + 1; }
                 if frn < 8 {
                     // movsd [rbp+po2], xmm{frn} — F2 0F 11 /rn（mod=01, rm=5）
                     w8(buf, cp, 242); w8(buf, cp+1, 15); w8(buf, cp+2, 17);
                     w8(buf, cp+3, 64 + frn * 8 + 5); w8(buf, cp+4, po2); cp = cp + 5;
                 } else {
-                    // 9+ float 参数在栈上（边缘场景，位置布局简化处理）
+                    // 9+ binary64 参数在栈上（边缘场景，位置布局简化处理）
                     caller_off := 16 + (pi - 6) * 8;
                     if g_opt_level >= 1 { caller_off = caller_off + 40; }
                     cp = cp + e2_sd_load(buf, cp, caller_off);
@@ -1261,7 +1269,7 @@ fi = 0; loop { if fi >= g_ir_func_count { break; }
             } else if pi >= 6 {
                 caller_off := 16 + (pi - 6) * 8;
                 if g_opt_level >= 1 { caller_off = caller_off + 40; }
-                if pty == TI_FLOAT {
+                if pty == TI_DEX {
                     cp = cp + e2_sd_load(buf, cp, caller_off);
                     cp = cp + e2_sd_store(buf, cp, po2);
                 } else {

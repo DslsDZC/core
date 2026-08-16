@@ -111,16 +111,24 @@ fn pad_diag_num(num: int) -> string {
 
 // ─── diagnostics (g_diags) ─────────────────────────────────────
 
+// 行号 → 所属文件 id（build_line_fileid 的逐行映射）；越界返回 -1
+fn diag_fileid_for_line(line: int) -> int {
+    if line >= 1 && line <= g_line_count {
+        return r64(g_line_fileid, (line - 1) * 8);
+    }
+    return -1;
+}
+
 fn print_diagnostics() {
     if g_diag_count == 0 { return; }
     source_lines := source_line_count();
     di : ., mut = 0;
     loop {
         if di >= g_diag_count { break; }
-        ec := r64(g_diags, di * 32);
-        msg := load_str_ptr(g_diags, di * 32 + 8);
-        ln := r64(g_diags, di * 32 + 16);
-        cl := r64(g_diags, di * 32 + 24);
+        ec := r64(g_diags, di * DIAG_REC_SIZE);
+        msg := load_str_ptr(g_diags, di * DIAG_REC_SIZE + 8);
+        ln := r64(g_diags, di * DIAG_REC_SIZE + 16);
+        cl := r64(g_diags, di * DIAG_REC_SIZE + 24);
         cat : ., mut = ec / 1000;
         num : ., mut = ec % 1000;
         print("error[");

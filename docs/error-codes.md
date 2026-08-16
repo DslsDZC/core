@@ -17,8 +17,8 @@
 | L006 | 十六进制转义 | `Invalid hex escape: {seq}` | `\x` 后不是合法十六进制 |
 | L007 | 整数后缀非法 | `Invalid integer suffix: {suffix}` | `42_xyz` 之类 |
 | L008 | 整数后缀溢出 | `Integer literal out of range for suffix {suffix}` | `999999_i8` |
-| L009 | 浮点数格式 | `Invalid float literal` | `1.` 或 `.e5` 等 |
-| L010 | 浮点数后缀非法 | `Invalid float suffix: {suffix}` | 非 f32/f64 后缀 |
+| L009 | 小数（dex）字面量格式 | `Invalid float literal`（消息文本随代码迁移改 dex 表述） | `1.` 或 `.e5` 等 |
+| L010 | 小数后缀非法（f32/f64 = apx 的 CPU 位宽标注） | `Invalid float suffix: {suffix}` | 非 f32/f64 后缀 |
 | L011 | 无法识别的字符 | `Unknown character: '{c}'` | 源码中出现 ASCII 控制字符或全角空格等 |
 
 ## P0xx — 语法 (Parser)
@@ -93,6 +93,7 @@
 | TA05 | 变量未声明 mutable | `Variable '{name}' is not mutable` |
 | TA06 | 全局变量未声明 mutable | `Global '{name}' must be `mut` to reassign` |
 | TA07 | 元组解构数量不匹配 | `Tuple destructuring has {M} variables but tuple has {N} elements` |
+| TA08 | 未知声明标签 | `unknown declaration tag '{tag}'`（已知：mut/pub/apx + 插件标签） |
 
 ## TF0xx — 类型检查：函数与调用
 
@@ -255,7 +256,7 @@
 | P | P001–P019 | 19 | 语法 |
 | N | N001–N021 | 21 | 名字解析 |
 | I | I001–I006 | 6 | 类型推断 |
-| TA | TA01–TA07 | 7 | 赋值与绑定 |
+| TA | TA01–TA08 | 8 | 赋值与绑定 |
 | TF | TF01–TF17 | 17 | 函数与调用 |
 | TB | TB01–TB09 | 9 | 二元运算 |
 | TU | TU01–TU03 | 3 | 一元运算 |

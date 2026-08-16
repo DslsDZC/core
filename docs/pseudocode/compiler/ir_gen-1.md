@@ -53,7 +53,7 @@
 | IR 调用返回类型 | ir_call_return_type | IR 调用返回类型（ir_call_return_type） |
 | 获取 IR 变量名 | get_ir_var_name | 获取 IR 变量名（get_ir_var_name） |
 | 追踪字符串常量 | track_str | 追踪字符串常量（track_str） |
-| 数据流图：创建节点 | df_create_node | 发射指令（emit） |
+| HDFG：创建节点 | df_create_node | 发射指令（emit） |
 | IR 变量访问器：ID | irv_id | 新建 IR 变量（new_ir_var） |
 | IR 变量访问器：名称 | irv_name | 新建 IR 变量（new_ir_var） |
 | IR 变量访问器：类型 | irv_type | 新建 IR 变量（new_ir_var） |
@@ -280,7 +280,7 @@ IR 变量访问器：设置类型（irv_set_type）（索引, 类型索引）
 ## 函数 发射指令（emit）
 
 ### 作用
-向线性 IR（ccr）指令数组追加一条新指令，同时同步调用 数据流图：创建节点（df_create_node）构建并行数据流图（cir）节点。这是 IR 生成的唯一指令出口。
+向线性 IR（ccr）指令数组追加一条新指令，同时同步调用 HDFG：创建节点（df_create_node）构建并行 HDFG（cir）节点。这是 IR 生成的唯一指令出口。
 
 ### 逻辑
 接收 操作码（opcode）：整数，目标变量（dest）：整数，源操作数一（src1）：整数，源操作数二（src2）：整数，源操作数三（src3）：整数，类型类别（type_kind）：整数
@@ -293,11 +293,11 @@ IR 指令访问器：设置操作数2（iri_set_s2）（索引, 源操作数二�
 IR 指令访问器：设置操作数3（iri_set_s3）（索引, 源操作数三）
 IR 指令访问器：设置类型类别（iri_set_tk）（索引, 类型类别）
 令 IR 指令总数 = 索引 + 1
-（同步构建数据流图）
-数据流图：创建节点（df_create_node）（操作码, 目标变量, 源操作数一, 源操作数二, 源操作数三, 类型类别）
+（同步构建 HDFG）
+HDFG：创建节点（df_create_node）（操作码, 目标变量, 源操作数一, 源操作数二, 源操作数三, 类型类别）
 
 ### 测试要点
-1. 每条指令在 .线性指令流（ccr）（线性 IR 格式）和数据流图格式（cir）中同时创建，保持同步
+1. 每条指令在 .线性指令流（ccr）（线性 IR 格式）和 HDFG格式（cir）中同时创建，保持同步
 2. 指令索引由全局计数器 IR 指令总数 分配
 3. 所有六个字段（操作码、目标、三个源操作数、类型类别）均写入
 

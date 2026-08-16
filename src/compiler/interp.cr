@@ -10,6 +10,42 @@
 
 g_ir_vals : string, mut;    g_ir_vals_cap : int, mut;
 
+// IR_BINARY 统一分派（主循环与 callee 内联循环共用）：
+// 整数路径（模 2⁶⁴）。dex 为缩放整数——同走整数路径（数值迁移 #48 定稿）；
+// IR_I2F/IR_F2I 在 dispatch 入口显式报错（interp 无 binary64 语义）。
+fn ir_interp_binary(d: int, s1: int, s2: int, s3: int, ti: int) {
+    if d < 0 { return; }
+    lv := r64(g_ir_vals, s1 * 8); rv := r64(g_ir_vals, s2 * 8);
+    if s3 == 1  { w64(g_ir_vals, d * 8, lv + rv); }
+    if s3 == 2  { w64(g_ir_vals, d * 8, lv - rv); }
+    if s3 == 3  { w64(g_ir_vals, d * 8, lv * rv); }
+    if s3 == 4  { w64(g_ir_vals, d * 8, lv / rv); }
+    if s3 == 5  { w64(g_ir_vals, d * 8, lv % rv); }
+    if s3 == 6  { if lv == rv { w64(g_ir_vals, d * 8, 1); } else { w64(g_ir_vals, d * 8, 0); } }
+    if s3 == 7  { if lv != rv { w64(g_ir_vals, d * 8, 1); } else { w64(g_ir_vals, d * 8, 0); } }
+    if s3 == 8  { if lv < rv  { w64(g_ir_vals, d * 8, 1); } else { w64(g_ir_vals, d * 8, 0); } }
+    if s3 == 9  { if lv > rv  { w64(g_ir_vals, d * 8, 1); } else { w64(g_ir_vals, d * 8, 0); } }
+    if s3 == 10 { if lv <= rv { w64(g_ir_vals, d * 8, 1); } else { w64(g_ir_vals, d * 8, 0); } }
+    if s3 == 11 { if lv >= rv { w64(g_ir_vals, d * 8, 1); } else { w64(g_ir_vals, d * 8, 0); } }
+    if s3 == 12 { if lv != 0 && rv != 0 { w64(g_ir_vals, d * 8, 1); } else { w64(g_ir_vals, d * 8, 0); } }
+    if s3 == 13 { if lv != 0 || rv != 0 { w64(g_ir_vals, d * 8, 1); } else { w64(g_ir_vals, d * 8, 0); } }
+    if s3 == 17 { w64(g_ir_vals, d * 8, lv + rv * 8); }   // OP_PTR_ADD
+    if s3 == 18 { w64(g_ir_vals, d * 8, lv - rv * 8); }   // OP_PTR_SUB
+    if s3 == 19 { w64(g_ir_vals, d * 8, (lv - rv) / 8); }  // OP_PTR_DIFF
+}
+
+// 指针间接读写（近似，对照 ELF 语义）：
+// 槽号（0 ≤ ptr < g_ir_var_count）= 栈变量的「地址」（REF 给的槽索引）→ 读写该槽；
+// 其余 = 堆地址（alloc/ALLOC_ARRAY 产出的真实指针）→ 读写内存。
+fn ir_interp_deref_read(ptr: int) -> int {
+    if ptr >= 0 && ptr < g_ir_var_count { return r64(g_ir_vals, ptr * 8); }
+    return r64(ptr, 0);
+}
+fn ir_interp_deref_write(ptr: int, val: int) {
+    if ptr >= 0 && ptr < g_ir_var_count { w64(g_ir_vals, ptr * 8, val); }
+    else { w64(ptr, 0, val); }
+}
+
 fn ir_interpret() -> int {
     // Find main function in the dataflow graph
     main_idx : ., mut = -1;
@@ -92,29 +128,12 @@ fn ir_interpret() -> int {
         s1 := r64(g_df_nodes, (node_start + ip) * ESZ_DFNODE + OFF_DF_S1);
         s2 := r64(g_df_nodes, (node_start + ip) * ESZ_DFNODE + OFF_DF_S2);
         s3 := r64(g_df_nodes, (node_start + ip) * ESZ_DFNODE + OFF_DF_S3);
+        ti := r64(g_df_nodes, (node_start + ip) * ESZ_DFNODE + OFF_DF_TK);
 
-        if op == 1  { if d >= 0 { w64(g_ir_vals, d * 8, s1); } }  // IR_CONST
+        if op == 1  { if d >= 0 { w64(g_ir_vals, d * 8, s1); } }  // IR_CONST（dex 的 s1 为缩放整数）
         if op == 5  { if s1 >= 0 { return r64(g_ir_vals, s1 * 8); } return 0; }  // IR_RETURN
 
-        if op == 2 {  // IR_BINARY
-            lv := r64(g_ir_vals, s1 * 8); rv := r64(g_ir_vals, s2 * 8);
-            if s3 == 1  { w64(g_ir_vals, d * 8, lv + rv); }
-            if s3 == 2  { w64(g_ir_vals, d * 8, lv - rv); }
-            if s3 == 3  { w64(g_ir_vals, d * 8, lv * rv); }
-            if s3 == 4  { w64(g_ir_vals, d * 8, lv / rv); }
-            if s3 == 5  { w64(g_ir_vals, d * 8, lv % rv); }
-            if s3 == 6  { if lv == rv { w64(g_ir_vals, d * 8, 1); } else { w64(g_ir_vals, d * 8, 0); } }
-            if s3 == 7  { if lv != rv { w64(g_ir_vals, d * 8, 1); } else { w64(g_ir_vals, d * 8, 0); } }
-            if s3 == 8  { if lv < rv  { w64(g_ir_vals, d * 8, 1); } else { w64(g_ir_vals, d * 8, 0); } }
-            if s3 == 9  { if lv > rv  { w64(g_ir_vals, d * 8, 1); } else { w64(g_ir_vals, d * 8, 0); } }
-            if s3 == 10 { if lv <= rv { w64(g_ir_vals, d * 8, 1); } else { w64(g_ir_vals, d * 8, 0); } }
-            if s3 == 11 { if lv >= rv { w64(g_ir_vals, d * 8, 1); } else { w64(g_ir_vals, d * 8, 0); } }
-            if s3 == 12 { if lv != 0 && rv != 0 { w64(g_ir_vals, d * 8, 1); } else { w64(g_ir_vals, d * 8, 0); } }
-            if s3 == 13 { if lv != 0 || rv != 0 { w64(g_ir_vals, d * 8, 1); } else { w64(g_ir_vals, d * 8, 0); } }
-            if s3 == 17 { w64(g_ir_vals, d * 8, lv + rv * 8); }   // OP_PTR_ADD
-            if s3 == 18 { w64(g_ir_vals, d * 8, lv - rv * 8); }   // OP_PTR_SUB
-            if s3 == 19 { w64(g_ir_vals, d * 8, (lv - rv) / 8); }  // OP_PTR_DIFF
-        }
+        if op == 2 { ir_interp_binary(d, s1, s2, s3, ti); }  // IR_BINARY
 
         if op == 3 {  // IR_UNARY
             ov := r64(g_ir_vals, s1 * 8);
@@ -189,7 +208,47 @@ fn ir_interpret() -> int {
                 w64(arr_ptr, idx * 8, r64(g_ir_vals, d * 8));
             }
         }
-        if op == 17 || op == 18 || op == 25 || op == 23 { if d >= 0 { w64(g_ir_vals, d * 8, r64(g_ir_vals, s1 * 8)); } }
+        // IR_MAKE_ENUM (17)：d := alloc(8·(1+s2))；M[d+0] := s1（tag = 变体名索引）——
+        // 与 ELF 布局 [tag][payload...] 一致的堆镜像（payload 由后续 IR_STORE_FIELD 写堆）
+        if op == 17 {
+            if d >= 0 {
+                need2 := 8 + s2 * 8;
+                bp := alloc(need2);
+                vi2 : ., mut = 0;
+                loop { if vi2 >= need2 { break; } store8(bp, vi2, 0); vi2 = vi2 + 1; }
+                w64(bp, 0, s1);
+                w64(g_ir_vals, d * 8, bp);
+            }
+        }
+        // IR_LOAD_ENUM_TAG (23)：d := M[ρ(s1)+0]
+        if op == 23 {
+            if d >= 0 && s1 >= 0 {
+                ptr := r64(g_ir_vals, s1 * 8);
+                if ptr != 0 { w64(g_ir_vals, d * 8, r64(ptr, 0)); }
+            }
+        }
+        // IR_REF (18)：d := &ρ(s1)——槽模型近似：槽号即「地址」（ir_interp_deref_* 同规则）
+        if op == 18 { if d >= 0 && s1 >= 0 { w64(g_ir_vals, d * 8, s1); } }
+        // IR_DEREF (25)：d := M[ρ(s1)]（栈槽间接或堆读取，见 ir_interp_deref_read）
+        if op == 25 {
+            if d >= 0 && s1 >= 0 {
+                w64(g_ir_vals, d * 8, ir_interp_deref_read(r64(g_ir_vals, s1 * 8)));
+            }
+        }
+
+        // IR_SLICE (24): d := arr + low*8（与 ELF 编码一致；BC11 补实现）
+        if op == 24 {
+            if d >= 0 && s1 >= 0 && s2 >= 0 {
+                w64(g_ir_vals, d * 8, r64(g_ir_vals, s1 * 8) + r64(g_ir_vals, s2 * 8) * 8);
+            }
+        }
+
+        // IR_BOUNDS_CHECK (30): s1=index var, s2=max_len 字面量 —
+        // index < 0 或 index >= max → 陷阱（返回 -1 表示中止；BC11 补实现）
+        if op == 30 && s2 >= 0 {
+            iv := r64(g_ir_vals, s1 * 8);
+            if iv < 0 || iv >= s2 { return -1; }
+        }
 
         // IR_LAZY_THUNK / IR_LAZY_FORCE. Calls are currently eager, so both
         // wrappers preserve the computed value.
@@ -197,9 +256,11 @@ fn ir_interpret() -> int {
             if d >= 0 && s1 >= 0 { w64(g_ir_vals, d * 8, r64(g_ir_vals, s1 * 8)); }
         }
 
-        // IR_YIELD
+        // IR_YIELD (28)：eager 值传递近似（d ← ρ(s1)，同 IR_AWAIT）。
+        // F5a：补 d >= 0 守卫——发射恒 dest=-1（ir_gen L1569），原代码
+        // w64(g_ir_vals, d*8 = -8, ...) 堆下溢写（g_ir_vals[-8]，静默 UB）。
         if op == 28 {
-            if s1 >= 0 { w64(g_ir_vals, d * 8, r64(g_ir_vals, s1 * 8)); }
+            if d >= 0 && s1 >= 0 { w64(g_ir_vals, d * 8, r64(g_ir_vals, s1 * 8)); }
         }
 
         // IR_FNADDR — no real addresses in the interpreter; dest = 0
@@ -207,8 +268,56 @@ fn ir_interpret() -> int {
             if d >= 0 { w64(g_ir_vals, d * 8, 0); }
         }
 
-        // IR_STORE_PTR
-        if op == 26 { if d >= 0 && s1 >= 0 { w64(g_ir_vals, s1 * 8, r64(g_ir_vals, d * 8)); } }
+        // IR_APPROX — pure annotation, skip（无运算语义，不能崩）
+        if op == 51 { ip = ip + 1; continue; }
+
+        // IR_I2F(49) / IR_F2I(50)——int↔binary64 转换：解释器无 binary64 语义
+        // （数值迁移 Task 6 定稿）。apx dex 运算必然经过 bits↔缩放转换（打印/边界），
+        // 此处显式报错替代静默跳过——跳过会让目的槽残留 0/脏值，后续除法可能 SIGFPE。
+        if op == 49 || op == 50 {
+            println("interpreter error: IR_I2F/IR_F2I needs binary64 semantics (apx dex) — `corec run` cannot execute apx dex arithmetic; build & run natively (corec build) instead");
+            return -1;
+        }
+
+        // IR_STORE_PTR (26)：M[ρ(s1)] := ρ(s2)（与 ELF 操作数一致；d=-1 发射态不再影响）。
+        // 栈槽间接（指针 = 槽号）或堆写入，见 ir_interp_deref_write。
+        if op == 26 { if s1 >= 0 && s2 >= 0 { ir_interp_deref_write(r64(g_ir_vals, s1 * 8), r64(g_ir_vals, s2 * 8)); } }
+
+        // IR_ADDR_INDEX (31)：d := ρ(s1) + 8·ρ(s2)（&arr[i]；s3=scale 恒 3，与 ELF 一致）
+        if op == 31 {
+            if d >= 0 && s1 >= 0 && s2 >= 0 {
+                w64(g_ir_vals, d * 8, r64(g_ir_vals, s1 * 8) + r64(g_ir_vals, s2 * 8) * 8);
+            }
+        }
+        // IR_ARENA_NEW (32) / IR_ARENA_RESET (33)：interp 无 arena——no-op 近似
+        // （对照语义表 2.4 的 D7：ELF 有 arena 句柄/复位；解释器槽模型无作用域内存概念）
+        if op == 32 { if d >= 0 { w64(g_ir_vals, d * 8, 0); } }
+        if op == 33 { }
+
+        // IR_DYN_PACK (43)：dyn 变量双槽 [value, tag]——slot[d]=值、slot[d+1]=tag（对照 ELF slot+0/+8）
+        if op == 43 {
+            if d >= 0 && s1 >= 0 {
+                w64(g_ir_vals, d * 8, r64(g_ir_vals, s1 * 8));
+                w64(g_ir_vals, (d + 1) * 8, s2);
+            }
+        }
+        // IR_DYN_TAG (41)：d := slot[ρ(s1)+1]（读 +8 槽）
+        if op == 41 { if d >= 0 && s1 >= 0 { w64(g_ir_vals, d * 8, r64(g_ir_vals, (s1 + 1) * 8)); } }
+        // IR_DYN_VAL (42)：d := slot[ρ(s1)]（读 +0 槽）
+        if op == 42 { if d >= 0 && s1 >= 0 { w64(g_ir_vals, d * 8, r64(g_ir_vals, s1 * 8)); } }
+
+        // IR_DYN_DISPATCH (44)：显式报错（不再静默跳过；对照 ELF 的占位实现——见语义表 2.6 BC9）
+        if op == 44 {
+            println("error: interp 不支持动态分发（IR_DYN_DISPATCH）");
+            return 2;
+        }
+        // IR_CALL_EXTERN (45)：显式报错（不再静默错值；ELF 静态构建同样拒绝，见 F16）
+        if op == 45 {
+            print("error: interp 无法调用外部函数："); println(istr_get(s1));
+            return 2;
+        }
+
+        // IR_I2F(49)/IR_F2I(50) 在 dispatch 入口已被显式报错拦截（#48 定稿：interp 无 binary64）
 
         // Branch (node-index based)
         if op == 19 {
@@ -270,8 +379,8 @@ fn ir_interpret() -> int {
                 } else if tf == 2 || tf == 3 {  // TAG_AUTO_STR: print_i/println_i — NOOP (syscall3 returns 0)
                 }
             }
-            // syscall3 — interpreter returns 0
-            if str_eq(fn_name, "syscall3") != 0 {
+            // syscall3/syscall4 — interpreter returns 0
+            if str_eq(fn_name, "syscall3") != 0 || str_eq(fn_name, "syscall4") != 0 {
                 if d >= 0 { w64(g_ir_vals, d * 8, 0); }
             }
             if str_eq(fn_name, "load_str_ptr") != 0 {
@@ -337,22 +446,10 @@ fn ir_interpret() -> int {
                                 t1 := r64(g_df_nodes, (f_start + ip2) * ESZ_DFNODE + OFF_DF_S1);
                                 t2 := r64(g_df_nodes, (f_start + ip2) * ESZ_DFNODE + OFF_DF_S2);
                                 t3 := r64(g_df_nodes, (f_start + ip2) * ESZ_DFNODE + OFF_DF_S3);
+                                t4 := r64(g_df_nodes, (f_start + ip2) * ESZ_DFNODE + OFF_DF_TK);
                                 if op2 == 1 && d2 >= 0 { w64(g_ir_vals, d2 * 8, t1); }
-                                if op2 == 2 && t1 >= 0 && t2 >= 0 {
-                                    lv2 := r64(g_ir_vals, t1 * 8); rv2 := r64(g_ir_vals, t2 * 8);
-                                    if t3 == 1  { w64(g_ir_vals, d2 * 8, lv2 + rv2); }
-                                    else if t3 == 2  { w64(g_ir_vals, d2 * 8, lv2 - rv2); }
-                                    else if t3 == 3  { w64(g_ir_vals, d2 * 8, lv2 * rv2); }
-                                    else if t3 == 4  { w64(g_ir_vals, d2 * 8, lv2 / rv2); }
-                                    else if t3 == 5  { w64(g_ir_vals, d2 * 8, lv2 % rv2); }
-                                    else if t3 == 6  { if lv2 == rv2 { w64(g_ir_vals, d2 * 8, 1); } else { w64(g_ir_vals, d2 * 8, 0); } }
-                                    else if t3 == 7  { if lv2 != rv2 { w64(g_ir_vals, d2 * 8, 1); } else { w64(g_ir_vals, d2 * 8, 0); } }
-                                    else if t3 == 8  { if lv2 < rv2  { w64(g_ir_vals, d2 * 8, 1); } else { w64(g_ir_vals, d2 * 8, 0); } }
-                                    else if t3 == 9  { if lv2 > rv2  { w64(g_ir_vals, d2 * 8, 1); } else { w64(g_ir_vals, d2 * 8, 0); } }
-                                    else if t3 == 10 { if lv2 <= rv2 { w64(g_ir_vals, d2 * 8, 1); } else { w64(g_ir_vals, d2 * 8, 0); } }
-                                    else if t3 == 11 { if lv2 >= rv2 { w64(g_ir_vals, d2 * 8, 1); } else { w64(g_ir_vals, d2 * 8, 0); } }
-                                    else if t3 == 12 { if lv2 != 0 && rv2 != 0 { w64(g_ir_vals, d2 * 8, 1); } else { w64(g_ir_vals, d2 * 8, 0); } }
-                                    else if t3 == 13 { if lv2 != 0 || rv2 != 0 { w64(g_ir_vals, d2 * 8, 1); } else { w64(g_ir_vals, d2 * 8, 0); } } }
+                                if op2 == 2 && t1 >= 0 && t2 >= 0 { ir_interp_binary(d2, t1, t2, t3, t4); }
+                                if op2 == 49 || op2 == 50 { println("interpreter error: IR_I2F/IR_F2I needs binary64 semantics (apx dex)"); return -1; }
                                 if op2 == 3 && t1 >= 0 {
                                     ov2 := r64(g_ir_vals, t1 * 8);
                                     if t3 == 1 { w64(g_ir_vals, d2 * 8, -ov2); }

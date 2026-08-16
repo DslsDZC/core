@@ -136,7 +136,20 @@ fn run_frontend() -> int {
     check_all();
     // Type-check diagnostics are non-fatal (match Python bootstrap behavior).
     // Only parse errors and resolver errors are fatal.
-    if g_diag_count > 0 { print_diagnostics(); }
+    // 例外（F2）：编译期确定的常量索引越界（R002）与字面量切片界越界（TK05/TK06）
+    // 是硬错误——拦截编译（修复前静默生成越界二进制）。
+    if g_diag_count > 0 {
+        hard : ., mut = 0;
+        di : ., mut = 0;
+        loop {
+            if di >= g_diag_count { break; }
+            ec := r64(g_diags, di * DIAG_REC_SIZE);
+            if ec == EC_R_OOB || ec == EC_TK_SLICE_BOUNDS || ec == EC_TK_SLICE_LEN { hard = 1; }
+            di = di + 1;
+        }
+        print_diagnostics();
+        if hard != 0 { return 1; }
+    }
     // AST-level constant folding and optimization (O1+)
     /*
 if g_opt_level >= 1 && g_func_count > 0 {
@@ -368,6 +381,10 @@ fn corec_main() -> int {
 
     // === check: type-check only ===
     if cli_eq(cmd, "check") {
+        // F19：type-check 诊断非致命（run_frontend 已打印，build 路径行为不变），
+        // 但 check 命令必须以非零退出码反映诊断——修复前诊断后仍无条件 return 0。
+        // 无诊断 → rc=0（"ok"）。
+        if g_diag_count > 0 { return 1; }
         println("ok");
         return 0;
     }
@@ -391,6 +408,16 @@ fn corec_main() -> int {
     // Incremental cache: ensure cache directory exists
     make_cir_cache_dir();
 
+    // A cached caller does not replay monomorphization, so its specialized
+    // callee FuncInfo entries would be missing on the next compile.
+    cache_enabled : int, mut = 1;
+    cache_scan : ., mut = 0;
+    loop {
+        if cache_scan >= g_func_count { break; }
+        if fi_generic_count(cache_scan) > 0 { cache_enabled = 0; break; }
+        cache_scan = cache_scan + 1;
+    }
+
     // Generate IR for each function, checking cache first
     fi : ., mut = 0;
     loop {
@@ -398,14 +425,14 @@ fn corec_main() -> int {
 
         // Skip generic functions — they are monomorphized at call sites
         if fi_generic_count(fi) > 0 {
-            df_begin_func(fi);
-            df_end_func(fi);
             fi = fi + 1;
             continue;
         }
 
-        // Begin function boundary in DFG
-        df_begin_func(fi);
+        // DFG metadata uses the compact IR function index. Source FuncInfo
+        // indices diverge as soon as a generic function is skipped.
+        ir_func_idx := g_ir_func_count;
+        df_begin_func(ir_func_idx);
 
         // Build cache key from source path + function name
         fn_node := fi_ast_node(fi);
@@ -430,13 +457,14 @@ fn corec_main() -> int {
         var_start := g_ir_var_count;
 
         // Try loading from cache (pass func_idx for signature verification)
-        cached := load_cir_cache(cache_path, fi);
+        cached : int, mut = -1;
+        if cache_enabled != 0 { cached = load_cir_cache(cache_path, fi); }
         if cached == 0 {
             // Cache hit: setup function metadata for restored data
             func_idx := g_ir_func_count;
             grow_ir_func_meta(func_idx + 1);
             w64(g_ir_func_name_idx, func_idx * 8, name_ni);
-            w64(g_ir_func_ret_type, func_idx * 8, ast_type_val(fn_node));
+            w64(g_ir_func_ret_type, func_idx * 8, fi_return_type(fi));
             w64(g_ir_func_instr_start, func_idx * 8, instr_start);
             w64(g_ir_func_var_start, func_idx * 8, var_start);
             w64(g_ir_func_param_count, func_idx * 8, ast_c(fn_node));
@@ -444,14 +472,14 @@ fn corec_main() -> int {
             w64(g_ir_func_var_count, func_idx * 8, g_ir_var_count - var_start);
             g_ir_func_count = func_idx + 1;
 
-            df_end_func(fi);
+            df_end_func(ir_func_idx);
         } else {
             // Cache miss: do full frontend IR gen
             ir_gen_func(fi);
-            df_end_func(fi);
+            df_end_func(ir_func_idx);
 
             // Save cache for future compilations
-            save_cir_cache(cache_path, fi);
+            if cache_enabled != 0 { save_cir_cache(cache_path, fi, ir_func_idx); }
         }
 
         fi = fi + 1;
@@ -576,8 +604,8 @@ fn compile_source(source: string) -> string {
         ei : ., mut = 0;
         loop {
             if ei >= g_diag_count { break; }
-            diag_code := r64(g_diags, ei * 32);
-            diag_msg := load_str_ptr(g_diags, ei * 32 + 8);
+            diag_code := r64(g_diags, ei * DIAG_REC_SIZE);
+            diag_msg := load_str_ptr(g_diags, ei * DIAG_REC_SIZE + 8);
             err_msg = err_msg + " [" + int_str(diag_code) + "] " + diag_msg;
             ei = ei + 1;
         }

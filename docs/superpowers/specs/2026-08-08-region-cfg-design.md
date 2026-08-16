@@ -1,5 +1,7 @@
 # RVSDG 式 Region 化控制流设计
 
+> **术语注记（2026-08-15）**：本规格中的"RVSDG 式"为当时设计路线的真实记录（参考 RVSDG 的嵌套 region 特征）；该结构后定名为 **HDFG（Holographic Dataflow Graph）**，术语演进见 docs/project-book.md。正文保留历史原样。
+
 日期：2026-08-08
 状态：已批准（brainstorming 会话，五节逐节确认）
 

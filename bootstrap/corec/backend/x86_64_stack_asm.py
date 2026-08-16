@@ -180,6 +180,11 @@ class X86_64StackAsmGen:
             return
         elif op == '+':
             if self._is_string_var(instr.left) or self._is_string_var(instr.right):
+                # 附带修复（自举链字符串拼接）：concat 结果必须标注 string 类型，
+                # 否则 3 段以上链（a+b+c+...）的后续 + 被编译成整数 add →
+                # 编译器内部多段拼接的 check_error 消息损坏（如 "index out of
+                # bounds: ..." 变成 ")"）。常量在 gen_constant 标注，调用结果不标注。
+                instr.dest.type = BaseType('string')
                 self.emit(f"    mov rdi, r10"); self.emit(f"    mov rsi, r11")
                 self.emit("    call concat"); self._clobber_regs()
                 self._alu_clobber("    mov r10, rax")
@@ -267,6 +272,17 @@ class X86_64StackAsmGen:
             self.emit("    mov rdi, rsi")
             self.emit("    mov rsi, rdx")
             self.emit("    mov rdx, rcx")
+            self.emit("    syscall")
+            if stack_args > 0: self.emit(f"    add rsp, {stack_args * 8}")
+            if instr.dest: self.emit(f"    mov {self._ref(instr.dest)}, rax")
+        elif instr.func == 'syscall4':
+            # syscall4(num, a, b, c, d): rdi=nr, rsi=a, rdx=b, rcx=c, r8=d
+            # Need: rax=nr, rdi=a, rsi=b, rdx=c, r10=d (x86-64: 4th syscall arg in r10)
+            self.emit("    mov rax, rdi")
+            self.emit("    mov rdi, rsi")
+            self.emit("    mov rsi, rdx")
+            self.emit("    mov rdx, rcx")
+            self.emit("    mov r10, r8")
             self.emit("    syscall")
             if stack_args > 0: self.emit(f"    add rsp, {stack_args * 8}")
             if instr.dest: self.emit(f"    mov {self._ref(instr.dest)}, rax")
@@ -542,6 +558,8 @@ class X86_64StackAsmGen:
         elif isinstance(instr, MakeEnumInstr): self.gen_make_enum(instr)
         elif isinstance(instr, RefInstr): self.gen_ref(instr)
         elif isinstance(instr, PhiInstr): self.gen_phi(instr)
+        elif isinstance(instr, ApproxInstr):
+            pass  # pure annotation — no codegen
         else:
             raise NotImplementedError(f"Unknown instruction: {type(instr)}")
 
@@ -577,7 +595,13 @@ class X86_64StackAsmGen:
                            .replace('\n', '\\n')
                            .replace('\t', '\\t')
                            .replace('\0', '\\0'))
-                self.emit(f".quad {len(sval) + 1}")
+                # 长度头 = 存储字节数 + 1（运行时 str_len 按 label[-8] 读，减 1 去 '\0'）。
+                # 存储字节数必须是「原始字符串的 UTF-8 字节数」：GAS 的 .asciz 会把
+                # \" \\n 等转义反转义回单字节（转义形式计数偏长 → toml 引号比较恒失败，
+                # test_directory_build 回归）；中文按 Python 字符数计会偏短（interp
+                # 报错消息尾字丢失）。#48 与第四轮均按 len(sval.encode('utf-8'))+1 定稿。
+                stored_bytes = len(sval.encode('utf-8'))
+                self.emit(f".quad {stored_bytes + 1}")
                 self.emit(f".LC{lid}: .asciz \"{escaped}\"")
                 self.emit(".balign 8")
 

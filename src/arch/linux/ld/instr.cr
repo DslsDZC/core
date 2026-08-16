@@ -253,6 +253,62 @@ fn e2_jae(b: string, p: int, rel: int) -> int {
     e2_w8(b, p, 15); e2_w8(b, p+1, 131); e2_w32(b, p+2, rel); return 6;
 }
 
+fn e2_ptr_bounds_check(b: string, p: int, base_var: int, alloc_sz: int, access_width: int) -> int {
+    if base_var < 0 || alloc_sz <= 0 { return 0; }
+    width : ., mut = access_width;
+    if width <= 0 { width = 8; }
+    limit : ., mut = alloc_sz - width + 1;
+    if limit < 0 { limit = 0; }
+
+    cp : ., mut = 0;
+    cp = cp + e2_load_var(b, p+cp, 11, base_var);
+    // rax = pointer - allocation base; keep r10 intact for the access.
+    cp = cp + emit_rex(b, p+cp, 1, 10/8, 0, 0);
+    e2_w8(b, p+cp, 137); cp = cp + 1;
+    cp = cp + emit_modrm(b, p+cp, 3, 10%8, 0);
+    cp = cp + emit_rex(b, p+cp, 1, 11/8, 0, 0);
+    e2_w8(b, p+cp, 41); cp = cp + 1;
+    cp = cp + emit_modrm(b, p+cp, 3, 11%8, 0);
+    // F17：limit ≥ 2³¹ 时 cmp imm32 符号扩展会把 limit 变负——无符号比较永不陷阱。
+    // 改为 movabs rcx, imm64 + cmp rax, rcx（64 位无符号比较正确）。
+    // movabs rcx, imm64 — REX.W 0x48 + 0xB9 + imm64
+    e2_w8(b, p+cp, 72); e2_w8(b, p+cp+1, 185);
+    e2_w64(b, p+cp+2, limit); cp = cp + 10;
+    // cmp rax, rcx — REX.W 0x48 + 0x39 + ModRM(3, reg=1, rm=0)
+    cp = cp + emit_rex(b, p+cp, 1, 0, 0, 0);
+    e2_w8(b, p+cp, 57); cp = cp + 1;
+    cp = cp + emit_modrm(b, p+cp, 3, 1, 0);
+    crash_jmp_pos := p+cp;
+    cp = cp + e2_jae(b, p+cp, 0);
+    cp = cp + emit_rex(b, p+cp, 1, 10/8, 0, 10/8);
+    e2_w8(b, p+cp, 133); cp = cp + 1;
+    cp = cp + emit_modrm(b, p+cp, 3, 10%8, 10%8);
+    safe_jmp_pos := p+cp;
+    e2_w8(b, p+cp, 117); e2_w8(b, p+cp+1, 0); cp = cp + 2;
+    e2_w8(b, p+cp, 15); e2_w8(b, p+cp+1, 11); cp = cp + 2;
+    e2_w32(b, crash_jmp_pos + 2, (p+cp) - (crash_jmp_pos + 6) - 2);
+    w8(b, safe_jmp_pos + 1, (p+cp) - (safe_jmp_pos + 2));
+    return cp;
+}
+
+// F6：仅 null 陷阱（无分配信息时——s3=0 快速路径）。
+// test r10, r10（REX.WRB 0x4D 0x85 0xD2）；null → ud2（SIGILL）
+fn e2_ptr_null_check(b: string, p: int) -> int {
+    cp := p;
+    cp = cp + emit_rex(b, cp, 1, 10/8, 0, 10/8);
+    e2_w8(b, cp, 133); cp = cp + 1;
+    cp = cp + emit_modrm(b, cp, 3, 10%8, 10%8);
+    e2_w8(b, cp, 117); e2_w8(b, cp+1, 2); cp = cp + 2;  // jne +2 (skip ud2)
+    e2_w8(b, cp, 15); e2_w8(b, cp+1, 11); cp = cp + 2;  // ud2 (SIGILL)
+    return cp - p;
+}
+
+// F14：movabs rdi, imm64 — REX.W 0x48 + 0xBF + imm64（64 位尺寸语义；
+// 修复前 mov edi, imm32 对 ≥2³² 尺寸按 mod 2³² 回绕）
+fn e2_movabs_rdi(b: string, p: int, v: int) -> int {
+    e2_w8(b, p, 72); e2_w8(b, p+1, 191); e2_w64(b, p+2, v); return 10;
+}
+
 fn e2_alu(b: string, p: int, op: int) -> int {
     // ALU r/m, r: REX.W + REX.RB (r11, r10) + opcode + ModRM reg=11, rm=10
     cp := p;
@@ -300,15 +356,15 @@ fn e2_sd_load_x(b: string, p: int, o: int, rn: int) -> int {
     return cp - p;
 }
 
-// 存返回值到 dest：float → movsd [slot], xmm0（SysV XMM0 返回）；int → rax
+// 存返回值到 dest：dex（binary64，apx 快路径）→ movsd [slot], xmm0（SysV XMM0 返回）；int → rax
 fn e2_store_ret(b: string, p: int, d: int) -> int {
-    if d >= 0 && irv_type(d) == TI_FLOAT {
+    if d >= 0 && irv_type(d) == TI_DEX {
         return e2_sd_store(b, p, g2_slot(d));
     }
     return e2_st(b, p, 0, g2_slot(d));
 }
 
-// 压栈 float（8 字节）：sub rsp,8 + movsd [rsp],xmm0
+// 压栈 binary64 值（8 字节，apx 快路径）：sub rsp,8 + movsd [rsp],xmm0
 fn e2_push_xmm0(b: string, p: int) -> int {
     cp := p;
     w8(b, cp, 72); w8(b, cp+1, 131); w8(b, cp+2, 236); w8(b, cp+3, 8); cp = cp + 4;
@@ -316,10 +372,9 @@ fn e2_push_xmm0(b: string, p: int) -> int {
     return cp - p;
 }
 
-// cvtsi2sd xmm0, [rbp+disp] — F2 0F 2A /0（int→float 转换）
 fn e2_sd_cvt(b: string, p: int, o: int) -> int {
     cp := p;
-    w8(b, cp, 242); w8(b, cp+1, 15); w8(b, cp+2, 42); cp = cp + 3;
+    w8(b, cp, 242); w8(b, cp+1, 72); w8(b, cp+2, 15); w8(b, cp+3, 42); cp = cp + 4;
     if o >= -128 && o <= 127 {
         w8(b, cp, 69); w8(b, cp+1, o); cp = cp + 2;      // ModRM 01 000 101
     } else {
@@ -383,7 +438,7 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
     if op == IR_NOP { return 0; }
 
     if op == IR_I2F && d >= 0 {
-        // int → float：cvtsi2sd xmm0, [rbp+disp] — F2 0F 2A /0，然后 movsd 存回
+        // int → binary64：cvtsi2sd xmm0, [rbp+disp] — F2 0F 2A /0，然后 movsd 存回
         do2 := g2_slot(d);
         cp = cp + e2_sd_cvt(buf, pos+cp, g2_slot(s1));   // cvtsi2sd xmm0, [s1]
         cp = cp + e2_sd_store(buf, pos+cp, do2);
@@ -391,7 +446,7 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
     }
 
     if op == IR_F2I && d >= 0 {
-        // float → int：movsd xmm0, [s1]；cvttsd2si rax, xmm0（F2 48 0F 2C C0）；存回
+        // binary64 → int：movsd xmm0, [s1]；cvttsd2si rax, xmm0（F2 48 0F 2C C0，截断）；存回
         do2 := g2_slot(d);
         cp = cp + e2_sd_load(buf, pos+cp, g2_slot(s1));
         w8(buf, pos+cp, 242); w8(buf, pos+cp+1, 72); w8(buf, pos+cp+2, 15);
@@ -419,8 +474,8 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
 
     if op == IR_BINARY {
         do2 := g2_slot(d);
-        if ti == TI_FLOAT {
-            // float 运算（SSE2 double，IEEE 754）——标准答案实现
+        if ti == TI_DEX {
+            // binary64 运算（SSE2 double，IEEE 754）——apx 快路径标准答案实现
             cp = cp + e2_sd_load(buf, pos+cp, g2_slot(s1));   // xmm0 = s1
             cp = cp + e2_sd_load1(buf, pos+cp, g2_slot(s2));  // xmm1 = s2
             // F2 0F 5x C1：addsd/subsd/mulsd/divsd xmm0, xmm1
@@ -431,17 +486,25 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
             if s3 >= OP_ADD && s3 <= OP_DIV {
                 cp = cp + e2_sd_store(buf, pos+cp, do2);
             } else if s3 >= OP_EQ && s3 <= OP_GE {
-                // float 比较：comisd xmm0, xmm1 — 66 0F 2F C1，用无符号标志
-                // （IEEE 754：< → CF=1；== → ZF=1；> → CF=0&&ZF=0）
-                // 比较结果是 int（0/1），用整数路径存储
                 w8(buf, pos+cp, 102); w8(buf, pos+cp+1, 15); w8(buf, pos+cp+2, 47); w8(buf, pos+cp+3, 193); cp = cp + 4;
-                sop : ., mut = 148;  // sete
-                if s3 == OP_NE { sop = 149; }
-                else if s3 == OP_LT { sop = 146; }   // setb（CF）
-                else if s3 == OP_GT { sop = 151; }   // seta（CF=0 && ZF=0）
-                else if s3 == OP_LE { sop = 150; }   // setbe
-                else if s3 == OP_GE { sop = 147; }   // setae
-                w8(buf, pos+cp, 15); w8(buf, pos+cp+1, sop); w8(buf, pos+cp+2, 192); cp = cp + 3;
+                if s3 == OP_EQ {
+                    // setnp al（0F 9B C0）；sete cl（0F 94 C1）；and al, cl（20 C8）
+                    w8(buf, pos+cp, 15); w8(buf, pos+cp+1, 155); w8(buf, pos+cp+2, 192); cp = cp + 3;
+                    w8(buf, pos+cp, 15); w8(buf, pos+cp+1, 148); w8(buf, pos+cp+2, 193); cp = cp + 3;
+                    w8(buf, pos+cp, 32); w8(buf, pos+cp+1, 200); cp = cp + 2;
+                } else if s3 == OP_NE {
+                    // setp al（0F 9A C0）；setne cl（0F 95 C1）；or al, cl（08 C8）
+                    w8(buf, pos+cp, 15); w8(buf, pos+cp+1, 154); w8(buf, pos+cp+2, 192); cp = cp + 3;
+                    w8(buf, pos+cp, 15); w8(buf, pos+cp+1, 149); w8(buf, pos+cp+2, 193); cp = cp + 3;
+                    w8(buf, pos+cp, 8); w8(buf, pos+cp+1, 200); cp = cp + 2;
+                } else {
+                    // LT/GT/LE/GE 不动——硬件标志语义已正确（含无序时 LT/LE 为真）
+                    sop : ., mut = 146;
+                    if s3 == OP_GT { sop = 151; }   // seta（CF=0 && ZF=0）
+                    else if s3 == OP_LE { sop = 150; }   // setbe
+                    else if s3 == OP_GE { sop = 147; }   // setae
+                    w8(buf, pos+cp, 15); w8(buf, pos+cp+1, sop); w8(buf, pos+cp+2, 192); cp = cp + 3;
+                }
                 // movzx r10d, al — 44 0F B6 D0
                 w8(buf, pos+cp, 68); w8(buf, pos+cp+1, 15); w8(buf, pos+cp+2, 182); w8(buf, pos+cp+3, 208); cp = cp + 4;
                 cp = cp + e2_st(buf, pos+cp, 10, do2);
@@ -548,13 +611,13 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
     if op == IR_CALL {
         fa := s1; ac := s2;
         // SysV AMD64 参数分派：int 用 ir（0-5 → rdi,rsi,rdx,rcx,r8,r9），
-        // float 用 fr（0-7 → xmm0-7），各自独立编号（标准答案）
+        // binary64 参数用 fr（0-7 → xmm0-7），各自独立编号（标准答案）
         // 第一遍：寄存器参数（位置顺序，左到右）
         ir_cnt : ., mut = 0; fr_cnt : ., mut = 0;
         ai := 0;
         loop { if ai >= ac { break; }
             pt := irv_type(fa + ai);
-            if pt == TI_FLOAT {
+            if pt == TI_DEX {
                 if fr_cnt < 8 {
                     cp = cp + e2_sd_load_x(buf, pos+cp, g2_slot(fa + ai), fr_cnt);
                     fr_cnt = fr_cnt + 1;
@@ -569,7 +632,7 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
                 }
             }
         ai = ai + 1; }
-        // 第二遍：栈参数（右到左压，第 7 个 int / 第 9 个 float 超限才压）
+        // 第二遍：栈参数（右到左压，第 7 个 int / 第 9 个 binary64 超限才压）
         stack_total : ., mut = 0;
         stack_ai : ., mut = ac - 1;
         loop {
@@ -577,9 +640,9 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
             ic2 : ., mut = 0; fc2 : ., mut = 0;
             j2 : ., mut = 0;
             loop { if j2 >= stack_ai { break; }
-                if irv_type(fa + j2) == TI_FLOAT { fc2 = fc2 + 1; } else { ic2 = ic2 + 1; }
+                if irv_type(fa + j2) == TI_DEX { fc2 = fc2 + 1; } else { ic2 = ic2 + 1; }
                 j2 = j2 + 1; }
-            if irv_type(fa + stack_ai) == TI_FLOAT {
+            if irv_type(fa + stack_ai) == TI_DEX {
                 if fc2 >= 8 {
                     cp = cp + e2_sd_load_x(buf, pos+cp, g2_slot(fa + stack_ai), 0);
                     cp = cp + e2_push_xmm0(buf, pos+cp);
@@ -600,6 +663,20 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
             cp = cp + e2_mov(buf, pos+cp, 7, 6);
             cp = cp + e2_mov(buf, pos+cp, 6, 2);
             cp = cp + e2_mov(buf, pos+cp, 2, 1);
+            // syscall: 2-byte 0x0F 0x05
+            e2_w8(buf, pos+cp, 15); e2_w8(buf, pos+cp+1, 5); cp = cp + 2;
+            if d >= 0 { cp = cp + e2_store_ret(buf, pos+cp, d); }
+        } else if s3 == g_ni_syscall4 {
+            // syscall4(num, a, b, c, d)——第 4 参 d 经 r10 传递（x86-64 syscall
+            // 约定：第 4 参在 r10；rcx 被 syscall 指令用作返回地址）。
+            // I-2：wait4 的 rusage 此前无第 4 参通道——通用装载器把第 4 参放
+            // rcx（ir_cnt=3）、第 5 参放 r8（ir_cnt=4），syscall 读 r10 = 残留
+            // 垃圾 → 内核 EFAULT 或写错地址 → 退出码传播不可靠。
+            cp = cp + e2_mov(buf, pos+cp, 0, 7);   // rax = rdi — syscall number
+            cp = cp + e2_mov(buf, pos+cp, 7, 6);   // rdi = rsi — arg1
+            cp = cp + e2_mov(buf, pos+cp, 6, 2);   // rsi = rdx — arg2
+            cp = cp + e2_mov(buf, pos+cp, 2, 1);   // rdx = rcx — arg3
+            cp = cp + e2_mov(buf, pos+cp, 10, 8);  // r10 = r8  — arg4
             // syscall: 2-byte 0x0F 0x05
             e2_w8(buf, pos+cp, 15); e2_w8(buf, pos+cp+1, 5); cp = cp + 2;
             if d >= 0 { cp = cp + e2_store_ret(buf, pos+cp, d); }
@@ -765,6 +842,29 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
     if op == IR_CALL_EXTERN {
         do2 := g2_slot(d);
         name_ni := s1;
+        // F16①：装载参数（s2=首参、s3=参数个数，SysV AMD64 约定：
+        // int rdi,rsi,rdx,rcx,r8,r9；float xmm0-7）——修复前 call 前无任何装载。
+        fa2 := s2; ac2 := s3;
+        ir_cnt2 : ., mut = 0; fr_cnt2 : ., mut = 0;
+        ai2 : ., mut = 0;
+        loop { if ai2 >= ac2 { break; }
+            pt2 := irv_type(fa2 + ai2);
+            if pt2 == TI_DEX {
+                if fr_cnt2 < 8 {
+                    cp = cp + e2_sd_load_x(buf, pos+cp, g2_slot(fa2 + ai2), fr_cnt2);
+                    fr_cnt2 = fr_cnt2 + 1;
+                }
+            } else {
+                if ir_cnt2 < 6 {
+                    r2 := -1;
+                    if ir_cnt2 == 0 { r2 = 7; } if ir_cnt2 == 1 { r2 = 6; } if ir_cnt2 == 2 { r2 = 2; }
+                    if ir_cnt2 == 3 { r2 = 1; } if ir_cnt2 == 4 { r2 = 8; } if ir_cnt2 == 5 { r2 = 9; }
+                    cp = cp + e2_load_var(buf, pos+cp, r2, fa2 + ai2);
+                    ir_cnt2 = ir_cnt2 + 1;
+                }
+            }
+            ai2 = ai2 + 1;
+        }
         // Record external relocation
         grow_ext_rel(g_x86_ext_rel_count + 1);
         w64(g_x86_ext_rel_pos, g_x86_ext_rel_count * 8, pos + cp);
@@ -791,13 +891,76 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
 
     if op == IR_SPAWN {
         do2 := g2_slot(d);
-        name_ni := s1;
-        // Emit call to function + store result (single-threaded mode for now)
+        // F4：操作数约定对齐——s1=首参、s2=参数个数、s3=函数名 ni
+        // （ir_gen L939 发射 `emit(IR_SPAWN, dest2, val_var, 1, func_ni, -1)`；
+        //  interp 同用 s3 查函数名。修复前 `name_ni := s1` 拿参数变量索引当
+        //  函数名查表 → 补丁失败 → call rel32=0 → 栈不平衡 → SIGSEGV 139。）
+        name_ni := s3;
+        // F4：补参数装载——与 IR_CALL 完全相同的 SysV AMD64 分派
+        // （int: rdi,rsi,rdx,rcx,r8,r9 + 栈超限；float: xmm0-7）。
+        fa := s1; ac := s2;
+        ir_cnt : ., mut = 0; fr_cnt : ., mut = 0;
+        ai := 0;
+        loop { if ai >= ac { break; }
+            pt := irv_type(fa + ai);
+            if pt == TI_DEX {
+                if fr_cnt < 8 {
+                    cp = cp + e2_sd_load_x(buf, pos+cp, g2_slot(fa + ai), fr_cnt);
+                    fr_cnt = fr_cnt + 1;
+                }
+            } else {
+                if ir_cnt < 6 {
+                    r := -1;
+                    if ir_cnt == 0 { r = 7; } if ir_cnt == 1 { r = 6; } if ir_cnt == 2 { r = 2; }
+                    if ir_cnt == 3 { r = 1; } if ir_cnt == 4 { r = 8; } if ir_cnt == 5 { r = 9; }
+                    cp = cp + e2_load_var(buf, pos+cp, r, fa + ai);
+                    ir_cnt = ir_cnt + 1;
+                }
+            }
+        ai = ai + 1; }
+        // 栈参数（右到左压，第 7 个 int / 第 9 个 float 超限才压）——同 IR_CALL
+        stack_total : ., mut = 0;
+        stack_ai : ., mut = ac - 1;
+        loop {
+            if stack_ai < 0 { break; }
+            ic2 : ., mut = 0; fc2 : ., mut = 0;
+            j2 : ., mut = 0;
+            loop { if j2 >= stack_ai { break; }
+                if irv_type(fa + j2) == TI_DEX { fc2 = fc2 + 1; } else { ic2 = ic2 + 1; }
+                j2 = j2 + 1; }
+            if irv_type(fa + stack_ai) == TI_DEX {
+                if fc2 >= 8 {
+                    cp = cp + e2_sd_load_x(buf, pos+cp, g2_slot(fa + stack_ai), 0);
+                    cp = cp + e2_push_xmm0(buf, pos+cp);
+                    stack_total = stack_total + 1;
+                }
+            } else {
+                if ic2 >= 6 {
+                    cp = cp + e2_load_var(buf, pos+cp, 10, fa + stack_ai);
+                    e2_w8(buf, pos+cp, 65); e2_w8(buf, pos+cp+1, 82); cp = cp + 2;  // push r10
+                    stack_total = stack_total + 1;
+                }
+            }
+            stack_ai = stack_ai - 1;
+        }
+        // Emit call to function + store result (single-threaded approximation)
         grow_call_patch(g_x86_call_patch_count + 1);
         w64(g_x86_call_patch_pos, g_x86_call_patch_count * 8, pos + cp);
         w64(g_x86_call_patch_name, g_x86_call_patch_count * 8, name_ni);
         g_x86_call_patch_count = g_x86_call_patch_count + 1;
         e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;
+        // 栈清理（call 后恢复 rsp）——同 IR_CALL
+        stack_count := stack_total;
+        if stack_count > 0 {
+            stack_bytes := stack_count * 8;
+            if stack_bytes <= 127 {
+                e2_w8(buf, pos+cp, 72); e2_w8(buf, pos+cp+1, 131);
+                e2_w8(buf, pos+cp+2, 196); e2_w8(buf, pos+cp+3, stack_bytes); cp = cp + 4;
+            } else {
+                e2_w8(buf, pos+cp, 72); e2_w8(buf, pos+cp+1, 129); e2_w8(buf, pos+cp+2, 196);
+                e2_w32(buf, pos+cp+3, stack_bytes); cp = cp + 7;
+            }
+        }
         cp = cp + e2_st(buf, pos+cp, 0, do2);
         return cp;
     }
@@ -824,8 +987,8 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
 
     if op == IR_RETURN {
         if s1 >= 0 {
-            if irv_type(s1) == TI_FLOAT {
-                // float 返回：movsd xmm0, [slot]（SysV 返回值在 XMM0）
+            if irv_type(s1) == TI_DEX {
+                // binary64 返回：movsd xmm0, [slot]（SysV 返回值在 XMM0，apx 快路径）
                 cp = cp + e2_sd_load(buf, pos+cp, g2_slot(s1));
             } else if r64(g_x86_is_global, s1 * 8) != 0 {
                 // Global: load via RIP-relative into rax
@@ -858,7 +1021,7 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
             if si >= 0 {
                 fc := si_field_count(si);
                 if fc > 0 {
-                    e2_w8(buf, pos+cp, 191); e2_w32(buf, pos+cp+1, fc * 8); cp = cp + 5;  // mov edi, size
+                    cp = cp + e2_movabs_rdi(buf, pos+cp, fc * 8);
                     grow_alloc_patch(g_x86_alloc_patch_count + 1); w64(g_x86_alloc_patch_pos, g_x86_alloc_patch_count * 8, pos + cp);
                     g_x86_alloc_patch_count = g_x86_alloc_patch_count + 1;
                     e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;  // call placeholder
@@ -872,7 +1035,15 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
     if op == IR_ALLOC_ARRAY {
         do2 := g2_slot(d); sz := s1 * 8;
         if sz > 0 {
-            e2_w8(buf, pos+cp, 191); e2_w32(buf, pos+cp+1, sz); cp = cp + 5;  // mov edi, size
+            cp = cp + e2_movabs_rdi(buf, pos+cp, sz);
+            grow_alloc_patch(g_x86_alloc_patch_count + 1); w64(g_x86_alloc_patch_pos, g_x86_alloc_patch_count * 8, pos + cp);
+            g_x86_alloc_patch_count = g_x86_alloc_patch_count + 1;
+            e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;  // call placeholder
+            cp = cp + e2_st(buf, pos+cp, 0, do2);
+        } else if s1 > 0 {
+            // F14：s1*8 在 64 位内溢出为负（s1 > 2⁶¹）——不静默不发射；
+            // 按 OOM 处理（alloc(-1) → null），后续访问由 null 陷阱捕获。
+            cp = cp + e2_movabs_rdi(buf, pos+cp, -1);
             grow_alloc_patch(g_x86_alloc_patch_count + 1); w64(g_x86_alloc_patch_pos, g_x86_alloc_patch_count * 8, pos + cp);
             g_x86_alloc_patch_count = g_x86_alloc_patch_count + 1;
             e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;  // call placeholder
@@ -987,47 +1158,13 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
 
     if op == IR_DEREF && d >= 0 {
         do2 := g2_slot(d);
-        // s3 encodes bounds info from ProvenanceVerify:
-        //   s3 == 0: no check needed (provenance known)
-        //   s3 != 0: load ptr into r10, then:
-        //     1. page_offset = r10 & 0xFFF
-        //     2. if page_offset >= alloc_size → crash (SIGILL)
-        //     3. if r10 == 0 → crash
-        //     4. safe deref: mov r10, [r10]
         cp = cp + e2_load_var(buf, pos+cp, 10, s1);
         if s3 != 0 {
-            alloc_sz := s3;  // encoded alloc_size from ProvenanceVerify
-            // --- cmp + jae + ud2 sequence (doc §ProvenanceVerify) ---
-            // Copy r10 to r11 for offset computation
-            cp = cp + emit_rex(buf, pos+cp, 1, 11/8, 0, 10/8);
-            e2_w8(buf, pos+cp, 137); cp = cp + 1;  // 0x89 MOV r/m, r
-            cp = cp + emit_modrm(buf, pos+cp, 3, 10%8, 11%8);  // mov r11, r10
-            // and r11, 0xFFF (page offset)
-            cp = cp + emit_rex(buf, pos+cp, 1, 0, 0, 11/8);
-            e2_w8(buf, pos+cp, 129); cp = cp + 1;  // 0x81 AND r/m, imm32
-            cp = cp + emit_modrm(buf, pos+cp, 3, 4, 11%8);  // /4 = AND
-            e2_w32(buf, pos+cp, 4095); cp = cp + 4;  // mask 0xFFF
-            // cmp r11, alloc_size
-            cp = cp + emit_rex(buf, pos+cp, 1, 0, 0, 11/8);
-            e2_w8(buf, pos+cp, 129); cp = cp + 1;  // 0x81 CMP r/m, imm32
-            cp = cp + emit_modrm(buf, pos+cp, 3, 7, 11%8);  // /7 = CMP
-            e2_w32(buf, pos+cp, alloc_sz); cp = cp + 4;
-            // jae .crash (2-byte near jae: 0F 83)
-            crash_jmp_pos := pos+cp;
-            cp = cp + e2_jae(buf, pos+cp, 0);  // placeholder
-            // test r10, r10 (null check)
-            cp = cp + emit_rex(buf, pos+cp, 1, 10/8, 0, 10/8); e2_w8(buf, pos+cp, 133); cp = cp + 1; cp = cp + emit_modrm(buf, pos+cp, 3, 10%8, 10%8);
-            // jne .safe (skip ud2 if non-null)
-            safe_jmp_pos := pos+cp;
-            e2_w8(buf, pos+cp, 117); e2_w8(buf, pos+cp+1, 0); cp = cp + 2;  // placeholder
-            // .crash: ud2（必须写 pos+cp 绝对位置——修复前写 buf[cp] 污染函数头）
-            e2_w8(buf, pos+cp, 15); e2_w8(buf, pos+cp+1, 11); cp = cp + 2;
-            // Patch jae to jump to ud2 (crash): target = crash_jmp_pos+6+3+2
-            // (jae 6 + test 3 + jne 2 = ud2 起点)。修复前跳到 .safe，越界不崩溃。
-            e2_w32(buf, crash_jmp_pos + 2, (pos+cp) - (crash_jmp_pos + 6) - 2);
-            // Patch jne to jump past ud2 to .safe（修复前多 +2，跳到指令中间）
-            w8(buf, safe_jmp_pos + 1, (pos+cp) - (safe_jmp_pos + 2));
-            // .safe: deref
+            n := e2_ptr_bounds_check(buf, pos+cp, s2, s3, ti);
+            if n <= 0 { cp = cp + e2_ptr_null_check(buf, pos+cp); } else { cp = cp + n; }
+        } else {
+            // F6：无分配信息（s3=0）时至少保留 null 陷阱
+            cp = cp + e2_ptr_null_check(buf, pos+cp);
         }
         // mov r10, [r10]
         cp = cp + emit_rex(buf, pos+cp, 1, 10/8, 0, 10/8); e2_w8(buf, pos+cp, 139); cp = cp + 1; cp = cp + emit_modrm(buf, pos+cp, 0, 10%8, 10%8);
@@ -1053,6 +1190,14 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
     if op == IR_STORE_PTR {
         // load pointer (handles local and global)
         cp = cp + e2_load_var(buf, pos+cp, 10, s1);
+        if s3 != 0 {
+            n := e2_ptr_bounds_check(buf, pos+cp, d, s3, ti);
+            if n <= 0 { cp = cp + e2_ptr_null_check(buf, pos+cp); } else { cp = cp + n; }
+        } else {
+            // F6：s3=0（provenance 未填充/unsafe）时至少保留 null 陷阱——
+            // 修复前整个检查序列（含 null 陷阱）被跳过（instr.cr 旧 L1051）。
+            cp = cp + e2_ptr_null_check(buf, pos+cp);
+        }
         // load value to store (handles local and global)
         cp = cp + e2_load_var(buf, pos+cp, 11, s2);
         // mov [r10], r11 — REX.WRB + 0x89
@@ -1219,15 +1364,21 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
     }
 
     if op == IR_BOUNDS_CHECK && s2 >= 0 {
-        // s1 = index var, s2 = max_len literal — crash if index < 0 or index >= max_len
+        // s1 = index var, s2 = max_len 字面量 — index < 0 或 index >= max_len → ud2
+        // F1c：s2 是字面量长度（发射约定），修复前按变量槽加载（e2_load_var）——
+        // 把长度当变量索引读，检查恒错。
         cp = cp + e2_load_var(buf, pos+cp, 10, s1);  // index
-        cp = cp + e2_load_var(buf, pos+cp, 11, s2);  // max_len
+        // movabs r11, imm64 — REX.W+B 0x49 0xBB + imm64
+        e2_w8(buf, pos+cp, 73); e2_w8(buf, pos+cp+1, 187);
+        e2_w64(buf, pos+cp+2, s2); cp = cp + 10;
         cp = cp + e2_alu(buf, pos+cp, 57);           // cmp r10, r11
         // jb +2: if index < max (unsigned below), skip the 2-byte ud2 → continue
         e2_w8(buf, pos+cp, 114);                      // 0x72 = jb rel8
         e2_w8(buf, pos+cp+1, 2);                     // skip past ud2
         cp = cp + 2;
-        w8(buf, cp, 15); w8(buf, cp+1, 11); cp = cp + 2;  // ud2 (SIGILL)
+        // 注意：必须用 pos+cp（Phase 3 的 pos 为绝对基址）——修复前写 cp（相对
+        // 偏移）→ ud2 落到缓冲区开头（后被 ELF 头覆盖）→ 检查恒不陷阱。
+        e2_w8(buf, pos+cp, 15); e2_w8(buf, pos+cp+1, 11); cp = cp + 2;  // ud2 (SIGILL)
         return cp;
     }
 
@@ -1241,6 +1392,10 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
     }
     if op == IR_FAST {
         // No-op — consumed by optimization passes
+        return 0;
+    }
+    if op == IR_APPROX {
+        // No-op — annotation only (apx: approved for approximate arithmetic)
         return 0;
     }
     if op == IR_UNROLL {
@@ -1265,13 +1420,16 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
     }
 
     if op == IR_YIELD {
-        // yield: call sched.sched_yield()
-        ni_sched_yield := str_intern("sched_yield");
-        grow_call_patch(g_x86_call_patch_count + 1);
-        w64(g_x86_call_patch_pos, g_x86_call_patch_count * 8, pos + cp);
-        w64(g_x86_call_patch_name, g_x86_call_patch_count * 8, ni_sched_yield);
-        g_x86_call_patch_count = g_x86_call_patch_count + 1;
-        e2_w8(buf, pos+cp, 232); e2_w32(buf, pos+cp+1, 0); cp = cp + 5;
+        // F5b：eager 单线程近似——与 IR_AWAIT 一致的槽转移（d ← ρ(s1)），
+        // 与 interp 一致（语义表 2.7：eager 近似，D 设计族）。
+        // 原实现 `call sched_yield()` 且忽略 s1：① 与定义语义（向 flow 消费者
+        // 通道发射值）不符；② sched_yield 未导入 → call rel32 补丁悬空 → 崩溃；
+        // 导入后无 goroutine 上下文（fiber_switch 无栈可切）同样崩溃（139）。
+        // 发射侧 dest=-1（ir_gen L1569）→ 本近似为 no-op（yield 值被丢弃）。
+        if d >= 0 && s1 >= 0 {
+            cp = cp + e2_ld(buf, pos+cp, 10, g2_slot(s1));
+            cp = cp + e2_st(buf, pos+cp, 10, g2_slot(d));
+        }
         return cp;
     }
 
@@ -1338,10 +1496,15 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
         j3_off := cp;
         e2_w8(buf, pos+cp, 116); e2_w8(buf, pos+cp+1, 0); cp = cp + 2;
 
-        // 3. .type_error: no known type matched — fall through from compare chain
-        //    xor eax, eax; ret
-        e2_w8(buf, pos+cp, 49); e2_w8(buf, pos+cp+1, 192); cp = cp + 2;  // xor eax, eax
-        e2_w8(buf, pos+cp, 195); cp = cp + 1;  // ret
+        // 3. .type_error: 未知 tag——静默产 0（语义表 2.6 BC9 的占位设计意图：
+        // 「未知 tag 静默返回 0」；s2 方法名当前未用，占位）。
+        //    F3：原实现 `xor eax,eax; ret` 在函数体中间发射 ret——有栈帧
+        //    （push rbp; sub rsp）时弹出局部槽 → SIGSEGV；改 xor r10d,r10d +
+        //    jmp .done（值级 d := 0，无中间 ret，不崩溃）。注意：本段必须位于
+        //    compare-chain 之后（落空即到此）、.case_common 之前。
+        e2_w8(buf, pos+cp, 69); e2_w8(buf, pos+cp+1, 49); e2_w8(buf, pos+cp+2, 210); cp = cp + 3;  // xor r10d, r10d (45 31 D2)
+        type_jmp_off := cp;
+        e2_w8(buf, pos+cp, 235); e2_w8(buf, pos+cp+1, 0); cp = cp + 2;  // 0xEB = jmp rel8 .done
 
         // 4. .case_common: extract value from dyn_var offset +0
         case_pos := cp;
@@ -1357,10 +1520,14 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
         }
 
         // 6. Patch all forward jump offsets (rel8)
-        e2_w8(buf, j1_off + 1, case_pos - (j1_off + 2));
-        e2_w8(buf, j2_off + 1, case_pos - (j2_off + 2));
-        e2_w8(buf, j3_off + 1, case_pos - (j3_off + 2));
-        e2_w8(buf, jmp_done_off + 1, done_pos - (jmp_done_off + 2));
+        //    F3：写入位置加 pos 基——原实现用指令内相对偏移（j1_off 等，cp 系）
+        //    当绝对缓冲区偏移 → 补丁写错地址 → 三个 je rel8 恒 0 → 已知 tag 也
+        //    坠错误路径 → SIGSEGV（139）。对照全文件其他补丁的 `pos + cp` 惯例。
+        e2_w8(buf, pos + j1_off + 1, case_pos - (j1_off + 2));
+        e2_w8(buf, pos + j2_off + 1, case_pos - (j2_off + 2));
+        e2_w8(buf, pos + j3_off + 1, case_pos - (j3_off + 2));
+        e2_w8(buf, pos + jmp_done_off + 1, done_pos - (jmp_done_off + 2));
+        e2_w8(buf, pos + type_jmp_off + 1, done_pos - (type_jmp_off + 2));
 
         return cp;
     }

@@ -5,10 +5,11 @@ Core 语言语法
 ## 设计哲学
 
 - `dyn` 动态类型：图全量已知所有分支，编译器自动插转换代码，不需要用户写 cast。
-- 裸指针，和 C 一样自由，编译器通过数据流图自动验证安全。
-- 编译时执行由数据流图自动推导，无需关键字。`@comptime` 提供"算不了就报错"的保证。
+- 裸指针，和 C 一样自由，编译器通过HDFG自动验证安全。
+- 编译时执行由HDFG自动推导，无需关键字。`@comptime` 提供"算不了就报错"的保证。
 - requires / ensures 规约与函数体并列，可选编写，参与静态检查。
-- 同步调用与 go/await 并发构造统一映射为数据流图。
+- 同步调用与 go/await 并发构造统一映射为HDFG。
+- I/O 是流变换（转导器）：程序 = (输入流) → (输出流)，输入输出是同一数学对象（流）的两端——输出即对世界的输入。I/O 程序语义 = 流变换，规约可描述「输入流性质 → 输出流性质」，是一等公民语义而非验证黑洞。read_file/print/println 等现有 API 保持原样，系统调用等物理实现由后端按平台桥抽象隔离。
 
 ---
 
@@ -31,7 +32,7 @@ auto fileid move in None Some unit
 注：`comptime` 不是关键字（`@comptime` 是 @ 内建原语）；`requires/ensures/old/result/self/Self`
 亦非词法关键字（规约语法见 `docs/spec-design.md` 与 `corespec.ebnf`，`self` 按标识符解析）。
 
-注意：* 用于解引用指针，-> 仅用于返回类型，& 取地址。指针安全由数据流图自动验证，详见 `docs/pointer-model.md`。
+注意：* 用于解引用指针，-> 仅用于返回类型，& 取地址。指针安全由HDFG自动验证，详见 `docs/pointer-model.md`。
 
 `@` 开头的是编译器内建原语，不通过标准库实现：
 - `@typeInfo` `@field` `@hasField` `@fields` `@sizeOf` `@alignOf` — 类型内省
@@ -146,10 +147,10 @@ fn main() {
 
 ```core
 x := 42;           // 不可变，类型推断为 int
-y : ., mut = 3.14; // 可变，类型推断
+y : ., mut = 3.14; // 可变，类型推断为 dex（精确小数）
 ```
 
-类型标注、标签（mut/pub）可选：
+类型标注、标签（mut/pub/apx）可选：
 
 ```core
 x : int = 42;
@@ -157,6 +158,7 @@ name : string = "Core";
 
 count : int, mut = 0;  // 可变 + 显式类型
 pub_val : int, pub = 42; // 公开字段
+speed : ., apx = 3.14; // apx = 近似授权：授权后端对 dex 运算做语义级变换（CPU 上兑现为 binary64 快路径）
 
 // 批量声明
 a, b : int = 1, 2;
@@ -189,7 +191,7 @@ fn add(a: int, b: int) -> auto {
     return a + b;      // 推导为 int
 }
 
-fn pi() -> auto = 3.14159;  // 推导为 float（单行形式）
+fn pi() -> auto = 3.14159;  // 推导为 dex（精确小数，单行形式）
 ```
 
 注意：`auto` 是关键字，不可用作变量名或类型名。
@@ -198,8 +200,8 @@ fn pi() -> auto = 3.14159;  // 推导为 float（单行形式）
 
 | 类型 | 说明 |
 |------|------|
-| int | 整数（编译器按需选择宽度） |
-| float | 64 位浮点数 |
+| int | 整数（精确；i64 实现） |
+| dex | 精确小数（默认实数语义，缩放整数/定点实现，精度内置） |
 | bool | true / false |
 | string | 不可变 UTF-8 字符串 |
 | char | Unicode 标量值 |
@@ -208,6 +210,11 @@ fn pi() -> auto = 3.14159;  // 推导为 float（单行形式）
 `dyn` 动态类型详见 `docs/dynamic-typing.md`。
 | unit | 空值 () |
 | never | 发散类型 |
+
+`3.14` 字面量默认产生 dex；近似需显式授权——`apx` 是变量级标签（与 mut/pub 同族）：
+`x : ., apx = 3.14` 授权后端把 dex 运算降级为 binary64 FPU 快路径（结果可以变）；
+不带 apx 时 dex 恒精确（其他范式忽略 apx 附注即回退到精确缩放整数运算）。
+`_f32` / `_f64` 后缀保留，暂作 apx 的 CPU 位宽标注。
 
 显式位宽后缀：
 
@@ -218,7 +225,7 @@ count := 100_i32;
 
 ### 3.3 指针
 
-Core 的指针是裸地址，和 C 一样自由，但编译器通过数据流图自动验证安全。
+Core 的指针是裸地址，和 C 一样自由，但编译器通过HDFG自动验证安全。
 
 ```core
 p := &arr[0];      // 取地址，编译器记下 provenance
@@ -227,11 +234,11 @@ x := *p;           // 解引用，编译器验证 offset ∈ [0, len)
 ptr := cast<int*>(addr);  // 显式转换
 ```
 
-指针安全基于数据流图的 provenance 推导，详见 `docs/pointer-model.md`。
+指针安全基于HDFG的 provenance 推导，详见 `docs/pointer-model.md`。
 
 ### 3.4 编译时执行
 
-Core 的编译时执行以`数据流图的自动推导为主，`@comptime` 兜底为辅。
+Core 的编译时执行以`HDFG的自动推导为主，`@comptime` 兜底为辅。
 
 ```core
 // 自动推导——图看见输入全是常量，自动编译期执行
@@ -310,8 +317,8 @@ slice : [int] = arr[0..2];   // 切片，引用原数组
 
 ```core
 struct Point {
-    x: float,
-    y: float,
+    x: dex,
+    y: dex,
 }
 
 p := Point { x = 1.0, y = 2.0 };
@@ -351,11 +358,11 @@ fn add(a: int, b: int) -> int = a + b;
 
 ```core
 impl Point {
-    fn norm(&self) -> float {
+    fn norm(&self) -> dex {
         (self.x * self.x + self.y * self.y).sqrt()
     }
 
-    fn move_by(&mut self, dx: float, dy: float) {
+    fn move_by(&mut self, dx: dex, dy: dex) {
         self.x += dx;
         self.y += dy;
     }
@@ -468,7 +475,7 @@ fn consume(v: Vec<int>) { ... }
 consume(move b);         // b 移动进去
 ```
 
-- 复制类型：整数、浮点数、布尔、小元组等实现 Copy 接口，赋值时自动复制。
+- 复制类型：整数、精确小数（dex）、布尔、小元组等实现 Copy 接口，赋值时自动复制。
 
 无生命周期标注，编译器全权推断引用有效性。
 
@@ -496,14 +503,14 @@ impl Hash for Point {
 }
 ```
 
-标准库为常用类型提供 Hash 实现：
+标准库为常用类型提供 Hash 实现——哈希的语义是散列函数（数学：同一输入必得同一输出），具体算法是后端实现细节、可替换（平台桥提供 hash_bytes/hash_str 语义接口，现有 str_hash 保持）：
 
 | 类型 | Hash 实现 |
 |------|----------|
 | `int` | 整数值直接作为哈希 |
 | `string` | 基于内容的哈希 |
 | `bool` | true/false 映射为固定值 |
-| `float` | 按位表示的哈希 |
+| `dex` | 按位表示的哈希 |
 | `(T1, T2)` | 组合哈希 |
 
 用户也可为自定义类型手动实现或通过 derive 自动生成。
@@ -612,9 +619,9 @@ RawRef<T> 无法逃逸到安全代码。
 
 ---
 
-## 十二、数据流图视图（设计）
+## 十二、HDFG视图（设计）
 
-编写顺序代码时，后台自动构建数据流图：
+编写顺序代码时，后台自动构建HDFG：
 
 - 每个 flow / go 映射为图节点
 - yield / recv 定义连续的数据边
@@ -630,17 +637,17 @@ RawRef<T> 无法逃逸到安全代码。
 ```core
 mod examples::pi;
 
-fn leibniz_partial(start: int, n: int) -> float {
+fn leibniz_partial(start: int, n: int) -> dex {
     sum : ., mut = 0.0;
     sign : ., mut = if start % 4 == 1 { 1.0 } else { -1.0 };
     for i in 0..n {
-        sum += sign / ((start + 2 * i) as float);
+        sum += sign / ((start + 2 * i) as dex);
         sign = -sign;
     }
     return sum;
 }
 
-flow worker(id: int, base: int, chunk: int) -> float {
+flow worker(id: int, base: int, chunk: int) -> dex {
     offset : ., mut = base;
     loop {
         partial := leibniz_partial(offset, chunk);

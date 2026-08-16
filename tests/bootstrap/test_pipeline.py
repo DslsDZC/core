@@ -183,17 +183,17 @@ fn main() -> int {
 }
 ''', 3)
 
-# ── Float ──
-test('Float Add', '''
-fn main() -> float {
+# ── Dex ──
+test('Dex Add', '''
+fn main() -> dex {
     a := 3.14;
     b := 2.86;
     return a + b;
 }
 ''', 6.0)
 
-test('Int Float Mix', '''
-fn main() -> float {
+test('Int Dex Mix', '''
+fn main() -> dex {
     a := 2;
     b := 3.5;
     return a + b;
@@ -304,6 +304,23 @@ fn main() -> int {
     return 88;
 }
 ''', 88)
+
+# ── 整数除/模向零截断（BC2/F10：对照 ELF idiv 与 CompCert Z.quot/Z.rem）──
+test('Div trunc toward zero (-7/3)', '''
+fn main() -> int { return -7 / 3; }
+''', -2)
+
+test('Div trunc toward zero (7/-3)', '''
+fn main() -> int { return 7 / -3; }
+''', -2)
+
+test('Mod sign follows dividend (-7%3)', '''
+fn main() -> int { return -7 % 3; }
+''', -1)
+
+test('Mod sign follows dividend (7%-3)', '''
+fn main() -> int { return 7 % -3; }
+''', 1)
 
 # ── Summary ──
 print(f"\n{passed}/{passed + failed} passed", end="")

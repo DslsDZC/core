@@ -1,6 +1,45 @@
 // === dump.cr ===
 // IR/CCR dump formatting helpers and diagnostic output commands.
 
+g_dump_buf : string, mut;
+g_dump_pos : int, mut;
+g_dump_cap : int, mut;
+
+fn dump_buf_reset() {
+    g_dump_cap = 4096;
+    g_dump_buf = alloc(g_dump_cap);
+    g_dump_pos = 0;
+}
+
+fn dump_buf_grow(needed: int) {
+    if needed < g_dump_cap { return; }
+    nc : ., mut = g_dump_cap * 2;
+    loop { if nc > needed { break; } nc = nc * 2; }
+    nb := alloc(nc);
+    if g_dump_pos > 0 { _dyncpy(g_dump_buf, g_dump_pos, nb); }
+    g_dump_buf = nb;
+    g_dump_cap = nc;
+}
+
+fn dump_buf_append(s: string) {
+    sl := str_len(s);
+    dump_buf_grow(g_dump_pos + sl + 1);
+    i : ., mut = 0;
+    loop {
+        if i >= sl { break; }
+        store8(g_dump_buf, g_dump_pos + i, load8(s, i));
+        i = i + 1;
+    }
+    g_dump_pos = g_dump_pos + sl;
+}
+
+fn dump_buf_finish() -> string {
+    out := alloc(g_dump_pos + 1);
+    if g_dump_pos > 0 { _dyncpy(g_dump_buf, g_dump_pos, out); }
+    store8(out, g_dump_pos, 0);
+    return out;
+}
+
 fn ir_var_str(var_idx: int) -> string {
     if var_idx < 0 { return ""; }
     n := get_ir_var_name(var_idx);
@@ -10,12 +49,13 @@ fn ir_var_str(var_idx: int) -> string {
 
 fn type_kind_name(tk: int) -> string {
     if tk == 0 { return "int"; }
-    if tk == 1 { return "float"; }
+    if tk == 1 { return "dex"; }
     if tk == 2 { return "bool"; }
     if tk == 3 { return "str"; }
     if tk == 4 { return "unit"; }
     if tk == 5 { return "never"; }
     if tk == 6 { return "char"; }
+    if tk == 8 { return "dex"; }  // TI_DEX_S（定点精确形式，数值迁移 Task 4）
     return "?";
 }
 
@@ -226,12 +266,12 @@ fn cmd_ir(src_path: string) -> int {
 // (SG_IF/SG_LOOP/SG_FOR/SG_FLOW/SG_UNSAFE) + "Block: labelN" blocks.
 // Shared by cmd_cir (writes to file) and main.cr's `cir` command (stdout).
 fn cir_text_dump() -> string {
-    ccr : ., mut = "";
+    dump_buf_reset();
     fi : ., mut = 0;
     loop {
         if fi >= g_ir_func_count { break; }
         name_ni := r64(g_ir_func_name_idx, fi * 8);
-        ccr = ccr + "Function: " + istr_get(name_ni) + "\n";
+        dump_buf_append("Function: "); dump_buf_append(istr_get(name_ni)); dump_buf_append("\n");
         start := r64(g_ir_func_instr_start, fi * 8);
         count := r64(g_ir_func_instr_count, fi * 8);
         // Region list for this function (regions whose DFNode start falls in
@@ -252,7 +292,9 @@ fn cir_text_dump() -> string {
                     if rkind == SG_FOR    { rname = "for"; }
                     if rkind == SG_FLOW   { rname = "flow"; }
                     if rkind == SG_UNSAFE { rname = "unsafe"; }
-                    ccr = ccr + "  Region: " + rname + " nodes " + int_str(rstart) + ".." + int_str(rend) + "\n";
+                    dump_buf_append("  Region: "); dump_buf_append(rname);
+                    dump_buf_append(" nodes "); dump_buf_append(int_str(rstart));
+                    dump_buf_append(".."); dump_buf_append(int_str(rend)); dump_buf_append("\n");
                 }
             }
             ri = ri + 1;
@@ -262,31 +304,32 @@ fn cir_text_dump() -> string {
         loop {
             if ii >= count { break; }
             if iri_op(start + ii) == IR_LABEL {
-                if in_block != 0 { ccr = ccr + "\n"; }
-                ccr = ccr + "  Block: label" + int_str(iri_s1(start + ii)) + "\n";
+                if in_block != 0 { dump_buf_append("\n"); }
+                dump_buf_append("  Block: label"); dump_buf_append(int_str(iri_s1(start + ii))); dump_buf_append("\n");
                 in_block = 1;
             } else {
-                ccr = ccr + "    " + ir_instr_str(start + ii) + "\n";
+                dump_buf_append("    "); dump_buf_append(ir_instr_str(start + ii)); dump_buf_append("\n");
             }
             ii = ii + 1;
         }
-        ccr = ccr + "\n";
+        dump_buf_append("\n");
         fi = fi + 1;
     }
 
     // VSDG state edges: side-effect chain + loop termination dependencies
-    ccr = ccr + "State edges:\n";
+    dump_buf_append("State edges:\n");
     ei : ., mut = 0;
     loop {
         if ei >= g_df_edge_count { break; }
         if r64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_KIND) != 0 {
             e_from := r64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_FROM);
             e_to := r64(g_df_edges, ei * ESZ_DFEDGE + OFF_DFE_TO);
-            ccr = ccr + "  state: n" + int_str(e_from) + " -> n" + int_str(e_to) + "\n";
+            dump_buf_append("  state: n"); dump_buf_append(int_str(e_from));
+            dump_buf_append(" -> n"); dump_buf_append(int_str(e_to)); dump_buf_append("\n");
         }
         ei = ei + 1;
     }
-    return ccr;
+    return dump_buf_finish();
 }
 
 fn cmd_cir(src_path: string) -> int {

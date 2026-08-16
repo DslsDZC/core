@@ -5,7 +5,7 @@
 T_EOF : int = 0;
 T_IDENT : int = 1;
 T_INT : int = 2;
-T_FLOAT : int = 3;
+T_DEX : int = 3;  // 3.14 字面量令牌（数值迁移 Task 3：T_FLOAT → T_DEX，值=binary64 位模式 = apx 快路径表示；精确解析在 Task 4）
 T_STRING : int = 4;
 T_FN : int = 5;
 T_MUT : int = 7;
@@ -96,7 +96,8 @@ T_NONE : int = 87;
 T_SOME : int = 88;
 T_LET : int = 89;
 T_INT_TYPE : int = 90;
-T_FLOAT_TYPE : int = 91;
+// T_FLOAT_TYPE 91 已删除（数值迁移 Task 5：float 类型名移除；勿重编号——保持 LSP
+// 区间 T_INT_TYPE..T_AUTO_TYPE 90..95 连续，见 analysis.cr 说明）
 T_BOOL_TYPE : int = 92;
 T_UNIT_TYPE : int = 93;
 T_STR_TYPE : int = 94;
@@ -105,7 +106,7 @@ T_REF : int = 96;
 T_DYN : int = 99;  // dynamic type
 T_EXTERN : int = 100;  // extern "C" / foreign function declaration
 
-// Width constants (stored in EXPR_INT/EXPR_FLOAT data field)
+// Width constants (stored in EXPR_INT/EXPR_DEX data field)
 W_I8 : int = 1;
 W_I16 : int = 2;
 W_I32 : int = 3;
@@ -119,13 +120,15 @@ W_F64 : int = 10;
 
 // Type constants
 TY_INT : int = 0;
-TY_FLOAT : int = 1;
+TY_DEX : int = 1;  // dex 精确小数（数值迁移 Task 3：TY_FLOAT 更名；Task 5：float 类型名移除，用户写 dex）
 TY_BOOL : int = 2;
 TY_STRING : int = 3;
 TY_UNIT : int = 4;
 TY_NEVER : int = 5;
 TY_CHAR : int = 6;
 TY_GENERIC_PARAM : int = 7;  // special sentinel for generic type params
+TY_DEX_S : int = 8;  // dex 定点形式（TI_DEX_S）的类型表占位 data（终审 M1：占住表项
+                     // 下标 8，用户类型从 9 起；占位项永不参与解析/运算）
 MAX_GENERICS : int = 4;      // max generic params per declaration (language limit)
 MAX_STRUCT_FIELDS : int = 16; // max fields per struct (struct info size limit)
 MAX_ENUM_VARIANTS : int = 16; // max variants per enum (enum info size limit)
@@ -203,13 +206,15 @@ struct ASTNode {
 // AST node kind constants
 EXPR_NONE : int = 0;
 EXPR_INT : int = 1;      // int_val = value
-EXPR_FLOAT : int = 27;   // int_val = value (as scaled int)
+EXPR_DEX : int = 27;   // int_val = value (as scaled int) —— 3.14 字面量节点（数值迁移 Task 3 更名）
 EXPR_STRING : int = 2;   // int_val = str table index
 EXPR_BOOL : int = 3;     // int_val = 0/1
 EXPR_IDENT : int = 4;    // int_val = name str table index
 EXPR_BINARY : int = 5;   // a=left, b=right, c=opcode
 EXPR_UNARY : int = 6;    // a=operand, c=opcode
-EXPR_CALL : int = 7;     // a=func, b=first arg idx, c=arg count
+EXPR_CALL : int = 7;     // a=func, b=first arg idx, c=arg count, type_val=CALL_FLAG_*
+CALL_FLAG_MODULE : int = 1;
+CALL_FLAG_INLINE : int = 2;
 EXPR_BLOCK : int = 8;    // a=g_block_stmts start, b=stmt count
 EXPR_IF : int = 9;       // a=cond, b=then, c=else (-1 if none)
 EXPR_LOOP : int = 10;    // a=body
@@ -291,13 +296,19 @@ UOP_DEREF : int = 4;
 
 // Type table pre-allocated indices (for checker type system)
 TI_INT : int = 0;
-TI_FLOAT : int = 1;
+TI_DEX : int = 1;    // dex 精确小数（数值迁移 Task 3：TI_FLOAT 更名，编号不变——.ccr 兼容）
 TI_BOOL : int = 2;
 TI_STR : int = 3;
 TI_UNIT : int = 4;
 TI_NEVER : int = 5;
 TI_CHAR : int = 6;
 TI_DYN : int = 7;    // dynamic type
+// TI_DEX_S = 8：dex 定点精确形式（缩放整数）的 IR 变量类型（数值迁移 Task 4）。
+// 终审 M1 修复：8 现在是类型表的占位表项下标（init_types 末尾 alloc_type(TYP_BASE,
+// TY_DEX_S, 0) 占位）——用户类型从 9 起，TI_DEX_S 哨兵永不再与真实类型碰撞。
+// TI_DEX_S 仍不查类型表（type_size/type_align/is_ptr_var 处保留显式守卫，见 ir_gen.cr），
+// 值永远以 8 字节槽存储。
+TI_DEX_S : int = 8;
 
 // Type table entry kinds
 TYP_BASE : int = 0;   // data = TY_* constant
@@ -390,6 +401,7 @@ EC_TA_IMMUTABLE  : int = 4004; // TA04  Assign to immutable
 EC_TA_NOT_MUT    : int = 4005; // TA05  Variable not mutable
 EC_TA_GLOBAL_MUT : int = 4006; // TA06  Global not mutable
 EC_TA_TUPLE_ARITY : int = 4007; // TA07  Tuple destructuring arity
+EC_TA_UNKNOWN_TAG : int = 4008; // TA08  Unknown declaration tag
 
 // TF0xx — Type: Function
 EC_TF_RETURN     : int = 5001; // TF01  Return type mismatch
@@ -548,10 +560,10 @@ IR_LABEL : int = 21;
 IR_PHI : int = 22;
 IR_LOAD_ENUM_TAG : int = 23;
 IR_SLICE : int = 24;   // dest=slice_var, s1=arr_var, s2=low_var, src3=high_var — create slice ptr from range
-IR_DEREF : int = 25;   // dest=loaded_val, s1=ref_var — load value through pointer stored in ref_var
-IR_STORE_PTR : int = 26; // dest=val_var, s1=ptr_var, s2=val_var — store value through pointer
+IR_DEREF : int = 25;   // dest=loaded_val, s1=ptr, s2=runtime_base, s3=alloc_size, type_kind=width
+IR_STORE_PTR : int = 26; // dest=runtime_base, s1=ptr, s2=value, s3=alloc_size, type_kind=width
 IR_ADDR_INDEX : int = 31; // dest=addr, s1=arr_var, s2=index_var, s3=scale — compute &arr[index] without loading
-IR_SPAWN : int = 27;     // dest=result_var, s1=fn_name_ni, s2=first_arg, src3=arg_count, type_kind=spawn_count (-1=dynamic)
+IR_SPAWN : int = 27;     // dest=result_var, s1=first_arg, s2=arg_count, s3=fn_name_ni, type_kind=spawn_count (-1=dynamic)
 IR_YIELD : int = 28;     // s1=value_var — emit value from flow to consumer channel
 IR_AWAIT : int = 29;     // dest=value_var, s1=future_var — block until future ready, get value
 IR_BOUNDS_CHECK : int = 30; // s1=index_var, s2=max_len — if index<0 or index>=max_len, abort (s2<0 = skip)
@@ -571,8 +583,9 @@ IR_CALL_EXTERN : int = 45;  // dest=result_var, s1=func_name_ni, s2=first_arg, s
 IR_LAZY_THUNK  : int = 46;  // dest=thunk_var, s1=expr_var — wrap as lazy thunk
 IR_LAZY_FORCE  : int = 47;  // dest=val_var, s1=thunk_var — force evaluation
 IR_FNADDR : int = 48;  // dest=addr_var, s1=fn_name_ni — load function address (movabs + link-time patch)
-IR_I2F : int = 49;  // dest=float_var, s1=int_var — int → float（cvtsi2sd）
-IR_F2I : int = 50;  // dest=int_var, s1=float_var — float → int（cvttsd2si）
+IR_I2F : int = 49;  // dest=dex_var(bits), s1=int_var — int → binary64（cvtsi2sd，apx 快路径）
+IR_F2I : int = 50;  // dest=int_var, s1=dex_var(bits) — binary64 → int（cvttsd2si 截断，apx 快路径）
+IR_APPROX : int = 51;  // — 无操作数注解：apx 变量声明处（语义许可，后端可忽略，interp 跳过）
 
 // Resolution flag for BRANCH/JUMP (stored in type_kind field after label resolution)
 IR_RESOLVED : int = 1;

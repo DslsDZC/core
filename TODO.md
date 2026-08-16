@@ -62,9 +62,27 @@
 - **Python bootstrap 词法修复**：`old` 不再被错误保留，可作为普通标识符
 - **自举依赖补全**：bootstrap 构建纳入并发运行时依赖、共享 arena 全局和 fiber 声明
 
+### 首次堆扩展与动态字符串修复（2026-08-14）
+- **分配器状态保留**：`heap_expand` 在设置 `mmap` 参数前保存并恢复对齐分配跨度、原始请求长度和当前 arena ID，扩容重试不再重叠后续分配或写入 0 长度头
+- **整数转字符串修复**：`int_str(7)` / `int_str(567)` 的内容和隐藏长度头稳定正确
+- **字符串拼接修复**：`println("AB" + "CD")` 正常输出，不再因首次动态分配的长度头损坏而崩溃
+- **float 舍入修复**：六位小数舍入支持连续 9 的进位传播，`1.9999996` / `9.9999996` / `-1.9999996` 正确输出 `2` / `10` / `-2`
+- **CIR/DOT 输出堆耗尽修复**：`df_graph_to_dot()` 与 `cir_text_dump()` 改用 growable buffer，消除逐片段拼接造成的二次方临时分配；`corec cir` 不再在固定 1 GiB 堆耗尽后 SIGSEGV
+- **CCR v5 格式回归修复**：测试 walker 按实际 28 字节 instruction 记录前进，SG 段布局检查恢复为有效断言
+- **arena 回归确认**：`arena_test.cr` 的基本分配、嵌套和 free-list 复用均通过
+- **完整自举确认**：`corec build src/compiler` 在 O0/O1 下均成功，三代后端输出逐字节一致
+
+### 指针宽度、外部地址与动态边界修复（2026-08-16）
+- **访问宽度传递**：`IR_DEREF` / `IR_STORE_PTR` 保留 pointee 宽度，静态验证改为 `offset + width <= allocation_size`
+- **读写统一验证**：越界 store 不再绕过 ProvenanceVerify，静态可确定的越界读写均阻止编译
+- **外部地址空间**：整数转指针标记 `asp=1`，safe 代码解引被拒绝，`unsafe` 边界内保留原有能力
+- **动态边界根因修复**：ELF 检查从错误的页内偏移改为 `pointer - allocation_base`，合法变量索引不再误触发 `SIGILL`
+- **保守多目标语义**：运行时偏移且 points-to 存在多个 allocation 时拒绝编译，不伪造已证明的边界
+- **回归与自举**：15 个指针回归覆盖静态/动态读写、类型双关与 unsafe；`corec2` / `corec3` 逐字节一致
+
 ## Region 化控制流（2026-08-08 完成）
 
-RVSDG 式嵌套 region 已落地（规格 docs/superpowers/specs/2026-08-08-region-cfg-design.md）：
+嵌套 region 已落地（HDFG 结构；规格 docs/superpowers/specs/2026-08-08-region-cfg-design.md——该规格中的"RVSDG 式"为当时路线记录，结构后定名 HDFG）：
 - SG_IF + g_df_node_region 显式映射 + sg_pop close 语义修复
 - 解释器 region 迭代（回跳经 SG 表）+ lexer float/`..` 修复（`0..4` 的 `..` 被 float 扫描吃掉——for 循环 bug 真根因）
 - state edges（副作用链 + 循环终止依赖）+ .ccr v5（SG 段 24B + edge kind + v4 兼容）
@@ -74,52 +92,53 @@ RVSDG 式嵌套 region 已落地（规格 docs/superpowers/specs/2026-08-08-regi
 - while 循环无终止依赖（while 不生成 region）
 - 终止边源边界与链头推进（已修复，2026-08-08——final review Important #1：sg_pop 终止边源须在 region 内 + 链头推进到 exit 节点，test_termination_edge_source_guard 覆盖）
 - callee inline 执行中的循环崩溃（解释器限制，预存）
-- P5 验收"自举 O0/O1 全绿"未达成——被预存 SIGSEGV 阻塞（TODO.md bug 1：corec build src/compiler 崩溃），归属自举修复分支
 
 ## 预存 Bug（不阻塞开发，待修复）
 
-### 1. 完整编译器自举内存峰值
-- 目录导入、冷缓存写入和 `corec check src/compiler` 已通过；目录构建逻辑本身不再崩溃
-- `corec build src/compiler` 在约 477 个函数完成 IR/缓存后耗尽 `rt.s` 的固定 1 GiB bump heap
-- 仅增加 mmap 扩容会让热缓存路径增长到约 7.6 GiB RSS 并触发 WSL OOM；需要按函数回收临时 IR/缓存数据，而不是继续扩大堆
-
-### 2. 并发集成：单 M 已端到端验证，多 M 未验证
+### 1. 并发集成：单 M 已端到端验证，多 M 未验证
 -  `go f(args)` 端到端已通：`sched_go(@addr(f), arg)` → g_new 存 saved_fn/saved_arg → 静态构建由 ELF 后端内联发射 fiber_init/fiber_switch/goroutine_entry_wrapper（不再依赖 rt.s 链接）→ wrapper 调用 saved_fn(saved_arg) → 结果经 result_ch 回传
 -  主线程注册为 G 0，可经 channel 阻塞/唤醒；sched_yield 不再重排 Gwaiting
 -  M 线程 worker loop（m_start_workers）未连到调度器完整测试——静态构建尚未内联发射 m_start_workers（rt.s 符号）
 -  channel wait queue 链表操作未在多线程并发下验证
 - 注意：G 结构 offset 56 同时用作 saved_fn（goroutine.cr）与 temp_val（chan.cr 等待队列 handoff）——单 G 流程可用（wrapper 在 chan 操作前读取 saved_fn），但字段语义重叠，重构时需拆分
 
-### 3. 解释器局限
+### 2. 解释器局限
 - **for 循环**: label/branch 与 dataflow 顺序执行不兼容
 - **递归/跨函数调用**: inline 执行不支持 IR_CALL
 - **泛型函数**: 类型检查通过但解释器返回 255
 
-### 4. 标准库补全
+### 3. 标准库补全
 - math.cr / collections.cr 均为 stub
 - 字符串操作、JSON 序列化待补
+
+## 第四轮 CompCert 对照遗留项（2026-08-17 记）
+
+来源：`docs/compcert-round4-findings.md`（F1-F20 修复后残留）+ 波 1-3 修复审查产出。F1-F20 已全部修复，以下为范围外/需 IR 形态演进的遗留项：
+
+- **M-2**：字符串索引 `s[5]` 静默 OOB（TI_STR 无检查）——F1/F2 范围外残留（来源：波 1-3 修复审查发现清单）
+- **I-3**：模块别名导入断裂（`import fmt : f` / 模块限定调用生成对伪函数 "import" 的调用）——预存在，F16 修复后显性化（来源：波 3 修复审查）
+- **lexer 字面量解析 2 项**：`2305843009213693952.0` 字面量解析为垃圾值（bi>53 时 pow2i(负数)=1）；>18 位整数部分静默截断——预存在，ELF/interp 双侧受损（来源：波 2 lexer 修复审查）
+- **Minor-2**：SPAWN 结果存储用 e2_st(rax) 非 e2_store_ret——float 返回值 spawn 存垃圾（预存）（来源：波 3 修复审查）
+- **F11 运行时界切片长度**：需 IR 形态演进（slice 类型）——已标注设计项（来源：compcert-round4-findings.md F11 / 语义表 BC7）
+- **ccr v5 指令记录 i32 截断** ≥2³¹ 的 s3（被 64MB alloc 上限 + null 陷阱兜底）（来源：波 1 修复审查）
+- **core_pattern 管道**致陷阱程序 core dump 挂起——CI 建议 `ulimit -c 0`（来源：波 3 测试审查）
+- **BC-CONST**：interp TI_STR 字符串表索引近似——未核实，后续轮次（来源：compcert-round4-findings.md §2 注）
 
 ## 架构规划
 
 ### 指针安全模型
-见 `docs/pointer-model.md`。裸指针 + 数据流图 provenance 推导，编译器自动验证，退路 `unsafe`。
+见 `docs/pointer-model.md`。裸指针 + HDFG provenance 推导，编译器自动验证，退路 `unsafe`。
 三 pass：PointerAnalysis、RegionCheck、ProvenanceVerify — 全部实现。
 
 ### Arena 内存模型
-见 `docs/memory-model.md`。已完整实现。堆按数据流子图划分独立 Arena，指针碰撞分配，
-游标重置回收。Arena 边界对应数据流子图边界。
+见 `docs/memory-model.md`。已完整实现。堆按 HDFG 子图划分独立 Arena，指针碰撞分配，
+游标重置回收。Arena 边界对应 HDFG 子图边界。
 
 ### 文档更新
 - `docs/memory-model.md` — 设计文档（待同步实现细节）
 - `docs/pointer-model.md` — 指针安全完整设计
 - `docs/language-syntax.md` — 指针、@ 内建语法已更新
 - `docs/at-intrinsics.md` — @ 内建原语完整规格
-
-### 5. arena bump 分配运行时死循环（2026-08-09 发现）
-- 症状：启用 arena（`arena_init` + `arena_new` 后调用 `alloc`）的程序运行时挂起（无输出、CPU 占用）
-- 已排除：ELF 后端 arena 相关编码全部 objdump 验证正确（`mov [r8],r10d` 的 44 89 00 错误已修复回 45 89 10）
-- 定位方向：`emit_alloc_body` 生成的运行时逻辑（g_current_arena 检查 / bump 推进 / .Lretry 循环 / OOM 链式扩展）
-- 复现：`arena_init(1<<20, 65536); arena_new(); alloc(64);`（/tmp/t_arena.cr）
 
 ### 6. 同步源码修改到伪代码文档（2026-08-09 记）
 - 背景：伪代码（docs/pseudocode/）基于源码快照翻译；以下源码变更后对应文档未同步
@@ -132,18 +151,13 @@ RVSDG 式嵌套 region 已落地（规格 docs/superpowers/specs/2026-08-08-regi
   - `lexer.cr` 浮点/`..` 范围修复（main 已有）→ 核对 lexer.md 是否已反映
 - 完成后需重跑 `python3 tools/pseudocode_check.py` 并更新相应文档的源行数标注
 
-### 7. 类型双关验证缺口（2026-08-10 记）
-- 背景：设计讨论定论——指针模型扩展收敛：**"程序内部地址直接指"（0x 字面量指内部对象）不做**（YAGNI：内部对象用 `&` 取址更优——无漂移/类型全/验证无条件；外部契约地址 unsafe 已够用；0x 字面量仅保留 unsafe 外部入口角色）；**类型双关保留**——图只认字节（pts/offset/alloc_size 全字节级，无类型检查），双关在图层天然合法，验证 = 边界 + 宽度
-- 现状核实（源码）：
-  - checker EXPR_AS **无类型兼容检查**（checker.cr:2188 仅推断内层 + 返回目标类型）→ `*(float*)&i` 已放行
-  - cast 透传（ir_gen.cr:1595 EXPR_AS 返回内层表达式）→ provenance 边不断
-  - DEREF 边界检查只查 `off >= alloc_size`（provenance_verify.cr:58-64）→ 越界双关照拦
-  - DEREF 节点不携带类型（ir_gen.cr:735 `emit(IR_DEREF, dv, inner_var, 0, 0, 0)`，type_kind=0）→ 访问宽度无从查
-  - **asp 无主机制**：checker.cr:404/1451 写入 TYP_PTR 的 asp 标志（unsafe 块内 = 外部地址空间），全仓库无任何消费点——`0x... as *int` 在 safe 代码同样放行，安全语义未落地
-- 待修：
-  1. DEREF 宽度检查：`off + width <= alloc_size`（width 从 s1 指针变量的 TYP_PTR 指向类型经 type_size（ir_gen.cr:295）取；DEREF 的 type_kind 是占位 0，需从变量类型推导或改 emit 传真实类型）
-  2. asp 机制收尾：完成（asp=1 指针的 DEREF 要求 unsafe 包裹）或删除（当前写入无人消费，是隐患）
-- 参考：docs/pointer-model.md（unsafe 边界表已删"类型双关"行 + 新增类型双关节 + 2026-08-10 设计定论）
+### 7. 类型双关验证（2026-08-16 已修复）
+- 类型双关保留，合法判据为 provenance + 字节偏移 + 访问宽度
+- cast 通过有类型的 `IR_LOAD` 保留值流和 `asp`，不会断开 points-to 传播
+- `IR_DEREF` / `IR_STORE_PTR` 统一执行 `off + width <= alloc_size`
+- 整数转指针产生 `asp=1`，解引必须位于 `unsafe`
+- 动态偏移使用 points-to 目标的实际 allocation base 生成 ELF 检查；多目标无法唯一定位基址时保守拒绝
+- 回归见 `tests/selfhost/test_pointer_safety.py`
 
 ## 待实现特性
 
@@ -181,10 +195,7 @@ RVSDG 式嵌套 region 已落地（规格 docs/superpowers/specs/2026-08-08-regi
 
 ### 对照 CompCert 审查发现的未修复 bug（2026-08-11 记，详见 docs/compcert-reference.md）
 
-- **int_str 空字符串 bug**：`int_str(7)` 恒返回空、`int_str(567)` 随编译产物不稳定——打印链问题（预先存在，修复 .ccr s1 64 位后被大数路径暴露）。影响：float 打印精度（`float_str_bits(3.14)` 显示 "3.4"）、大 int 常量打印
-- **字符串拼接 + println 崩溃**：`println("AB" + "CD")` 程序核心转储（预先存在，concat 相关）。影响：check_error 的拼接错误信息不可读
 - **region_check 误报（B11）**：deref 读出的 int 值被当作指针做区域逃逸检查——`v := *p; return v;` 被拦（预先存在，pts 语义需按类型过滤）
-- **float 打印精度**：float_str_bits 的舍入为简单实现（第 7 位 ≥5 时第 6 位 +1，无进位传播）——±1ulp 显示误差可接受，但依赖 int_str 修复后重新验证
 
 ### float 支持实现记录（2026-08-11，对照 IEEE 754 / SysV 标准实现）
 
@@ -192,5 +203,23 @@ RVSDG 式嵌套 region 已落地（规格 docs/superpowers/specs/2026-08-08-regi
 - 算术：addsd/subsd/mulsd/divsd（F2 0F 5x C1）；比较：comisd + setcc 无符号标志
 - 转换：IR_I2F/IR_F2I（cvtsi2sd/cvttsd2si）+ float 运算 int 操作数隐式转换
 - 参数/返回：SysV XMM0-7（int/float 独立编号）+ XMM0 返回 + 栈参数（float 超 8）
-- 打印：float_str_bits（位模式 → 十进制，长除 + 去尾零）
-- 验证：O0/O1/O2 运行全部通过；待办：float 打印精度（int_str 修复后）、f32 单精度、printf 风格最短表示
+- 打印：float_str_bits（位模式 → 十进制，长除 + 去尾零 + 跨位进位舍入）
+- 验证：O0/O1/O2 运行全部通过；待办：f32 单精度、printf 风格最短表示
+
+### corelsp 服务器加固 TODO（2026-08-16 终审分流，详见 LSP 任务审查记录）
+
+- json.cr：节点索引无边界防御（-1/过期索引）、重复键取首值（规范为末值）、`\b`/`\f`/`\/` 拒绝、递归深度无上限
+- rpc.cr：Content-Length 数字溢出绕过上限（19+ 位 → 负 n → alloc）、"content-length" 子串可被其他头误匹配、裸 `\n\n` 头终止符不识别（规范强制 CRLF，合规）、逐字节读性能（100KB ≈ 10 万次 syscall）
+- analysis.cr：类型节点索引 0 边界（文件首语句为命名类型 fn 时 hover 回退 "int"）、self 参数显示 "int"（impl 解析挂起前不可达）、definition 指向 fn 关键字而非函数名、查询忽略请求 uri（多文档场景悬停 A 返回 B）、多字节字符串按字节列宽匹配（非 UTF-16）
+- analysis.cr：completion/documentSymbol 关键字/@ 表以字面量 if 链镜像（新增关键字时漂移风险——已注释指向真源）、semanticTokens 未闭合字符串以 `\` 结尾 span+1、T_INT_I8.. 死条目（lexer 发 T_INT）、T_LET 死 kind
+- test_lsp.py：第七组 read 超时已修（select 5s）；`->` 标记扫描已限定帧间（终审顺手修完成）
+- 顺手修遗留：报告文档类笔误（lsp-task-7-report 字节数、lsp-task-6-report §1 表未同步 T_WHILE）——scratch 文件，不阻塞
+
+### 数值类型（dex/apx）迁移遗留 TODO（2026-08-16 终审分流）
+
+- **corearch `--link <so>` 静态路径崩溃**（so_parse_text SIGILL/SIGSEGV，ld.cr:400 附近）：阻塞 extern dex 运行时 FFI 实测（M2 的 IR 层修复已合入并有 cir 断言，运行时验证待此修复）；仓库无 .so 产物、--link 路径零测试覆盖；复现记录 + 备好的 C shim 在 /tmp/dex_ffi_shim.c。**执行注意**：shim 用精确位判等，字面量快路径（str_to_f64_bits 截断 ~2ulp）与计算路径（I2F/1e6）有 1-ulp 差（3.14 → 字面量 4614253070214989086 vs canonical 4614253070214989087）——判等须用 lexer 一致常量或容差
+- sizes.cr: IR_APPROX 无显式条目（默认 return 0 兜底、行为正确，纯对称性——与 IR_FAST/IR_UNROLL 显式条目对齐）
+- 泛型+dex 返回类型：pre-existing（实例化调用点按 int 处理返回类型，与 float 时代逐位一致；bootstrap 侧正确）
+- str_to_f64_bits ~2ulp 截断（保留站点文档化限制）：binary64 判别子用 1/3（0.1b+0.2b==0.3 仅 −1ulp 组合恰好落位模式，不可作断言）
+- INT_LIT 缺 hex/octal/binary 前缀分支（0x1F 等——既有缺口，tokens.ebnf 已如实记录）；`1_000` 下划线产生 T_INT(-1) 静默值 0（两编译器分歧已文档化）
+- interp 裸 opcode 数字风格（与既有 op == 26 风格一致，非缺陷）；`_f32/_f64` 宽度透传死路径（EBNF/inventory 争议点 7 已标注，apx 位宽标注需新发射路径）

@@ -62,7 +62,10 @@ class IRGen:
             var_ir = IRVar(name, VarKind.GLOBAL, typ)
             # Store constant value directly on the IRVar for interpreter initialization
             if i < len(decl.values) and isinstance(decl.values[i], Literal):
-                var_ir.constant_value = decl.values[i].value
+                v = decl.values[i].value
+                if decl.values[i].kind == 'dex':
+                    v = Dex(int(v))  # 全局 dex 常量：定点缩放整数
+                var_ir.constant_value = v
             sym = self.symtab.lookup(name)
             if sym:
                 sym.ir_var = var_ir
@@ -162,7 +165,7 @@ class IRGen:
     def gen_literal(self, lit):
         val = lit.value
         if lit.kind == 'int': val = int(val)
-        elif lit.kind == 'float': val = float(val)
+        elif lit.kind == 'dex': val = Dex(int(val))  # 定点缩放整数（精确语义，Task 4）
         v = self.new_temp()
         self.add_instr(ConstInstr(val, lit.kind, v))
         return v
@@ -626,7 +629,7 @@ class IRGen:
                 if val_expr.elements:
                     first = val_expr.elements[0]
                     if isinstance(first, Literal):
-                        kind_map = {'int':'int','float':'float','bool':'bool','string':'string','char':'char','unit':'unit'}
+                        kind_map = {'int':'int','dex':'dex','bool':'bool','string':'string','char':'char','unit':'unit'}
                         elem_t = BaseType(kind_map.get(first.kind, 'unit'))
                     else:
                         elem_t = BaseType('unit')
@@ -634,7 +637,7 @@ class IRGen:
                     elem_t = BaseType('unit')
                 typ = ArrayType(elem_t, len(val_expr.elements))
             elif isinstance(val_expr, Literal):
-                kind_map = {'int':'int','float':'float','bool':'bool','string':'string','char':'char','unit':'unit'}
+                kind_map = {'int':'int','dex':'dex','bool':'bool','string':'string','char':'char','unit':'unit'}
                 typ = BaseType(kind_map.get(val_expr.kind,'unit'))
             elif isinstance(val_expr, Index):
                 # Infer type from array element type (e.g., g_ast[node] -> ASTNode)
@@ -663,6 +666,9 @@ class IRGen:
         self.add_instr(AllocInstr(typ, var_ir))
         if val_ir:
             self.add_instr(StoreInstr(var_ir, val_ir))
+        if 'apx' in (let.tags or []):
+            # apx 标签：纯注解——发射 ApproxInstr（无操作数），后端可忽略
+            self.add_instr(ApproxInstr())
         self.local_vars[name] = var_ir
         return var_ir
 

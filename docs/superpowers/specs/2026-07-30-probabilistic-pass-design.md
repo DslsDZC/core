@@ -1,5 +1,8 @@
 # 概率编程 pass 实现设计
 
+
+> **术语注记（2026-08-15）**：本规格为历史设计记录，其中「数据流图」（及「RVSDG 式」）为当时术语；该结构后定名为 **HDFG（Holographic Dataflow Graph，全息数据流图）**，术语演进见 docs/project-book.md。正文保留历史原样。
+
 ## 概述
 
 在 Core 编译器中实现 ProbabilityPass——一个在数据流图上运行的概率推导 pass。不需要新语法、不需要运行时系统、不需要 CPS 变换。全部在编译期完成。

@@ -1,4 +1,4 @@
-# Core IR Schema — 数据流图 (.cir / .csr)
+# Core IR Schema — HDFG (.cir / .csr)
 
 ## 概述
 
@@ -6,19 +6,19 @@ Core 编译器使用两种中间表示：
 
 | 格式 | 全称 | 用途 | 生产者 | 消费者 |
 |------|------|------|--------|--------|
-| `.cir` | Core IR Graph | 数据流图 + 规约约束（验证 IR） | `corec`（前端） | 验证工具 / `corearch` / 解释器 |
+| `.cir` | Core IR Graph | HDFG + 规约约束（验证 IR） | `corec`（前端） | 验证工具 / `corearch` / 解释器 |
 | `.ccr` | Core Control-flow Representation | 线性 CFG IR（前后端接口） | `corec`（前端） | `corearch`（后端） |
 
-**`.cir` 是 Core 的验证核心。** 它承载程序的完整语义（数据流图）。验证工具消费 `.cir` + `.csr`（规约约束元数据）进行验证。
+**`.cir` 是 Core 的验证核心。** 它承载程序的完整语义（HDFG）。验证工具消费 `.cir` + `.csr`（规约约束元数据）进行验证。
 
-自托管编译器在 IR 生成期间同时构建数据流图（`.cir`）和线性 IR（`.ccr`），然后 `lower_to_ccr()` 将图节点拷贝为线性指令数组供 x86-64 后端消费。
+自托管编译器在 IR 生成期间同时构建HDFG（`.cir`）和线性 IR（`.ccr`），然后 `lower_to_ccr()` 将图节点拷贝为线性指令数组供 x86-64 后端消费。
 
 ---
 
 ## 一、核心设计：图即验证
 
 ```
-.cir = 程序的数据流图 + 规约约束
+.cir = 程序的HDFG + 规约约束
          ↓
 验证工具消费 .cir：
   1. 编译器已证明的约束（自动推导标签）标注为 
@@ -33,7 +33,7 @@ Core 编译器使用两种中间表示：
 
 ## 二、二进制 `.csr` 格式（v1）
 
-`.csr` 是规约约束的二进制序列化格式——将内存中的 TagNode（约束元数据）数组序列化为文件，与 `.cir`（DFNode 数据流图）配套。
+`.csr` 是规约约束的二进制序列化格式——将内存中的 TagNode（约束元数据）数组序列化为文件，与 `.cir`（DFNode HDFG）配套。
 
 > 注：本节描述 `.csr`（规约约束元数据）格式。`.ccr` 二进制格式（CCR1 文件）的 v5 变更见「六、线性化」中的 `.ccr` 二进制序列化小节。
 
@@ -151,6 +151,34 @@ DFNode 覆盖两种节点：普通指令节点（opcode ≤ IR_AWAIT）和规约
 | 4 | 4 | kind | 符号类型：0=func, 1=var, 2=type, 3=field |
 | 8 | 4 | scope | 作用域（函数索引或 -1 表示全局） |
 
+### ALLOC_AT 节点（声明式放置，2026-08-13）
+
+固定地址放置的声明式进图节点（图锚定区域内存模型，见 `docs/memory-model.md` 机制 #3）：
+
+| 字段 | 含义 |
+|------|------|
+| opcode | ALLOC_AT（编号待实现时分配，不与 SPEC_* 冲突为前提） |
+| dest_var | 结果指针变量 |
+| src1 | 固定地址（编译期常量或部署配置值） |
+| src2 | 大小（字节） |
+| src3 | 对齐（字节） |
+| type_kind | 指向的元素类型 |
+
+与 ALLOC 同路径获得 provenance；ProvenanceVerify 验证边界+宽度（`offset ∈ [0, size)` 且 `off + width <= size`）。声明是唯一信任点，之后全图追踪。
+
+### 布局元数据（Layout Descriptor，2026-08-13）
+
+struct 类型关联布局描述符。**默认由编译器推导自然布局**（字段顺序 + 自然对齐），用户 `layout(...)` 声明时显式给出（packed/强制对齐/硬件结构逃生门）：
+
+| 字段 | 含义 |
+|------|------|
+| packed | 是否紧凑（无填充） |
+| align | 整体对齐要求（字节） |
+| field_count | 字段数 |
+| fields | 每字段：(name_idx, offset, width, align)——name_idx 索引字符串表 |
+
+布局元数据是**图数据**：后端与验证器消费同一来源（语义保鲜），DEREF 的偏移+宽度检查对着布局走。
+
 ---
 
 ## 三、规约操作码（新增 DFNode opcode）
@@ -179,7 +207,7 @@ DFNode 覆盖两种节点：普通指令节点（opcode ≤ IR_AWAIT）和规约
 | `#pure` | 函数的所有 DFNode 中：无 CALL 到非纯函数、无 STORE 到外部全局变量 | 无副作用 |
 | `#deterministic` | #pure + 无依赖于外部状态（IO、env、随机源）的路径 | 确定性 |
 | `#terminating` | 所有循环（DFNode 中的回边）有可识别的单调递减度量 | 终止性 |
-| `#no_alloc` | 无 ALLOC / ALLOC_ARRAY / ALLOC_STRUCT 节点 | 不分配 |
+| `#no_alloc` | 无 ALLOC / ALLOC_ARRAY / ALLOC_STRUCT / ALLOC_AT 节点 | 不分配 |
 | `#no_throw` | 无可达的异常路径（无分支导向 panic/error 节点） | 不抛异常 |
 | `#safe_index` | 所有 LOAD_INDEX/STORE_INDEX 节点的索引输入 ≤ 数组长度变量 | 安全索引 |
 | `#len_preserved` | 输入集合变量和输出集合变量之间的 DFNode 无插入/删除操作（STORE_INDEX 不超出边界，无 ALLOC 替换） | 长度守恒 |
@@ -189,7 +217,7 @@ DFNode 覆盖两种节点：普通指令节点（opcode ≤ IR_AWAIT）和规约
 
 ---
 
-## 五、数据流图构建规则
+## 五、HDFG构建规则
 
 ### 辅助数组
 
@@ -218,9 +246,9 @@ DFNode 覆盖两种节点：普通指令节点（opcode ≤ IR_AWAIT）和规约
 
 ---
 
-## 六、线性化（数据流图 → `.ccr`）
+## 六、线性化（HDFG → `.ccr`）
 
-`lower_to_ccr()` 将数据流图线性化为线性 IR 指令数组供后端消费。规约约束节点（opcode ≥ 30）照常线性化，但 `corearch` 后端在代码生成时跳过它们。
+`lower_to_ccr()` 将HDFG线性化为线性 IR 指令数组供后端消费。规约约束节点（opcode ≥ 30）照常线性化，但 `corearch` 后端在代码生成时跳过它们。
 
 ### `.ccr` 二进制序列化（v5，2026-08）
 
@@ -269,6 +297,7 @@ store_index_var, make_enum, ref,            // 15-17
 branch, jump, label, phi, load_enum_tag,    // 18-23
 slice, deref, store_ptr,                    // 24-26
 spawn, yield, await,                        // 27-29
+alloc_at,                                   // 编号待实现时分配（声明式放置，2026-08-13）
 spec_constraint, spec_forall, spec_exists,  // 30-32
 spec_imply, spec_old, spec_assume           // 33-35
 ```
@@ -311,4 +340,4 @@ corec build file.cr -s
 | `src/compiler/ccr_io.cr` | `.ccr` / `.csr` 二进制读写 |
 | `src/compiler/ir_gen.cr` | AST → IR 生成，含规约约束节点生成 |
 | `src/compiler/dump.cr` | 文本 `.cir` 转储（含规约标注） |
-| `src/compiler/interp.cr` | 数据流图解释器（跳过约束节点） |
+| `src/compiler/interp.cr` | HDFG解释器（跳过约束节点） |

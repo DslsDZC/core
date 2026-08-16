@@ -20,21 +20,19 @@
 | Stage 1 | `build/corec` + `build/corearch` 编译自举编译器源码 | `build/corec2`（自编译前端） | 可运行 |
 | Stage 2 | `build/corec2` + `build/corearch` 再次编译 | `build/corec3`（二次自编译） | 可运行 |
 
-**当前限制：** corec2 自我编译虽可运行，但速度远慢于 build/corec（约 1000×），主要因为 ELF 后端代码生成尚无条件寄存器分配，所有变量走栈操作。优化方向包括寄存器分配、AST 折叠、公共子表达式消除等。
-
 > 注意（2026-08 现状）：`corec2 check` 卡在 tokenizer（约 9 个全局变量未注册进 `g_ir_globals`，赋值静默丢弃）——自举阻塞项，见 TODO.md。
 
 ### 已实现的核心特性
 
 | 类别 | 特性 | 状态 |
 |------|------|------|
-| **类型系统** | `int`、`float`、`bool`、`string`、`char`、`unit`、`never` | 完成 |
+| **类型系统** | `int`、`dex`、`bool`、`string`、`char`、`unit`、`never` | 完成 |
 | | 泛型函数与泛型结构体 | 完成 |
-| | `auto` / `.` 类型推导、位宽后缀 `_i32` `_u64` `_f32` `_f64` | 完成 |
-| **变量** | `:=` / `: type` 声明，`mut` / `pub` 标签，批量声明 | 完成 |
+| | `auto` / `.` 类型推导、位宽后缀 `_i32` `_u64`（`_f32`/`_f64` 保留为 apx 的 CPU 位宽标注） | 完成 |
+| **变量** | `:=` / `: type` 声明，`mut` / `pub` / `apx` 标签，批量声明 | 完成 |
 | **函数** | 函数定义、调用、单行函数体、`pub fn` 可见性 | 完成 |
 | **控制流** | `if` / `else` / `elif`、`while`、`loop` + `break`/`continue`、`for` 区间和数组迭代 | 完成 |
-| | RVSDG 式嵌套 region（SG_IF/LOOP/FOR/FLOW/UNSAFE + state edges + .ccr v5） | 完成 |
+| | region 嵌套式（SG_IF/LOOP/FOR/FLOW/UNSAFE + state edges + .ccr v5，即 HDFG 结构） | 完成 |
 | **并发** | `go f(args)` / `go var start..end expr` 协程生成 | 完成（单 M 端到端） |
 | | 协作式 Fiber 调度器、缓冲通道（阻塞） | 完成（单 M 验证） |
 | | 多 M worker 线程 | 未完成（TODO bug 2） |
@@ -54,9 +52,10 @@
 | **模块系统** | `import`、`fileid`、`@project`、`_import.cr`、依赖裁剪 | 完成 |
 | **标准库** | `io.cr` / `cli.cr` / `toml.cr` | 完成 |
 | | `math.cr` / `collections.cr` | 部分（stub，TODO bug 4） |
+| | 平台桥抽象：I/O 流（程序 = 流转导器）/ 随机 / 哈希 / 时钟（语义接口 + 后端实现） | 设计定案（[spec](docs/superpowers/specs/2026-08-16-platform-abstract-design.md)），待实现 |
 | **编译器基础设施** | 自举编译器（Core 写编译器）、x86-64 ELF 直接输出 | 完成 |
 | | `build`/`check`/`ccr`/`cir`/`run`/`clean-cache` 子命令 | 完成 |
-| | CIR 数据流图（带完整类型/语义信息）、`.ccr` 线性 CFG | 完成 |
+| | CIR HDFG（带完整类型/语义信息）、`.ccr` 线性 CFG | 完成 |
 | **形式化验证** | 规约层 IR / 验证条件生成 / SMT 求解器接口 | 占位 |
 | **发布与治理** | Arch Linux PKGBUILD | 完成 |
 | | GitFlow 治理：双 ruleset（main 仅维护者合入 / develop 集成分支）+ 签名提交 + merge queue（免费计划降级为手动合入） | 完成 |
@@ -67,7 +66,6 @@
 | 类别 | 项 | 参考 |
 |------|-----|------|
 | 自举 | corec2 tokenizer 死循环（约 9 个全局变量未注册进 g_ir_globals） | TODO 自举阻塞项 |
-| | corec2 前端性能约 1000× 慢于 build/corec（ELF 后端无寄存器分配） | TODO |
 | | O1 自举稳定性（pass_cse 大函数崩溃） | TODO |
 | 解释器 | for 循环 / 递归 / 泛型函数不支持 | TODO 预存 bug 3 |
 | 运行时 | arena bump 分配死循环（编码已 objdump 排除，emit_alloc_body 运行时逻辑待查） | TODO 预存 bug 5 |
@@ -89,12 +87,12 @@ python3 build_selfhost_native.py
 
 # 编译文件
 ./build/corec ccr hello.cr              # → hello.ccr
-./build/corec cir hello.cr              # → hello.cir（数据流图）
+./build/corec cir hello.cr              # → hello.cir（HDFG）
 ./build/corec build hello.cr --static   # → a.out（ELF，无需 as/ld）
 as -o hello.o hello.s && ld ...          # 或用传统路径
 
 # 通过引导编译器（Python）编译
-python3 tools/corec ir hello.cr      # → .cir 数据流图
+python3 tools/corec ir hello.cr      # → .cir HDFG
 python3 tools/corec cir hello.cr     # → .ccr 线性 IR
 ```
 
@@ -125,7 +123,7 @@ core/
 ├── bootstrap/corec/         # 引导编译器（Python）
 │   ├── syntax/              # AST 定义、Token、关键字
 │   ├── frontend/            # 词法/语法/语义分析/IR 生成
-│   ├── ir/                  # IR 数据结构（CIR 数据流图 / CCR 线性 CFG）
+│   ├── ir/                  # IR 数据结构（CIR HDFG / CCR 线性 CFG）
 │   ├── backend/             # 解释器、ARM64/x86-64 代码生成
 │   └── verifier/            # 形式化验证（占位）
 ├── src/
@@ -134,7 +132,7 @@ core/
 │   │   ├── lexer.cr          # 词法分析器
 │   │   ├── parser.cr         # 语法分析器
 │   │   ├── checker.cr        # 类型检查 + 借用检查
-│   │   ├── ir_gen.cr, dataflow.cr  # IR 生成 + 数据流图
+│   │   ├── ir_gen.cr, dataflow.cr  # IR 生成 + HDFG
 │   │   ├── main.cr           # 前端入口（corec）
 │   │   ├── corearch.cr       # 后端入口（corearch）
 │   │   ├── ccr_io.cr         # .ccr 二进制序列化

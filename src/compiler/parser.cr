@@ -81,7 +81,8 @@ fn parse_type() -> int {
         lex := tok_lx(t);
         advance_tok();
         if lex == "int" { res = alloc_node(0, 0, 0, 0, 0, TY_INT, 0, line, col); }
-        else if lex == "float" { res = alloc_node(0, 0, 0, 0, 0, TY_FLOAT, 0, line, col); }
+        // dex = 精确小数（float 类型名已移除——数值迁移 Task 5）
+        else if lex == "dex" { res = alloc_node(0, 0, 0, 0, 0, TY_DEX, 0, line, col); }
         else if lex == "bool" { res = alloc_node(0, 0, 0, 0, 0, TY_BOOL, 0, line, col); }
         else if lex == "string" { res = alloc_node(0, 0, 0, 0, 0, TY_STRING, 0, line, col); }
         else if lex == "char" { res = alloc_node(0, 0, 0, 0, 0, TY_CHAR, 0, line, col); }
@@ -112,18 +113,20 @@ fn parse_type() -> int {
         }
     } else if tok_k(t) == T_LBRACE {
         grow_diags(g_diag_count + 1);
-        w64(g_diags, g_diag_count * 32, EC_P_EXPECTED);
-        store_str_ptr(g_diags, g_diag_count * 32 + 8, "expected type after '->', got '{' — missing return type?");
-        w64(g_diags, g_diag_count * 32 + 16, line);
-        w64(g_diags, g_diag_count * 32 + 24, col);
+        w64(g_diags, g_diag_count * DIAG_REC_SIZE, EC_P_EXPECTED);
+        store_str_ptr(g_diags, g_diag_count * DIAG_REC_SIZE + 8, "expected type after '->', got '{' — missing return type?");
+        w64(g_diags, g_diag_count * DIAG_REC_SIZE + 16, line);
+        w64(g_diags, g_diag_count * DIAG_REC_SIZE + 24, col);
+        w64(g_diags, g_diag_count * DIAG_REC_SIZE + 32, diag_fileid_for_line(line));
         g_diag_count = g_diag_count + 1;
         res = alloc_node(0, 0, 0, 0, 0, TY_UNIT, 0, line, col);
     } else {
         grow_diags(g_diag_count + 1);
-        w64(g_diags, g_diag_count * 32, EC_P_EXPECTED);
-        store_str_ptr(g_diags, g_diag_count * 32 + 8, "expected type after '->'");
-        w64(g_diags, g_diag_count * 32 + 16, line);
-        w64(g_diags, g_diag_count * 32 + 24, col);
+        w64(g_diags, g_diag_count * DIAG_REC_SIZE, EC_P_EXPECTED);
+        store_str_ptr(g_diags, g_diag_count * DIAG_REC_SIZE + 8, "expected type after '->'");
+        w64(g_diags, g_diag_count * DIAG_REC_SIZE + 16, line);
+        w64(g_diags, g_diag_count * DIAG_REC_SIZE + 24, col);
+        w64(g_diags, g_diag_count * DIAG_REC_SIZE + 32, diag_fileid_for_line(line));
         g_diag_count = g_diag_count + 1;
         res = alloc_node(0, 0, 0, 0, 0, TY_UNIT, 0, line, col);
     }
@@ -323,7 +326,22 @@ fn parse_postfix() -> int {
             if is_enum_con == 1 {
                 node = alloc_node(EXPR_ENUM_CONSTRUCTOR, name_idx, af, ac, 0, 0, 0, tok_ln(t), tok_cl(t));
             } else {
-                node = alloc_node(EXPR_CALL, node, af, ac, 0, 0, 0, tok_ln(t), tok_cl(t));
+                call_func := node;
+                call_flags : ., mut = 0;
+                // @inline(fn)(args) is a hinted call, not a call through the
+                // value returned by @inline(fn).
+                if ast_kind(node) == EXPR_CALL && ast_c(node) == 1 {
+                    wrapper := ast_a(node);
+                    wrapper_arg := ast_b(node);
+                    if ast_kind(wrapper) == EXPR_AT && wrapper_arg >= 0 {
+                        wrapper_name := istr_get(ast_a(wrapper));
+                        if str_eq(wrapper_name, "inline") != 0 {
+                            call_func = ast_a(wrapper_arg);
+                            call_flags = CALL_FLAG_INLINE;
+                        }
+                    }
+                }
+                node = alloc_node(EXPR_CALL, call_func, af, ac, 0, call_flags, 0, tok_ln(t), tok_cl(t));
             }
             continue;
         }
@@ -385,13 +403,19 @@ fn parse_primary() -> int {
         else if kn == T_INT_U64 { w = W_U64; }
         return alloc_node(EXPR_INT, 0, 0, 0, tok_iv(t), TY_INT, w, tok_ln(t), tok_cl(t));
     }
-    if tok_k(t) == T_FLOAT || tok_k(t) == T_FLOAT_F32 || tok_k(t) == T_FLOAT_F64 {
+    if tok_k(t) == T_DEX || tok_k(t) == T_FLOAT_F32 || tok_k(t) == T_FLOAT_F64 {
         advance_tok();
         kn := tok_k(t);
         w : ., mut = 0;
         if kn == T_FLOAT_F32 { w = W_F32; }
         else if kn == T_FLOAT_F64 { w = W_F64; }
-        return alloc_node(EXPR_FLOAT, 0, 0, 0, tok_iv(t), TY_FLOAT, w, tok_ln(t), tok_cl(t));
+        // 节点字段（数值迁移 Task 4）：a = binary64 位模式（apx 快路径字面量表示，
+        // 由 lexer 存入 token 的 lexeme 槽的数字串还原）；int_val = 定点缩放整数
+        // （精确表示，默认路径）；data = 宽度标注（_f32/_f64，保留）
+        bits : int = 0;
+        tl := r64(g_tokens, t * ESZ_TOKEN + OFF_TK_LEXEME);   // 词素串下标（-1 = 无）
+        if tl >= 0 { bits = str_to_f64_bits(istr_get(tl)); }
+        return alloc_node(EXPR_DEX, bits, 0, 0, tok_iv(t), TY_DEX, w, tok_ln(t), tok_cl(t));
     }
     if tok_k(t) == T_STRING {
         advance_tok();
@@ -643,7 +667,7 @@ fn parse_new_var_decl() -> int {
     }
 
     typ : ., mut = -1;
-    is_mut : ., mut = 0;   is_pub : ., mut = 0;
+    is_mut : ., mut = 0;   is_pub : ., mut = 0;   is_apx : ., mut = 0;
 
     values : string, mut;    values_cap : int, mut;
     values = alloc(64 * 8); values_cap = 64;
@@ -679,12 +703,22 @@ fn parse_new_var_decl() -> int {
                 tag := tok_lx(tag_t);
                 if tag == "mut" { is_mut = 1; }
                 else if tag == "pub" { is_pub = 1; }
+                else if tag == "apx" { is_apx = 1; }
                 else {
                     tni := str_intern(tag);
                     ei := find_plugin_entry(g_plugin_tags, g_plugin_tag_count, tni, -1);
                     if ei >= 0 {
                         pd := r64(g_plugin_tags, ei*24+16);
                         if pd != 0 { is_mut = 1; }
+                    } else {
+                        // 未知标签：TA08（已知标签 = mut/pub/apx + 插件注册标签）
+                        grow_diags(g_diag_count + 1);
+                        w64(g_diags, g_diag_count * DIAG_REC_SIZE, EC_TA_UNKNOWN_TAG);
+                        store_str_ptr(g_diags, g_diag_count * DIAG_REC_SIZE + 8, "unknown declaration tag '" + tag + "'");
+                        w64(g_diags, g_diag_count * DIAG_REC_SIZE + 16, tok_ln(tag_t));
+                        w64(g_diags, g_diag_count * DIAG_REC_SIZE + 24, tok_cl(tag_t));
+                        w64(g_diags, g_diag_count * DIAG_REC_SIZE + 32, diag_fileid_for_line(tok_ln(tag_t)));
+                        g_diag_count = g_diag_count + 1;
                     }
                 }
                 if !check(T_COMMA) { break; }
@@ -716,7 +750,7 @@ fn parse_new_var_decl() -> int {
         if i >= nc { break; }
         ni := str_intern(r64(names, i * 8));
         nv := r64(values, i * 8);
-        node := alloc_node(EXPR_LET, ni, typ, nv, 0, 0, is_mut, tok_ln(t), tok_cl(t));
+        node := alloc_node(EXPR_LET, ni, typ, nv, is_apx, 0, is_mut, tok_ln(t), tok_cl(t));
         if i == 0 {
             first_node = node;
         } else {
@@ -753,7 +787,8 @@ fn parse_stmt() -> int {
     }
     if tok_k(t) == T_YIELD {
         advance_tok();
-        val := parse_expr();
+        val : ., mut = -1;
+        if !check(T_SEMI) && !check(T_RBRACE) { val = parse_expr(); }
         if check(T_SEMI) { advance_tok(); }
         return alloc_node(EXPR_YIELD, val, 0, 0, 0, 0, 0, tok_ln(t), tok_cl(t));
     }
@@ -1311,10 +1346,19 @@ fn parse_declaration() {
         return;
     }
 
-    // fn / flow
+    // fn / flow fn
     if check(T_FN) || check(T_FLOW) {
         is_flow : ., mut = 0;
-        if check(T_FLOW) { is_flow = 1; }
+        // F5c：`flow fn name()` 语法——修复前消费 T_FLOW 后直接 advance_tok()
+        // 把 T_FN 当函数名（name="fn"），flow 函数构造不可达（P01 乱报）。
+        if check(T_FLOW) {
+            is_flow = 1;
+            advance_tok();  // 消费 'flow'
+            if !check(T_FN) {
+                add_error("expected 'fn' after flow");
+                return;
+            }
+        }
         t := advance_tok();
         nt := advance_tok();
         name := tok_lx(nt);
@@ -1495,9 +1539,10 @@ fn parse_declaration() {
                 // Store method in interface entry (with overflow checks)
                 if method_count >= 16 {
                     grow_diags(g_diag_count + 1);
-                    w64(g_diags, g_diag_count * 32, EC_P_FIELD_SYNTAX);
-                    store_str_ptr(g_diags, g_diag_count * 32 + 8, "interface '" + iface_name + "' exceeds max 16 methods");
-                    w64(g_diags, g_diag_count * 32 + 16, tok_ln(t)); w64(g_diags, g_diag_count * 32 + 24, tok_cl(t));
+                    w64(g_diags, g_diag_count * DIAG_REC_SIZE, EC_P_FIELD_SYNTAX);
+                    store_str_ptr(g_diags, g_diag_count * DIAG_REC_SIZE + 8, "interface '" + iface_name + "' exceeds max 16 methods");
+                    w64(g_diags, g_diag_count * DIAG_REC_SIZE + 16, tok_ln(t)); w64(g_diags, g_diag_count * DIAG_REC_SIZE + 24, tok_cl(t));
+                    w64(g_diags, g_diag_count * DIAG_REC_SIZE + 32, diag_fileid_for_line(tok_ln(t)));
                     g_diag_count = g_diag_count + 1;
                 } else {
                     mbase := iface_base + OFF_IF_METHODS + method_count * ESZ_IFMETHOD;
@@ -1510,9 +1555,10 @@ fn parse_declaration() {
                         pj = pj + 1; }
                     if pc > 8 {
                         grow_diags(g_diag_count + 1);
-                        w64(g_diags, g_diag_count * 32, EC_P_PARAM_TYPE);
-                        store_str_ptr(g_diags, g_diag_count * 32 + 8, "method '" + istr_get(method_ni) + "' in interface exceeds max 8 params");
-                        w64(g_diags, g_diag_count * 32 + 16, tok_ln(t)); w64(g_diags, g_diag_count * 32 + 24, tok_cl(t));
+                        w64(g_diags, g_diag_count * DIAG_REC_SIZE, EC_P_PARAM_TYPE);
+                        store_str_ptr(g_diags, g_diag_count * DIAG_REC_SIZE + 8, "method '" + istr_get(method_ni) + "' in interface exceeds max 8 params");
+                        w64(g_diags, g_diag_count * DIAG_REC_SIZE + 16, tok_ln(t)); w64(g_diags, g_diag_count * DIAG_REC_SIZE + 24, tok_cl(t));
+                        w64(g_diags, g_diag_count * DIAG_REC_SIZE + 32, diag_fileid_for_line(tok_ln(t)));
                         g_diag_count = g_diag_count + 1;
                     }
                 }

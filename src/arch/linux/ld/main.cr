@@ -65,7 +65,7 @@ fn corearch_main() -> int {
         g_elf_buf = alloc(16777216);
         sz := elf_gen(g_elf_buf);
         w16(g_elf_buf, 16, 3);
-        fd := syscall3(2, out_path, 577, 420);
+        fd := syscall3(2, out_path, 577, 493);
         if fd < 0 { print("error: cannot write "); println(out_path); return 1; }
         syscall3(1, fd, g_elf_buf, sz);
         syscall3(3, fd, 0, 0);
@@ -118,9 +118,8 @@ fn corearch_main() -> int {
                 ctx_set_user_code(cd, cs);
                 sz = ctx_emit_static(g_elf_buf, out_path);
             } else {
-                fd := syscall3(2, out_path, 577, 420);
-                if fd < 0 { print("error: cannot write "); println(out_path); return 1; }
-                syscall3(1, fd, g_elf_buf, sz);
+                fd := syscall3(2, out_path, 577, 493);  // 0755：ELF 输出必须可执行（Task 6 修复 0644 怪癖）
+                if fd < 0 { print("error: cannot write "); println(out_path); return 1; }                syscall3(1, fd, g_elf_buf, sz);
                 syscall3(3, fd, 0, 0); }
         } else {
             ri : ., mut = 0; loop { if ri >= g_x86_ext_rel_count { break; }
@@ -132,9 +131,8 @@ fn corearch_main() -> int {
         if sz <= 0 { println("error: linking failed"); return 1; }
     } else {
         sz := elf_gen(g_elf_buf);
-        fd := syscall3(2, out_path, 577, 420);
-        if fd < 0 { print("error: cannot write "); println(out_path); return 1; }
-        syscall3(1, fd, g_elf_buf, sz);
+        fd := syscall3(2, out_path, 577, 493);  // 0755：ELF 输出必须可执行（Task 6 修复 0644 怪癖）
+        if fd < 0 { print("error: cannot write "); println(out_path); return 1; }        syscall3(1, fd, g_elf_buf, sz);
         syscall3(3, fd, 0, 0); }
     print(" -> "); println(out_path);
     return 0; }

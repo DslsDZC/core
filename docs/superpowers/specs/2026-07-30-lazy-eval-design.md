@@ -1,5 +1,8 @@
 # 惰性求值实现设计
 
+
+> **术语注记（2026-08-15）**：本规格为历史设计记录，其中「数据流图」（及「RVSDG 式」）为当时术语；该结构后定名为 **HDFG（Holographic Dataflow Graph，全息数据流图）**，术语演进见 docs/project-book.md。正文保留历史原样。
+
 状态：调用级子集已实现（2026-08-08）；控制流级方向 2026-08-09 定为**编译期指令下沉路线**（不做运行时 thunk），详见 `docs/lazy.md` 与 TODO.md「控制流自动惰性」——本 spec 的运行时 thunk 设计（flag + 9 字节结构 + asm 草案）已被取代，IR_LAZY_THUNK/IR_LAZY_FORCE 编号保留。
 
 ## 概述

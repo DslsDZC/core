@@ -19,13 +19,18 @@ fn alloc_type(kind: int, data: int, extra: int) -> int {
 fn init_types() {
     g_type_count = 0;
     alloc_type(TYP_BASE, TY_INT, 0);     // TI_INT = 0
-    alloc_type(TYP_BASE, TY_FLOAT, 0);   // TI_FLOAT = 1
+    alloc_type(TYP_BASE, TY_DEX, 0);   // TI_DEX = 1
     alloc_type(TYP_BASE, TY_BOOL, 0);    // TI_BOOL = 2
     alloc_type(TYP_BASE, TY_STRING, 0);  // TI_STR = 3
     alloc_type(TYP_BASE, TY_UNIT, 0);    // TI_UNIT = 4
     alloc_type(TYP_BASE, TY_NEVER, 0);   // TI_NEVER = 5
     alloc_type(TYP_BASE, TY_CHAR, 0);    // TI_CHAR = 6
     alloc_type(TYP_DYN, 0, 0);           // TI_DYN = 7
+    // TI_DEX_S = 8 占位表项（终审 M1 修复）：TI_DEX_S 是 dex 定点精确形式（缩放整数）
+    // 的 IR 变量类型哨兵，值恰为 8——曾与"首个动态分配类型下标"碰撞，@sizeOf/@alignOf/
+    // is_ptr_var 的哨兵守卫对首个真实类型误触发。占住下标 8 后用户类型从 9 起，
+    // 守卫永不再命中真实类型（TI_DEX_S 本身仍不查类型表，见 ir_gen.cr 注释）。
+    alloc_type(TYP_BASE, TY_DEX_S, 0);   // TI_DEX_S = 8 占位
 }
 
 // ── Runtime builtin declarations (no .cr body, implemented in rt.s) ──
@@ -246,10 +251,11 @@ fn find_so_fn(name_idx: int) -> int {
 
 fn check_error(code: int, msg: string, line: int, col: int) {
     grow_diags(g_diag_count + 1);
-    w64(g_diags, g_diag_count * 32, code);
-    store_str_ptr(g_diags, g_diag_count * 32 + 8, msg);
-    w64(g_diags, g_diag_count * 32 + 16, line);
-    w64(g_diags, g_diag_count * 32 + 24, col);
+    w64(g_diags, g_diag_count * DIAG_REC_SIZE, code);
+    store_str_ptr(g_diags, g_diag_count * DIAG_REC_SIZE + 8, msg);
+    w64(g_diags, g_diag_count * DIAG_REC_SIZE + 16, line);
+    w64(g_diags, g_diag_count * DIAG_REC_SIZE + 24, col);
+    w64(g_diags, g_diag_count * DIAG_REC_SIZE + 32, diag_fileid_for_line(line));
     g_diag_count = g_diag_count + 1;
 }
 
@@ -364,7 +370,7 @@ fn res_type_node(node: int) -> int {
         // Base type node: type_val = TY_*
         tv := ast_type_val(node);
         if tv == TY_INT { return TI_INT; }
-        if tv == TY_FLOAT { return TI_FLOAT; }
+        if tv == TY_DEX { return TI_DEX; }
         if tv == TY_BOOL { return TI_BOOL; }
         if tv == TY_STRING { return TI_STR; }
         if tv == TY_UNIT { return TI_UNIT; }
@@ -401,9 +407,7 @@ fn res_type_node(node: int) -> int {
     if ast_kind(node) == EXPR_PTRTYPE {
         // Pointer type *T
         inner := res_type_node(ast_a(node));
-        asp : ., mut = 0;
-        if g_unsafe_depth > 0 { asp = 1; }  // unsafe block → external address space
-        return alloc_type(TYP_PTR, inner, asp);
+        return alloc_type(TYP_PTR, inner, 0);
     }
     if ast_kind(node) == EXPR_GENERIC_APPLY {
         // Generic application: Box[int]
@@ -472,7 +476,7 @@ fn get_type_name(ti: int) -> int {
     if k == TYP_BASE {
         d := get_type_data(ti);
         if d == TY_INT { return str_intern("int"); }
-        if d == TY_FLOAT { return str_intern("float"); }
+        if d == TY_DEX { return str_intern("dex"); }
         if d == TY_BOOL { return str_intern("bool"); }
         if d == TY_STRING { return str_intern("string"); }
         if d == TY_UNIT { return str_intern("unit"); }
@@ -670,7 +674,7 @@ fn collect_decls() {
             if type_node > 0 && ast_kind(type_node) != 0 {
                 rt_ti = res_type_node(type_node);
             } else if rt == TY_INT { rt_ti = TI_INT; }
-            else if rt == TY_FLOAT { rt_ti = TI_FLOAT; }
+            else if rt == TY_DEX { rt_ti = TI_DEX; }
             else if rt == TY_BOOL { rt_ti = TI_BOOL; }
             else if rt == TY_STRING { rt_ti = TI_STR; }
             else if rt == TY_UNIT { rt_ti = TI_UNIT; }
@@ -694,7 +698,7 @@ fn collect_decls() {
                     if type_node2 > 0 && ast_kind(type_node2) != 0 {
                         first_rt_ti = res_type_node(type_node2);
                     } else if first_rt == TY_INT { first_rt_ti = TI_INT; }
-                    else if first_rt == TY_FLOAT { first_rt_ti = TI_FLOAT; }
+                    else if first_rt == TY_DEX { first_rt_ti = TI_DEX; }
                     else if first_rt == TY_BOOL { first_rt_ti = TI_BOOL; }
                     else if first_rt == TY_STRING { first_rt_ti = TI_STR; }
                     else if first_rt == TY_UNIT { first_rt_ti = TI_UNIT; }
@@ -746,7 +750,7 @@ fn collect_decls() {
             // Resolve return type to type index
             rt_ti : ., mut = TI_UNIT;
             if ret_type == TY_INT { rt_ti = TI_INT; }
-            else if ret_type == TY_FLOAT { rt_ti = TI_FLOAT; }
+            else if ret_type == TY_DEX { rt_ti = TI_DEX; }
             else if ret_type == TY_BOOL { rt_ti = TI_BOOL; }
             else if ret_type == TY_STRING { rt_ti = TI_STR; }
             else if ret_type == TY_UNIT { rt_ti = TI_UNIT; }
@@ -875,7 +879,7 @@ fn res_call_type(node: int, func_fi: int) -> int {
     if ast_kind(node) == 0 {
         tv := ast_type_val(node);
         if tv == TY_INT { return TI_INT; }
-        if tv == TY_FLOAT { return TI_FLOAT; }
+        if tv == TY_DEX { return TI_DEX; }
         if tv == TY_BOOL { return TI_BOOL; }
         if tv == TY_STRING { return TI_STR; }
         if tv == TY_UNIT { return TI_UNIT; }
@@ -1141,7 +1145,7 @@ fn check_func(fi: int) {
                 // Base type: switch on type_val (TY_*)
                 ptype := ast_type_val(pn);
                 if ptype == TY_INT { ti = TI_INT; }
-                else if ptype == TY_FLOAT { ti = TI_FLOAT; }
+                else if ptype == TY_DEX { ti = TI_DEX; }
                 else if ptype == TY_BOOL { ti = TI_BOOL; }
                 else if ptype == TY_STRING { ti = TI_STR; }
                 else if ptype == TY_CHAR { ti = TI_CHAR; }
@@ -1194,7 +1198,7 @@ fn check_func(fi: int) {
         if type_node > 0 && ast_kind(type_node) != 0 {
             ret_ti = res_type_node(type_node);
         } else if return_type == TY_INT { ret_ti = TI_INT; }
-        else if return_type == TY_FLOAT { ret_ti = TI_FLOAT; }
+        else if return_type == TY_DEX { ret_ti = TI_DEX; }
         else if return_type == TY_BOOL { ret_ti = TI_BOOL; }
         else if return_type == TY_STRING { ret_ti = TI_STR; }
         else if return_type == TY_UNIT { ret_ti = TI_UNIT; }
@@ -1361,7 +1365,7 @@ fn infer_expr(node: int) -> int {
 
     if ast_kind(node) == EXPR_INT { return TI_INT; }
     if ast_kind(node) == EXPR_NONE && ast_a(node) >= 0 && ast_a(node) != node { return infer_expr(ast_a(node)); }
-    if ast_kind(node) == EXPR_FLOAT { return TI_FLOAT; }
+    if ast_kind(node) == EXPR_DEX { return TI_DEX; }
     if ast_kind(node) == EXPR_STRING { return TI_STR; }
     if ast_kind(node) == EXPR_BOOL { return TI_BOOL; }
     if ast_kind(node) == EXPR_CHAR { return TI_CHAR; }
@@ -1414,11 +1418,11 @@ fn infer_expr(node: int) -> int {
             if op == OP_SUB && get_type_kind(lt) == TYP_PTR && get_type_kind(rt) == TYP_PTR {
                 return TI_INT;
             }
-            // Check: arithmetic ops require int or float
-            if lt != TI_INT && lt != TI_FLOAT && rt != TI_INT && rt != TI_FLOAT {
-                check_error(EC_TB_ADD, "Arithmetic operation requires int or float", ast_line(node), ast_col(node));
+            // Check: arithmetic ops require int or dex
+            if lt != TI_INT && lt != TI_DEX && rt != TI_INT && rt != TI_DEX {
+                check_error(EC_TB_ADD, "Arithmetic operation requires int or dex", ast_line(node), ast_col(node));
             }
-            if lt == TI_FLOAT || rt == TI_FLOAT { return TI_FLOAT; }
+            if lt == TI_DEX || rt == TI_DEX { return TI_DEX; }
             return TI_INT;
         }
         if op == OP_EQ || op == OP_NE || op == OP_LT || op == OP_GT || op == OP_LE || op == OP_GE {
@@ -1440,17 +1444,24 @@ fn infer_expr(node: int) -> int {
         }
         if op == UOP_REF {
             operand := ast_a(node);
+            is_mut := ast_int_val(node);
             inner : ., mut = TI_UNIT;
             if ast_kind(operand) == EXPR_IDENT {
                 vi := ast_int_val(operand);
+                if !check_borrow(vi, is_mut) {
+                    name := istr_get(vi);
+                    if is_mut != 0 {
+                        check_error(EC_B_BORROW_MUT, "Cannot borrow '" + name + "' as mutable, already borrowed", ast_line(node), ast_col(node));
+                    } else {
+                        check_error(EC_B_BORROW_IMMUT, "Cannot borrow '" + name + "' as immutable, already mutably borrowed", ast_line(node), ast_col(node));
+                    }
+                }
                 si := find_sym(vi);
                 if si >= 0 { inner = sym_type(si); }
             } else {
                 inner = infer_expr(operand);
             }
-            asp : ., mut = 0;
-            if g_unsafe_depth > 0 { asp = 1; }
-            return alloc_type(TYP_PTR, inner, asp);
+            return alloc_type(TYP_PTR, inner, 0);
         }
         if op == UOP_DEREF {
             inner := infer_expr(ast_a(node));
@@ -1494,7 +1505,12 @@ fn infer_expr(node: int) -> int {
                         if r64(g_mod_func_fileids, mfi * 8) == fileid_ni && r64(g_mod_func_names, mfi * 8) == method_ni {
                             func_ni = r64(g_mod_func_names, mfi * 8);
                             ast_set_data(node, func_ni);
-                            ast_set_type_val(node, 1);  // mark as module call
+                            call_flags := ast_type_val(node);
+                            if call_flags == CALL_FLAG_INLINE {
+                                ast_set_type_val(node, CALL_FLAG_MODULE + CALL_FLAG_INLINE);
+                            } else {
+                                ast_set_type_val(node, CALL_FLAG_MODULE);
+                            }
                             mod_call_done = 1;
                             mod_found_mfi = mfi;
                             break;
@@ -1583,7 +1599,7 @@ fn infer_expr(node: int) -> int {
                                             ast_set_data(node, mangled_ni2);
                                             iface_ret2 := r64(g_ifaces, imbase2 + OFF_IFM_RET_TI);
                                             if iface_ret2 == TY_INT { func_ni = mangled_ni2; return TI_INT; }
-                                            if iface_ret2 == TY_FLOAT { func_ni = mangled_ni2; return TI_FLOAT; }
+                                            if iface_ret2 == TY_DEX { func_ni = mangled_ni2; return TI_DEX; }
                                             if iface_ret2 == TY_BOOL { func_ni = mangled_ni2; return TI_BOOL; }
                                             if iface_ret2 == TY_STRING { func_ni = mangled_ni2; return TI_STR; }
                                             if iface_ret2 == TY_UNIT { func_ni = mangled_ni2; return TI_UNIT; }
@@ -1625,10 +1641,11 @@ fn infer_expr(node: int) -> int {
             ast_set_b(func_node, first_arg);
             return infer_expr(func_node);
         }
-        // Check builtins (only syscall3 — OS communication, no .cr body)
+        // Check builtins (syscall3/syscall4 — OS communication, no .cr body)
         if func_ni >= 0 {
             s := istr_get(func_ni);
             if s == "syscall3" { return TI_INT; }
+            if s == "syscall4" { return TI_INT; }
         }
         // Check for SYM_SO_FN (.so extension registered)
         so_fn_fi : ., mut = -1;
@@ -1653,7 +1670,7 @@ fn infer_expr(node: int) -> int {
                 if ret_code2 == 0 { return TI_INT; }
                 if ret_code2 == 1 { return TI_STR; }
                 if ret_code2 == 2 { return TI_UNIT; }
-                if ret_code2 == 3 { return TI_FLOAT; }
+                if ret_code2 == 3 { return TI_DEX; }
                 if ret_code2 == 4 { return TI_BOOL; }
                 return TI_UNIT;
             }
@@ -2037,12 +2054,32 @@ fn infer_expr(node: int) -> int {
         // Range index: arr[low..high] → slice type
         if ast_kind(ast_b(node)) == EXPR_RANGE {
             if arr_kind == TYP_ARRAY {
+                // F11：字面量切片界编译期验证（TK05/06 既有错误码）
+                arr_len : ., mut = get_type_extra(arr_ti);
+                rn := ast_b(node);
+                if arr_len > 0 && ast_kind(ast_a(rn)) == EXPR_INT && ast_kind(ast_b(rn)) == EXPR_INT {
+                    lo := ast_int_val(ast_a(rn));
+                    hi := ast_int_val(ast_b(rn));
+                    if lo < 0 || hi > arr_len {
+                        check_error(EC_TK_SLICE_BOUNDS, "slice out of bounds: [" + int_str(lo) + ".." + int_str(hi) + "] (array length " + int_str(arr_len) + ")", ast_line(node), ast_col(node));
+                    } else if lo > hi {
+                        check_error(EC_TK_SLICE_LEN, "slice length negative: [" + int_str(lo) + ".." + int_str(hi) + "]", ast_line(node), ast_col(node));
+                    }
+                }
                 return alloc_type(TYP_SLICE, get_type_data(arr_ti), 0);
             }
             return TI_UNIT;
         }
         // Regular index: arr[i] or slice[i] → element type
         if arr_kind == TYP_ARRAY {
+            // F2：字面量索引编译期越界检查（数组长度编译期可知时）
+            if ast_kind(ast_b(node)) == EXPR_INT {
+                idx_val := ast_int_val(ast_b(node));
+                arr_len : ., mut = get_type_extra(arr_ti);
+                if arr_len > 0 && (idx_val < 0 || idx_val >= arr_len) {
+                    check_error(EC_R_OOB, "index out of bounds: " + int_str(idx_val) + " (array length " + int_str(arr_len) + ")", ast_line(node), ast_col(node));
+                }
+            }
             return get_type_data(arr_ti);
         }
         if arr_kind == TYP_SLICE {
@@ -2189,7 +2226,18 @@ fn infer_expr(node: int) -> int {
         // expr as Type — type cast
         inner_ti := infer_expr(ast_a(node));
         type_node := ast_b(node);
-        return res_type_node(type_node);
+        target_ti := res_type_node(type_node);
+        if get_type_kind(target_ti) == TYP_PTR {
+            inner_kind := get_type_kind(inner_ti);
+            asp : ., mut = 1;
+            if inner_kind == TYP_PTR {
+                asp = get_type_extra(inner_ti);
+            } else if inner_kind == TYP_REF {
+                asp = 0;
+            }
+            return alloc_type(TYP_PTR, get_type_data(target_ti), asp);
+        }
+        return target_ti;
     }
     if ast_kind(node) == EXPR_STMT {
         infer_expr(ast_a(node));
@@ -2265,6 +2313,18 @@ fn infer_expr(node: int) -> int {
             if args < 0 { check_error(EC_N_UNDEFINED, "@typeInfo requires a type argument", ast_line(node), ast_col(node)); return TI_NEVER; }
             ti := res_type_node(args);
             return TI_INT;  // placeholder — returns handle
+        }
+
+        // @raw_int(expr) — dex 表达式 → 缩放整数原值（显式转换，数值迁移 Task 4）
+        if str_eq(name, "raw_int") != 0 {
+            if args < 0 { check_error(EC_N_UNDEFINED, "@raw_int requires an expression", ast_line(node), ast_col(node)); return TI_NEVER; }
+            av := infer_expr(ast_a(args));
+            // 参数校验：dex（或 int——int 原值即其缩放值）才可取其原值；其余类型报错
+            if av != TI_DEX && av != TI_INT && av != TI_NEVER {
+                check_error(EC_TF_ARG_TYPE, "@raw_int requires a dex (or int) expression", ast_line(node), ast_col(node));
+                return TI_NEVER;
+            }
+            return TI_INT;
         }
 
         // @comptime(expr) — force compile-time eval
