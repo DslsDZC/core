@@ -579,7 +579,9 @@ class X86_64StackAsmGen:
                            .replace('\n', '\\n')
                            .replace('\t', '\\t')
                            .replace('\0', '\\0'))
-                self.emit(f".quad {len(sval) + 1}")
+                # 长度头 = 字节数 + 1（运行时 str_len 按字节读——非 ASCII 串（如 UTF-8 破折号）
+                # 若按 Python 字符数写会截断（修复：2026-08-16 Task 6 发现 interp 报错消息尾字丢失）
+                self.emit(f".quad {len(sval.encode('utf-8')) + 1}")
                 self.emit(f".LC{lid}: .asciz \"{escaped}\"")
                 self.emit(".balign 8")
 
