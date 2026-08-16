@@ -16,7 +16,9 @@
 
 注意：代码行内的内联注释随其代码站点一并处理（不单列）；独立注释行单独列出。
 
-## 主分类表（73 站点：dex 38 / dex,apx 16 / 保留 18 / 删除 1）
+## 主分类表（76 站点：dex 38 / dex,apx 16 / 保留 21 / 删除 1）
+
+> 补正（2026-08-16）：原 73 站点**分类结论不动**，补入 3 行 `保留`——core.ebnf 2 行（57-58 FLOAT_LIT 设计注释、59 Literal 产物 FLOAT_LIT 终结符）+ tokens.ebnf 1 行（FLOAT_LIT 定义）。
 
 ### src/compiler/ast.cr（10 处）
 
@@ -157,19 +159,27 @@
 | tests/bootstrap/test_pipeline.py:196-199 'Int Float Mix'（`fn main() -> float`，2+3.5=5.5） | 用户可见类型用例 | `dex` | 同上：2+3.5=5.5 精确成立；混合 int+dex 在 dex 世界无隐式转换问题（缩放整数对齐） |
 | tests/selfhost/test_native_strings.py:47-52 float_str_bits 位模式断言（3.14/2/10/1/100/-2 的 binary64 位→十进制串） | 打印快路径用例 | `dex,apx` | 测 binary64 行为 → 保留为 apx 打印路径的回归用例（float_str_bits 保留） |
 
-### grammar/core.ebnf（1 处）
+### grammar/core.ebnf（3 处）
 
 | 站点 | 角色 | 分类 | 理由 |
 |---|---|---|---|
-| core.ebnf:29-31 注释（"'float' 类型名已移除（2026-08-16 数值类型设计）；旧 float 语义 = 'dex' + 'apx'"） | 注释 | `保留` | 设计决策注释；文法本体已迁移（BaseType 已含 'dex'），无残留语法 |
+| core.ebnf:29-31 注释（"'float' 类型名已移除（2026-08-16 数值类型设计）；旧 float 语义 = 'dex' + 'apx'"） | 注释 | `保留` | 设计决策注释；BaseType 已含 'dex'。**修正原断言**：文法并非"无残留语法"——FLOAT_LIT 终结符仍在（见下行），文法同步归 Task 7 |
+| core.ebnf:57-58 注释（"FLOAT_LIT（`3.14` 十进制小数）默认产生 dex（精确小数）；f32/f64 后缀暂作 apx 的 CPU 位宽标注"） | 注释 | `保留` | FLOAT_LIT 设计注释——字面量在 dex 世界继续存在（默认精确），非残留 |
+| core.ebnf:59 `Literal = INT_LIT \| FLOAT_LIT \| STRING_LIT \| ...` | 文法产物 | `保留` | FLOAT_LIT 终结符仍在文法产物中：3.14 字面量在 dex 世界继续存在（默认精确语义），文法同步归 Task 7——**非残留，不删** |
 
-### docs/（1 条汇总，21 文件 86 处）
+### grammar/tokens.ebnf（1 处）
 
 | 站点 | 角色 | 分类 | 理由 |
 |---|---|---|---|
-| docs/ 21 个文件 84 处 "float" 字面量（compcert-reference 8、error-codes 2、pseudocode 10 文件 22、superpowers specs 5 文件 13、superpowers plans 4 文件 39）；另有 3 个 pseudocode 文件（checker-4/checker-5/parser-2）含 TY_FLOAT/TI_FLOAT/EXPR_FLOAT 变体 | 文档引用 | `保留` | 文档/历史引用（含本设计 spec 本身与 Task 计划）——按规则保留为历史；后续文档刷新属独立任务 |
+| tokens.ebnf:24 `FLOAT_LIT = DIGIT { DIGIT \| '_' } '.' DIGIT { DIGIT \| '_' } [ 'f32' \| 'f64' ] ;` | 终结符定义 | `保留` | FLOAT_LIT 终结符——3.14 字面量在 dex 世界继续存在（默认精确）；`[ 'f32' \| 'f64' ]` 后缀 = apx CPU 位宽标注。原盘点漏列原因：FLOAT_LIT 全大写，大小写敏感的 "float" grep 不命中 |
 
-零站点文件（预扫范围内确认无 float）：`tests/suite/`（30 个 .cr 全部无 float 字面量/类型）、`src/compiler/{dataflow,opt,pass,diag,interp,globals,entry,main,corearch,project,dyn_arr,_import}.cr`、`src/arch/linux/ld/{ld,resolve,sizes}.cr`、`src/runtime/`、`src/lsp/`（除 analysis.cr 外的 rpc.cr 等）、`examples/`、`vscode-core/`、`spec/`、`grammar/{tokens,corespec}.ebnf`、`legacy_asm_backend/`。
+### docs/（1 条汇总，21 文件 89 处）
+
+| 站点 | 角色 | 分类 | 理由 |
+|---|---|---|---|
+| docs/ 21 个文件 89 处 "float"（词边界 `\bfloat\b` 口径，2026-08-16 复查；compcert-reference 8、error-codes 2、pseudocode 10 文件 21、superpowers specs 5 文件 13、superpowers plans 4 文件 45；不含本清单自身 74 处）；另有 3 个 pseudocode 文件（checker-4/checker-5/parser-2）仅含 TY_FLOAT/TI_FLOAT/EXPR_FLOAT 变体 | 文档引用 | `保留` | 文档/历史引用（含本设计 spec 本身与 Task 计划）——按规则保留为历史；后续文档刷新属独立任务。原"84 处"口径不可复现（plans 文档演化增补、pseudocode 复核为 21），以词边界复查值为准；子串口径（含 float_str_bits 等复合词）为 98 |
+
+零站点文件（预扫范围内确认无 float）：`tests/suite/`（30 个 .cr 全部无 float 字面量/类型）、`src/compiler/{dataflow,opt,pass,diag,interp,globals,entry,main,corearch,project,dyn_arr,_import}.cr`、`src/arch/linux/ld/{ld,resolve,sizes}.cr`、`src/runtime/`、`src/lsp/`（除 analysis.cr 外的 rpc.cr 等）、`examples/`、`vscode-core/`、`spec/`、`grammar/corespec.ebnf`（tokens.ebnf:24 的 FLOAT_LIT 定义已补入表）、`legacy_asm_backend/`。
 注：interp.cr 值存储为裸 64 位（无 float 分支），TI_FLOAT→TI_DEX 更名不触及；dex 精确运算的解释执行属 Task 5 新增。
 
 ## 迁移后目标形态（dex/apx 双语义落点）
@@ -187,17 +197,17 @@
 | 名称输出 | "float"→"dex"（dump/IR 类型串/LSP 显示） | — | dump:52、ir_gen:974/1093、lsp:36/312 |
 | FFI | extern 类型名字符串 "float"→"dex" | 跨 C 边界 binary64 ABI 属 apx 授权行为（编码 3 保留） | module:366/380 |
 | 测试 | float 用例 → dex（3.14+2.86、2+3.5 精确成立） | float_str_bits 位模式用例保留 | test_pipeline:187-199、test_native_strings:47-52 |
-| EBNF/文档 | 文法已迁移（dex 入 BaseType） | — | core.ebnf:29-31（注释保留） |
+| EBNF/文档 | 文法已迁移（dex 入 BaseType）；FLOAT_LIT 终结符同步归 Task 7 | — | core.ebnf:29-31/57-59、tokens.ebnf:24（均保留） |
 
 执行顺序提示（与计划一致）：**先加 dex（Task 2-4）再移 float（Task 5-6）**，保持编译器自举；每个 `dex,apx` 站点只改名不改行为（binary64 路径不变）。
 
 ## 范围外附录：bootstrap/corec（Python 自举编译器，预扫范围外但构建关键）
 
-`build_selfhost_native.py` 用 bootstrap 编译 src/compiler——**bootstrap 目前不认识 `dex`**（无任何 dex 支持），且保留完整 float 实现（7 文件 ~14 处）：
+`build_selfhost_native.py` 用 bootstrap 编译 src/compiler——**bootstrap 目前不认识 `dex`**（无任何 dex 支持），且保留完整 float 实现（7 文件 21 处，2026-08-16 复查；口径 = 含大小写 float/FLOAT_LIT 的站点行数，type_checker.py:230 一行双命中计 1 处；小写 "float" grep 仅 19 行）：
 
-- `bootstrap/corec/frontend/lexer.py:81/94/107`（is_float 字面量扫描）
-- `bootstrap/corec/frontend/parser.py:24`（type_name lexeme）、`327`（base_types 集合）、`509`（float 字面量）
-- `bootstrap/corec/frontend/type_checker.py:199`（kind_map）、`220-222`（float 算术 + 提升规则）
+- `bootstrap/corec/frontend/lexer.py:81/94/107-108`（is_float 字面量扫描 + FLOAT_LIT 令牌发射——108 为 `Token(TokenType.FLOAT_LIT, ...)`，全大写不命中 "float" grep，补列）
+- `bootstrap/corec/frontend/parser.py:24`（type_name lexeme）、`327`（base_types 集合）、`508-509`（FLOAT_LIT 分支检查 + float 字面量节点——508 为 `check(TokenType.FLOAT_LIT)`，补列）
+- `bootstrap/corec/frontend/type_checker.py:199`（kind_map）、`220-222`（float 算术 + 提升规则）、`230`（比较规则 int/float/string——补列）
 - `bootstrap/corec/frontend/ir_gen.py:165`（float 字面量）、`629/637`（kind_map）
 - `bootstrap/corec/ir/cir.py:42`（docstring）
 - `bootstrap/corec/backend/interpreter.py:28`（float 默认值 0.0）、`91-92`（float 常量）
@@ -210,7 +220,7 @@
 复查 grep（全仓库，2026-08-16）：
 
 ```bash
-grep -rn "float" src/ tests/ grammar/            # 命中文件与主表 13+3+1 个源码文件一一对应
+grep -rn "float" src/ tests/ grammar/            # 命中文件与主表 13+2+1=16 个源码文件一一对应（src 13、tests 2、grammar 1；原 "13+3+1" 中 tests 应为 2——test_pipeline.py + test_native_strings.py；grammar 仅 core.ebnf）
 grep -rn "TY_FLOAT" src/                          # 6 文件：ast/checker/ir_gen/monomorph/parser/analysis ✓
 grep -rn "TI_FLOAT" src/                          # 41 处，5 文件：ast/ir_gen/checker/instr/elf ✓（均入表）
 grep -rn "T_FLOAT\b\|T_FLOAT_TYPE" src/           # ast:8/99、lexer:331、lsp:881(注)/900/955、parser:405 ✓
@@ -218,12 +228,13 @@ grep -rn "EXPR_FLOAT" src/                        # ast:206、parser:411、check
 grep -rn "IR_I2F\|IR_F2I" src/                    # ast:576-577、ir_gen:691/696、instr:418/426 ✓
 grep -rn "T_FLOAT_F32\|T_FLOAT_F64" src/          # ast:93-94、parser:405/409-410、lsp:864(注)/895 ✓
 grep -rn "W_F32\|W_F64" src/                      # ast:117-118、parser:409-410 ✓
-grep -rn "_f32\|_f64" src/ tests/ grammar/        # 仅 ast.cr:84 注释 ✓
+grep -rn "_f32\|_f64" src/ tests/ grammar/        # 3 处：ast.cr:84（注释）、lexer.cr:121（str_to_f64_bits）、lexer.cr:331（str_to_f64_bits 调用）——后两者已入主表（lexer 行），原"仅 ast.cr:84"断言修正 ✓
+grep -rn "FLOAT_LIT" grammar/                     # tokens.ebnf:24、core.ebnf:57/59——全大写，原大小写敏感 "float" grep 不命中，本轮补入表（保留×3）✓
 grep -rn "float" tests/suite/ examples/ vscode-core/ spec/ src/runtime/   # 0 命中 ✓
-grep -rln "float" docs/                           # 21 文件 84 处 → docs 汇总行 ✓（另 3 个 pseudocode 文件仅含 TY_FLOAT 等变体）
+grep -rno "\bfloat\b" docs/                       # 22 文件 163 处（含本清单自身 74 处）→ 其余 21 文件 89 处 → docs 汇总行 ✓（另 3 个 pseudocode 文件仅含 TY_FLOAT 等变体）
 ```
 
-计数核对：主表 73 行 = dex 38 + dex,apx 16 + 保留 18 + 删除 1；docs 汇总 1 行；范围外附录 14 处（未计入主表）。无未列入的 float 站点。
+计数核对：主表 76 行 = dex 38 + dex,apx 16 + 保留 21 + 删除 1（原 73 行**分类结论不动**，补入 3 行保留：core.ebnf 57-58/59、tokens.ebnf:24）；docs 汇总 1 行（21 文件 89 处，词边界口径）；范围外附录 21 处（7 文件，未计入主表）。无未列入的 float 站点。
 
 ## 分类争议点
 
@@ -233,3 +244,4 @@ grep -rln "float" docs/                           # 21 文件 84 处 → docs �
 4. **计划文件 Task 5 的括号示例把 monomorph/module/dump/ccr_io/parser/lexer 列为 `dex,apx` 站点**：本表按 Global Constraints 逐点判定——这些文件的**类型名/常量更名**站点属用户可见类型语义（`dex`），仅其**binary64 机制**部分（lexer 位转换、ir_gen 运算生成）为 `dex,apx`。计划原文"按分类表逐点执行"，以本表为准。
 5. **module.cr:361/366 编码表注释与代码不符**（注释 float=2、代码 =3）：既有 bug，非本任务修复项；Task 5 改注释时需核对实际 ABI 编码。
 6. **bootstrap 范围外但构建关键**（见附录）：若 Task 5 按表迁移 src/compiler 而 bootstrap 未先支持 dex，`build_selfhost_native.py` 自举失败——需在计划层面确认 bootstrap 的 dex 落地任务归属。
+7. **T_FLOAT_TYPE 删除 vs T_FLOAT_F32/F64 保留的判据对称性**：三者同为"从未被发射"的令牌常量——lexer **只发 `T_FLOAT`**（lexer.cr:330-331 唯一发射点：小数点或 `f32/f64` 后缀一律汇入 `add_tok_int(T_FLOAT, str_to_f64_bits(...))`）；parser.cr:409-410 的 `T_FLOAT_F32→W_F32 / T_FLOAT_F64→W_F64` 宽度分支是**死代码**（两个后缀令牌从未到达 parser，`w` 恒为 0）；`_f32/_f64` 后缀在 lexer 即被消费（num_str 已剔除后缀，见 lexer.cr:325-327），位宽信息在词法层丢失。分类差异的判据：`保留` 是约束原文（"_f32/_f64 后缀 → 保留"）的明确要求，且后缀令牌在设计中有迁移后指称（apx CPU 位宽标注角色）；T_FLOAT_TYPE 无任何迁移后指称（float 关键字消亡、从未发射），故标 `删除`。**风险提示**：当前 `_f32/_f64` 后缀标注实际不生效（宽度丢失、w=0）——apx 位宽标注需在 lexer 增加发射路径（suffix 分支发射 T_FLOAT_F32/F64 或等价标注令牌），属 Task 5/6 实现项；本表分类仅按约束原文执行，不改变此实现缺口。
