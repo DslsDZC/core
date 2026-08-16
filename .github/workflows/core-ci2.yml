@@ -2,8 +2,16 @@ name: CI-min
 on:
   pull_request:
     branches: ["**"]
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "minimal workflow works"
+      - run: echo "minimal with meta"
