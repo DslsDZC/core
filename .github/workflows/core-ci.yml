@@ -11,7 +11,7 @@
 # workflow 注册失败（"workflow file issue"，所有 run 0s 失败）——拆分 pr/full 两 job，
 # 触发分派改为事件级 if，分发由 CI_JOB_NAME 承担。
 
-name: CI
+name: Core CI
 on:
   pull_request:
     branches:
