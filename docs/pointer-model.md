@@ -212,7 +212,7 @@ p := mmio + 4096;        // 越界 → 编译错误或运行时 check
 
 ### 类型双关
 
-`*(float*)&i` **不需要 unsafe**。图的存储语义是条目标识 + 偏移（`docs/memory-model.md` §一 条款 6）；经典映射下表现为"字节序列 + 宽度 + 边界"——provenance
+`*(dex*)&i` **不需要 unsafe**。图的存储语义是条目标识 + 偏移（`docs/memory-model.md` §一 条款 6）；经典映射下表现为"字节序列 + 宽度 + 边界"——provenance
 （alloc 归属）、offset（字节偏移）、alloc_size（字节大小）全部与类型无关，类型只是
 DEREF 处的"视图"。cast 以有类型的 `IR_LOAD` 保留值流，provenance 边不断：
 

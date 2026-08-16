@@ -20,18 +20,16 @@
 | Stage 1 | `build/corec` + `build/corearch` 编译自举编译器源码 | `build/corec2`（自编译前端） | 可运行 |
 | Stage 2 | `build/corec2` + `build/corearch` 再次编译 | `build/corec3`（二次自编译） | 可运行 |
 
-**当前限制：** corec2 自我编译虽可运行，但速度远慢于 build/corec（约 1000×），主要因为 ELF 后端代码生成尚无条件寄存器分配，所有变量走栈操作。优化方向包括寄存器分配、AST 折叠、公共子表达式消除等。
-
 > 注意（2026-08 现状）：`corec2 check` 卡在 tokenizer（约 9 个全局变量未注册进 `g_ir_globals`，赋值静默丢弃）——自举阻塞项，见 TODO.md。
 
 ### 已实现的核心特性
 
 | 类别 | 特性 | 状态 |
 |------|------|------|
-| **类型系统** | `int`、`float`、`bool`、`string`、`char`、`unit`、`never` | 完成 |
+| **类型系统** | `int`、`dex`、`bool`、`string`、`char`、`unit`、`never` | 完成 |
 | | 泛型函数与泛型结构体 | 完成 |
-| | `auto` / `.` 类型推导、位宽后缀 `_i32` `_u64` `_f32` `_f64` | 完成 |
-| **变量** | `:=` / `: type` 声明，`mut` / `pub` 标签，批量声明 | 完成 |
+| | `auto` / `.` 类型推导、位宽后缀 `_i32` `_u64`（`_f32`/`_f64` 保留为 apx 的 CPU 位宽标注） | 完成 |
+| **变量** | `:=` / `: type` 声明，`mut` / `pub` / `apx` 标签，批量声明 | 完成 |
 | **函数** | 函数定义、调用、单行函数体、`pub fn` 可见性 | 完成 |
 | **控制流** | `if` / `else` / `elif`、`while`、`loop` + `break`/`continue`、`for` 区间和数组迭代 | 完成 |
 | | region 嵌套式（SG_IF/LOOP/FOR/FLOW/UNSAFE + state edges + .ccr v5，即 HDFG 结构） | 完成 |
@@ -54,6 +52,7 @@
 | **模块系统** | `import`、`fileid`、`@project`、`_import.cr`、依赖裁剪 | 完成 |
 | **标准库** | `io.cr` / `cli.cr` / `toml.cr` | 完成 |
 | | `math.cr` / `collections.cr` | 部分（stub，TODO bug 4） |
+| | 平台桥抽象：I/O 流（程序 = 流转导器）/ 随机 / 哈希 / 时钟（语义接口 + 后端实现） | 设计定案（[spec](docs/superpowers/specs/2026-08-16-platform-abstract-design.md)），待实现 |
 | **编译器基础设施** | 自举编译器（Core 写编译器）、x86-64 ELF 直接输出 | 完成 |
 | | `build`/`check`/`ccr`/`cir`/`run`/`clean-cache` 子命令 | 完成 |
 | | CIR HDFG（带完整类型/语义信息）、`.ccr` 线性 CFG | 完成 |
@@ -67,7 +66,6 @@
 | 类别 | 项 | 参考 |
 |------|-----|------|
 | 自举 | corec2 tokenizer 死循环（约 9 个全局变量未注册进 g_ir_globals） | TODO 自举阻塞项 |
-| | corec2 前端性能约 1000× 慢于 build/corec（ELF 后端无寄存器分配） | TODO |
 | | O1 自举稳定性（pass_cse 大函数崩溃） | TODO |
 | 解释器 | for 循环 / 递归 / 泛型函数不支持 | TODO 预存 bug 3 |
 | 运行时 | arena bump 分配死循环（编码已 objdump 排除，emit_alloc_body 运行时逻辑待查） | TODO 预存 bug 5 |

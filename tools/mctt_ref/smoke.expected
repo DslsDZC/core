@@ -1,0 +1,7 @@
+check: accept
+check: reject
+infer: type: (nat)
+infer: type: (nat)
+convert: yes
+subtype: yes
+check: reject

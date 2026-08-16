@@ -17,8 +17,8 @@
 | L006 | 十六进制转义 | `Invalid hex escape: {seq}` | `\x` 后不是合法十六进制 |
 | L007 | 整数后缀非法 | `Invalid integer suffix: {suffix}` | `42_xyz` 之类 |
 | L008 | 整数后缀溢出 | `Integer literal out of range for suffix {suffix}` | `999999_i8` |
-| L009 | 浮点数格式 | `Invalid float literal` | `1.` 或 `.e5` 等 |
-| L010 | 浮点数后缀非法 | `Invalid float suffix: {suffix}` | 非 f32/f64 后缀 |
+| L009 | 小数（dex）字面量格式 | `Invalid float literal`（消息文本随代码迁移改 dex 表述） | `1.` 或 `.e5` 等 |
+| L010 | 小数后缀非法（f32/f64 = apx 的 CPU 位宽标注） | `Invalid float suffix: {suffix}` | 非 f32/f64 后缀 |
 | L011 | 无法识别的字符 | `Unknown character: '{c}'` | 源码中出现 ASCII 控制字符或全角空格等 |
 
 ## P0xx — 语法 (Parser)
