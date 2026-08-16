@@ -49,7 +49,7 @@ jobs:
           # - name: opt-regress
     steps:
       - name: checkout the source code
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           fetch-depth: 2
 
@@ -76,7 +76,7 @@ jobs:
           - name: full-bootstrap
     steps:
       - name: checkout the source code
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           fetch-depth: 2
 
