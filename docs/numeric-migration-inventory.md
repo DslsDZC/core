@@ -248,3 +248,70 @@ grep -rn "float\|FLOAT_LIT" bootstrap/corec/ | wc -l   # 22——附录 8 文件
 5. **module.cr:361/366 编码表注释与代码不符**（注释 float=2、代码 =3）：既有 bug，非本任务修复项；Task 5 改注释时需核对实际 ABI 编码。
 6. **bootstrap 范围外但构建关键**（见附录）：若 Task 5 按表迁移 src/compiler 而 bootstrap 未先支持 dex，`build_selfhost_native.py` 自举失败——需在计划层面确认 bootstrap 的 dex 落地任务归属。
 7. **T_FLOAT_TYPE 删除 vs T_FLOAT_F32/F64 保留的判据对称性**：三者同为"从未被发射"的令牌常量——lexer **只发 `T_FLOAT`**（lexer.cr:330-331 唯一发射点：小数点或 `f32/f64` 后缀一律汇入 `add_tok_int(T_FLOAT, str_to_f64_bits(...))`）；parser.cr:409-410 的 `T_FLOAT_F32→W_F32 / T_FLOAT_F64→W_F64` 宽度分支是**死代码**（两个后缀令牌从未到达 parser，`w` 恒为 0）；`_f32/_f64` 后缀在 lexer 即被消费（num_str 已剔除后缀，见 lexer.cr:325-327），位宽信息在词法层丢失。分类差异的判据：`保留` 是约束原文（"_f32/_f64 后缀 → 保留"）的明确要求，且后缀令牌在设计中有迁移后指称（apx CPU 位宽标注角色）；T_FLOAT_TYPE 无任何迁移后指称（float 关键字消亡、从未发射），故标 `删除`。**风险提示**：当前 `_f32/_f64` 后缀标注实际不生效（宽度丢失、w=0）——apx 位宽标注需在 lexer 增加发射路径（suffix 分支发射 T_FLOAT_F32/F64 或等价标注令牌），属 Task 5/6 实现项；本表分类仅按约束原文执行，不改变此实现缺口。
+
+## Task 6 执行补记（2026-08-16，float 移除收尾 + 测试迁移）
+
+### 删除站点核实（零残留证据）
+
+分类表唯一 `删除` 站点 ast.cr:99 `T_FLOAT_TYPE`：Task 5 已删除（注释占位、不重编号，LSP 区间
+90..95 连续语义保持）。Task 6 复查 grep 证据：
+
+```bash
+grep -rn "T_FLOAT_TYPE" src/                       # 0 命中（仅 ast.cr:99 删除占位注释）
+grep -rn "TY_FLOAT\b" src/ tests/ bootstrap/       # 0 命中（仅 TY_DEX 更名 + 历史注释）
+grep -rn "TI_FLOAT\b" src/                         # 0 命中（仅 TI_DEX / TI_DEX_S）
+grep -rn "T_FLOAT\b" src/                          # 0 命中（仅 T_DEX；T_FLOAT_F32/F64 后缀令牌保留）
+grep -rn "\bfloat\b" src/compiler/ src/stdlib/ src/arch/ src/lsp/   # 全为保留注释/dex,apx 机制站点
+grep -rn "\bfloat\b" tests/                        # test_pipeline docstring（保留）+ float_str_bits 位模式回归（保留）+ 移除守卫测试
+```
+
+用户可见 float 关键字/类型：lexer 不发射 float 令牌、parser/monomorph/ir_gen/module/LSP 类型名
+清单均为 "dex"（Task 5）；`x : float = ...` 报 TF01 未知类型（test_dex_type 移除守卫）。
+
+### 测试迁移清单（Task 6 收尾）
+
+| 用例 | 迁移方向 | 状态 |
+|---|---|---|
+| test_pipeline 'Float Add'/'Int Float Mix' → 'Dex Add'/'Int Dex Mix' | dex 精确断言（期望值不变） | Task 5 已迁移 ✓ |
+| test_pipeline docstring "string, float" | 保留（docstring） | 不动 ✓ |
+| test_native_strings float_str_bits 位模式 | 保留（dex,apx 打印快路径回归） | 不动 ✓ |
+| test_dex_type 移除守卫（float 拒绝） | 保留（守卫测试） | Task 5 已迁移 ✓ |
+| **新增** test_dex_arith test_apx_print_rounding | apx 打印 = 6 位定点舍入（0.1→"0.1"、1/3→"0.333333"、1.0000006→"1.000001"、-0.1→"-0.1"） | 本任务 ✓ |
+| **新增** test_dex_arith test_interp_rejects_apx_dex | interp 显式报错（exit 255 + binary64 消息） | 本任务 ✓ |
+
+### interp 改动（Task 4 审查建议）
+
+interp.cr：op 49/50（IR_F2I/IR_I2F）显式报错——"interpreter lacks binary64 semantics"（消息：
+`IR_I2F/IR_F2I needs binary64 semantics (apx dex)`），return -1（exit 255）。替代静默跳过
+（目的槽残留 0/脏值 → 后续除法可能 SIGFPE）。`corec run` 精确 dex/int-apx 不受影响（无 49/50）。
+
+### apx 打印行为定稿（Task 4 concern）
+
+**v1 定稿：apx 变量经 dex_str 打印 = 6 位定点舍入（四舍五入半进）**，非截断、非全精度。
+实现：ir_gen.cr `dex_bits_to_scaled` 由 F2I(bits×S) 截断改为 round-half-away——
+m < 0 分支 −0.5 / m ≥ 0 分支 +0.5 后再 F2I（comisd 比较 + 分支，与字面量 str_to_scaled
+半进一致；-0.5 → -1）。单点规则：打印（@raw_int）与跨函数边界转换共用同一函数，
+行为一致。全精度打印（Ryu 式）留待后续版本。文档：dex.cr 头注释。
+
+**发现（Task 6）**：str_to_f64_bits 字面量转换按 ~2ulp 截断（保留站点，lexer.cr:121 注释为
+文档化限制）——经典 binary64 演示「0.1b+0.2b != 0.3」因此不成立（0.1/0.2 各低 1ulp，
+相加恰好落在 0.3 位模式）。非回归；binary64 行为断言以 1/3 判别子为准（±2ulp 下鲁棒）。
+
+**顺带修复（bootstrap bug）**：bootstrap/corec/backend/x86_64_stack_asm.py 字符串长度头按
+Python 字符数写（len(sval)+1），运行时 str_len 按字节读——非 ASCII 串（本任务报错消息
+的 UTF-8 破折号）被截尾 2 字节。修复：改 len(sval.encode('utf-8'))+1。自举侧根因修复。
+
+### 全套件回归证据
+
+bootstrap 6 文件全过（24/24 + 14/14 + 5/5 + 3/3 + 4/4 + 2/2）；selfhost 全过
+（test_compile 全过、test_dex_arith 9/9、test_lsp 8/8、test_region_cfg 16/16、apx/dex_type
+2/2 等）；build_selfhost_native.py 自举成功（corec/corearch/corelsp 三二进制）。
+
+### 顺带修复（全绿要求，非 float 站点）
+
+`corec build`/`corearch` ELF 输出 0644 → 0755：既有怪癖（Task 3 已记录"corec build 输出
+0644"），导致 test_backend_bootstrap stage1/2/3 链不可执行（exit 126），全部测试被迫
+chmod 兜底。根因修复：src/compiler/corearch.cr 2 处 + src/arch/linux/ld/main.cr 2 处 +
+src/arch/linux/ld/ld.cr 3 处（ctx_emit_static/ctx_emit_dyn/elf_gen 写路径）open mode
+420→493（0755；umask 仍生效）。.so 输出（emit_so）与 .ccr/缓存写保持 0644。修复后
+test_backend_bootstrap 全过（含 stage1/2/3 逐字节一致复现校验）。
