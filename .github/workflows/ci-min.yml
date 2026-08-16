@@ -1,6 +1,6 @@
 #
 
-name: CI-min
+name: CI-min2
 on:
   pull_request:
     branches: ["**"]
