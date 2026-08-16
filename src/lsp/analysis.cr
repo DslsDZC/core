@@ -481,8 +481,10 @@ fn analysis_definition(line: int, col: int) -> string {
 // 位置 → 前缀（光标前最近标识符；@ 后为 @ 内建上下文）→ 候选过滤 → JSON。
 // 候选来源（唯一真源）：lexer.cr lookup_keyword() 关键字、checker.cr
 // EXPR_AT 分发 14 个 @ 内建 + parser.cr @ffi、g_syms（函数/全局/类型）、
-// g_funcs / g_structs / g_enums。kind 按 brief：Keyword=14 / Function=3 /
-// Variable=6 / Struct=23 / Enum=23。
+// g_funcs / g_structs / g_enums。kind 为 LSP CompletionItemKind 规范值
+// （1-based）：Keyword=14 / Function=3 / Variable=6 / Struct=22 / Enum=13。
+// （Task 5 brief 数字有误——23 实为 Event；终审按规范修正，客户端平移
+// -1 得 VS Code 0-based 值。）
 //
 // 注意：前缀直接回扫快照 g_source（不依赖令牌——半截标识符不成令牌）；
 // 与 hover/definition 同为「最后一次成功检查的快照」语义。
@@ -636,12 +638,12 @@ fn analysis_cand_add(cand: string, count: int, ni: int, kind: int) -> int {
     return 1;
 }
 
-// SYM_* 种类 → CompletionItemKind（FN/SO_FN→3 函数、GLOBAL/LOCAL/PARAM→6
-// 变量、TYPE→23 结构体、MODULE→9 模块）
+// SYM_* 种类 → CompletionItemKind 规范值（FN/SO_FN→3 函数、
+// GLOBAL/LOCAL/PARAM→6 变量、TYPE→22 结构体、MODULE→9 模块）
 fn analysis_sym_item_kind(sk: int) -> int {
     if sk == SYM_FN || sk == SYM_SO_FN { return 3; }
     if sk == SYM_GLOBAL || sk == SYM_LOCAL || sk == SYM_PARAM { return 6; }
-    if sk == SYM_TYPE { return 23; }
+    if sk == SYM_TYPE { return 22; }
     return 9;
 }
 
@@ -666,7 +668,11 @@ fn analysis_completion(line: int, col: int) -> string {
         i : ., mut = 0;
         loop {
             if i >= g_sym_count { break; }
-            cnt = cnt + analysis_cand_add(cand, cnt, sym_name(i), analysis_sym_item_kind(sym_kind(i)));
+            kk : ., mut = analysis_sym_item_kind(sym_kind(i));
+            // SYM_TYPE 混装结构体/枚举/接口（collect_decls 统一注册）——
+            // 枚举按名字区分（g_enums 快照），发 Enum=13；否则按结构体 22
+            if sym_kind(i) == SYM_TYPE && find_enum(sym_name(i)) >= 0 { kk = 13; }
+            cnt = cnt + analysis_cand_add(cand, cnt, sym_name(i), kk);
             i = i + 1;
         }
         i = 0;
@@ -678,13 +684,13 @@ fn analysis_completion(line: int, col: int) -> string {
         i = 0;
         loop {
             if i >= g_struct_count { break; }
-            cnt = cnt + analysis_cand_add(cand, cnt, si_name(i), 23);
+            cnt = cnt + analysis_cand_add(cand, cnt, si_name(i), 22);   // Struct
             i = i + 1;
         }
         i = 0;
         loop {
             if i >= g_enum_count { break; }
-            cnt = cnt + analysis_cand_add(cand, cnt, ei_name(i), 23);
+            cnt = cnt + analysis_cand_add(cand, cnt, ei_name(i), 13);   // Enum
             i = i + 1;
         }
         j : ., mut = 0;
@@ -772,7 +778,8 @@ fn analysis_document_symbol() -> string {
             ln := r64(g_tokens, d * ESZ_TOKEN + OFF_TK_LINE);
             if analysis_line_offset(ln) == 0 {
                 w64(ent, cnt * 32, ni);
-                w64(ent, cnt * 32 + 8, 23);    // SymbolKind.Enum = 23（按 brief）
+                w64(ent, cnt * 32 + 8, 10);    // SymbolKind.Enum = 10（LSP 规范；
+                                               // Task 5 brief 误为 23）
                 w64(ent, cnt * 32 + 16, ln);
                 w64(ent, cnt * 32 + 24, r64(g_tokens, d * ESZ_TOKEN + OFF_TK_COL));
                 cnt = cnt + 1;
