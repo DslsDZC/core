@@ -11,7 +11,19 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  test:
+  pr:
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
+    timeout-minutes: 120
+    if: github.event_name == 'pull_request'
+    env:
+      CI_JOB_NAME: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: check
+          - name: bootstrap-tests
+          - name: selfhost-tests
     steps:
-      - run: echo "minimal with meta"
+      - run: echo "matrix ${{ matrix.name }}"
