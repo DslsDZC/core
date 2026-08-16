@@ -26,4 +26,11 @@ jobs:
           - name: bootstrap-tests
           - name: selfhost-tests
     steps:
-      - run: echo "matrix ${{ matrix.name }}"
+      - name: checkout the source code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+      - name: add extra environment variables
+        run: src/ci/scripts/setup-environment.sh
+      - name: run the build
+        run: src/ci/scripts/run-build-from-ci.sh
