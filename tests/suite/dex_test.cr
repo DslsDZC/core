@@ -38,8 +38,31 @@ fn main() -> int {
     // 10. 1/3 判别子：定点 6 位（0.333333）≠ binary64（0.3333333333333333）
     q := 1.0 / 3.0;
     if q != 0.3333333 { print("FAIL 1/3: "); println(dex_str(q)); return 13; }
+    // 11. 模运算截断恒等式（5 指令序列 a - trunc(a/b)·b），含负数
+    if 7.0 % 2.5 != 2.0 { print("FAIL 7.0%2.5: "); println(dex_str(7.0 % 2.5)); return 14; }
+    if -7.0 % 2.5 != -2.0 { print("FAIL -7.0%2.5: "); println(dex_str(-7.0 % 2.5)); return 15; }
+    if 1.0 % 0.3 != 0.1 { print("FAIL 1.0%0.3: "); println(dex_str(1.0 % 0.3)); return 16; }
+    if -1.0 % 0.3 != -0.1 { print("FAIL -1.0%0.3: "); println(dex_str(-1.0 % 0.3)); return 17; }
+    // 12. LET 边界转换（审查发现回归）：`y : dex = x`（x apx bits）→ y 存缩放形式
+    x : dex, apx = 3.0;
+    y : dex = x;
+    if 1.0 / y != 0.3333333 { print("FAIL LET apx->exact: "); println(dex_str(1.0 / y)); return 18; }
+    // 13. apx 跨函数边界（b1 调用点 + b2 返回点：bits → 定点 6 位）
+    b1 := dex_double_fn(x);
+    if b1 != 6.0 { print("FAIL call-site bits->scaled: "); println(dex_str(b1)); return 19; }
+    b2 := dex_apx_ret_fn();
+    if b2 != 0.5 { print("FAIL return-site bits->scaled: "); println(dex_str(b2)); return 20; }
     println("ALL PASS");
     return 0;
+}
+
+fn dex_double_fn(a: dex) -> dex {
+    return a * 2.0;
+}
+
+fn dex_apx_ret_fn() -> dex {
+    v : dex, apx = 1.0;
+    return v / 2.0;
 }
 
 fn dex_add_fn(a: dex, b: dex) -> dex {

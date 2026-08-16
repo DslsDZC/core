@@ -2292,7 +2292,12 @@ fn infer_expr(node: int) -> int {
         // @raw_int(expr) — dex 表达式 → 缩放整数原值（显式转换，数值迁移 Task 4）
         if str_eq(name, "raw_int") != 0 {
             if args < 0 { check_error(EC_N_UNDEFINED, "@raw_int requires an expression", ast_line(node), ast_col(node)); return TI_NEVER; }
-            infer_expr(ast_a(args));
+            av := infer_expr(ast_a(args));
+            // 参数校验：dex（或 int——int 原值即其缩放值）才可取其原值；其余类型报错
+            if av != TI_DEX && av != TI_INT && av != TI_NEVER {
+                check_error(EC_TF_ARG_TYPE, "@raw_int requires a dex (or int) expression", ast_line(node), ast_col(node));
+                return TI_NEVER;
+            }
             return TI_INT;
         }
 

@@ -1672,14 +1672,34 @@ fn gen_expr(node: int) -> int {
                 if is_apx != 0 { emit(IR_APPROX, -1, 0, 0, 0, 0); }
                 return dyn_var;
             }
-            // dex apx 变量：初始值按 bits 形式存储（apx 变量持有 binary64 位模式，
-            // 数值迁移 Task 4——字面量直接重发射 bits，计算值经 I2F/S 转换）
-            if is_apx != 0 && irv_type(val_var) == TI_DEX_S {
-                val_var = dex_scaled_to_bits(val_var, val_node);
+            // dex 槽位形式转换（数值迁移 Task 4）：LET 存储按声明类型走槽位形式转换，
+            // 与 ASSIGN 路径 dex_store_adjust 同位——
+            //   apx 变量（TI_DEX 槽）初始值存 bits（缩放值 → bits：字面量重发射、
+            //     计算值 I2F/S）
+            //   精确 dex 变量（TI_DEX_S 槽）初始值存缩放（apx bits 值 → 定点 6 位
+            //     舍入入精确世界——「存储/边界处按槽位形式转换」契约；修复前
+            //     `y : dex = x`（x 为 apx 变量）原样存 bits 且 var 被定型 TI_DEX，
+            //     无 apx 标签却永久走 binary64）
+            if type_node >= 0 && ast_kind(type_node) == 0 && ast_type_val(type_node) == TI_DEX {
+                vti := irv_type(val_var);
+                if vti == TI_DEX_S || vti == TI_DEX {
+                    if is_apx != 0 {
+                        if vti == TI_DEX_S { val_var = dex_scaled_to_bits(val_var, val_node); }
+                        irv_set_type(var, TI_DEX);
+                    } else {
+                        if vti == TI_DEX { val_var = dex_bits_to_scaled(val_var); }
+                        irv_set_type(var, TI_DEX_S);
+                    }
+                } else {
+                    // Preserve the initializer type so later operations can select
+                    // type-specific lowering (notably string + -> concat()).
+                    irv_set_type(var, vti);
+                }
+            } else {
+                // Preserve the initializer type so later operations can select
+                // type-specific lowering (notably string + -> concat()).
+                irv_set_type(var, irv_type(val_var));
             }
-            // Preserve the initializer type so later operations can select
-            // type-specific lowering (notably string + -> concat()).
-            irv_set_type(var, irv_type(val_var));
             emit(IR_STORE, -1, var, val_var, 0, 0);
         }
         bind_local(var_ni, var);
@@ -1931,7 +1951,10 @@ fn ir_gen_func(fi: int) {
     name_idx := ast_a(fn_node);
     first_param := ast_b(fn_node);
     param_count := ast_c(fn_node);
-    ret_ti := ast_type_val(fn_node);
+    // 返回类型：从 FuncInfo 取原始 TY_* 常量（ast_type_val(fn_node) 是返回类型
+    // 节点下标而非类型常量——错读会使 g_cur_ret_ti 不等于 TI_DEX，apx 返回点
+    // bits→scaled 转换失效，仅在 dex 类型节点下标恰为 1 时碰巧生效）
+    ret_ti := fi_return_type(fi);
     body := ast_data(fn_node);
 
     // Record function metadata

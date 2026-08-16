@@ -111,6 +111,35 @@ fn main() -> int {
     return 0;
 }
 ''', 1),
+        # 模运算截断恒等式（a - trunc(a/b)·b），含负数
+        run_test('Mod Trunc 7.0%2.5==2.0', '''
+fn main() -> int {
+    a := 7.0 % 2.5;
+    if a == 2.0 { return 1; }
+    return 0;
+}
+''', 1),
+        run_test('Mod Trunc -7.0%2.5==-2.0', '''
+fn main() -> int {
+    a := -7.0 % 2.5;
+    if a == -2.0 { return 1; }
+    return 0;
+}
+''', 1),
+        run_test('Mod Trunc 1.0%0.3==0.1', '''
+fn main() -> int {
+    a := 1.0 % 0.3;
+    if a == 0.1 { return 1; }
+    return 0;
+}
+''', 1),
+        run_test('Mod Trunc -1.0%0.3==-0.1', '''
+fn main() -> int {
+    a := -1.0 % 0.3;
+    if a == -0.1 { return 1; }
+    return 0;
+}
+''', 1),
     ]
     # 打印格式（定点 → 十进制，去尾零）——直接断言格式函数（bootstrap 无 stdlib，
     # 端到端打印路径由自举侧 tests/suite/dex_test.cr 覆盖）

@@ -447,7 +447,7 @@ fn corec_main() -> int {
             func_idx := g_ir_func_count;
             grow_ir_func_meta(func_idx + 1);
             w64(g_ir_func_name_idx, func_idx * 8, name_ni);
-            w64(g_ir_func_ret_type, func_idx * 8, ast_type_val(fn_node));
+            w64(g_ir_func_ret_type, func_idx * 8, fi_return_type(fi));
             w64(g_ir_func_instr_start, func_idx * 8, instr_start);
             w64(g_ir_func_var_start, func_idx * 8, var_start);
             w64(g_ir_func_param_count, func_idx * 8, ast_c(fn_node));

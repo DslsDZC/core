@@ -94,6 +94,56 @@ APX_LIT_SRC = (
     "}\n"
 )
 
+# LET 边界转换回归（审查发现）：`y : dex = x`（x 为 apx 变量，存 binary64 bits）时
+# 初始值必须按声明类型走 dex_store_adjust——bits → 6 位定点缩放，y 存缩放形式。
+# 修复前：y 原样存 bits 且被定型 TI_DEX（无 apx 标签却永久走 binary64），
+# 1.0/y 得到垃圾（bits 当缩放整数用）→ != 0.3333333（修复后为真——精确）。
+LET_APX_EXACT_SRC = (
+    "fn main() -> int {\n"
+    "    x : dex, apx = 3.0;\n"
+    "    y : dex = x;\n"
+    "    z := 1.0 / y;\n"
+    "    if z != 0.3333333 { return 1; }\n"
+    "    return 0;\n"
+    "}\n"
+)
+
+# % 截断恒等式（5 指令序列：a - trunc(a/b)·b）——含负数：
+#   7.0%2.5=2.0、-7.0%2.5=-2.0、1.0%0.3=0.1、-1.0%0.3=-0.1
+MOD_SRC = (
+    "fn main() -> int {\n"
+    "    a := 7.0 % 2.5;\n"
+    "    if a != 2.0 { return 1; }\n"
+    "    b := -7.0 % 2.5;\n"
+    "    if b != -2.0 { return 2; }\n"
+    "    c := 1.0 % 0.3;\n"
+    "    if c != 0.1 { return 3; }\n"
+    "    d := -1.0 % 0.3;\n"
+    "    if d != -0.1 { return 4; }\n"
+    "    return 0;\n"
+    "}\n"
+)
+
+# apx 跨函数边界转换（b1/b2 场景）：
+#   b1 调用点：apx 变量参数 → F2I(bits×S) 转 scaled（callee 收精确形式）
+#   b2 返回点：apx 计算结果（binary64 bits）→ 返回处转 scaled（caller 收精确形式）
+# 断言均须为真（精确）——缺任一转换则 bits 被当缩放整数用，断言失败。
+APX_BOUNDARY_SRC = (
+    "fn main() -> int {\n"
+    "    x : dex, apx = 3.0;\n"
+    "    r := dex_double_fn(x);\n"
+    "    if r != 6.0 { return 1; }\n"
+    "    s := dex_apx_ret_fn();\n"
+    "    if s != 0.5 { return 2; }\n"
+    "    return 0;\n"
+    "}\n"
+    "fn dex_double_fn(a: dex) -> dex { return a * 2.0; }\n"
+    "fn dex_apx_ret_fn() -> dex {\n"
+    "    v : dex, apx = 1.0;\n"
+    "    return v / 2.0;\n"
+    "}\n"
+)
+
 
 def build_run_exit(src):
     """Build to ELF (static) and run; return (exit_code, stdout+stderr)."""
@@ -164,6 +214,40 @@ def test_dex_run_interp():
     return True
 
 
+def test_let_apx_to_exact_boundary():
+    # 审查发现回归：LET 初始化按声明类型走槽位形式转换——`y : dex = x`（x apx bits）
+    # 必须 bits → 6 位定点缩放（y 存缩放形式）；修复前 y 无 apx 标签却永久走 binary64
+    code, out = build_run_exit(LET_APX_EXACT_SRC)
+    if code != 0:
+        print(f"[FAIL] LET apx→exact boundary: exit={code} (expected 0: 1.0/y == 0.3333333)")
+        print(out)
+        return False
+    print("[PASS] LET apx→exact: y : dex = x (x apx 3.0), 1.0/y == 0.3333333 (scaled slot)")
+    return True
+
+
+def test_dex_mod_trunc_identity():
+    # % 截断恒等式（5 指令序列 a - trunc(a/b)·b），含负数
+    code, out = build_run_exit(MOD_SRC)
+    if code != 0:
+        print(f"[FAIL] dex mod trunc identity: exit={code} (expected 0)")
+        print(out)
+        return False
+    print("[PASS] dex mod trunc identity (7.0%2.5=2.0, -7.0%2.5=-2.0, 1.0%0.3=0.1, -1.0%0.3=-0.1)")
+    return True
+
+
+def test_apx_cross_fn_boundary():
+    # b1 调用点：apx 参数 bits → scaled（callee 收精确形式）；b2 返回点：apx bits → scaled
+    code, out = build_run_exit(APX_BOUNDARY_SRC)
+    if code != 0:
+        print(f"[FAIL] apx cross-fn boundary: exit={code} (expected 0: call/ret bits→scaled)")
+        print(out)
+        return False
+    print("[PASS] apx cross-fn boundary: call site (r==6.0) + return site (s==0.5) exact")
+    return True
+
+
 def main():
     if not COREC.exists():
         print(f"[FAIL] missing native compiler: {COREC}")
@@ -173,6 +257,9 @@ def main():
         test_apx_binary64_elf(),
         test_exact_literal_scaled_in_cir(),
         test_dex_run_interp(),
+        test_let_apx_to_exact_boundary(),
+        test_dex_mod_trunc_identity(),
+        test_apx_cross_fn_boundary(),
     ]
     passed = sum(results)
     print(f"{passed}/{len(results)} passed")
