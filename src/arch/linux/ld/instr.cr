@@ -1241,6 +1241,10 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
         // No-op — consumed by optimization passes
         return 0;
     }
+    if op == IR_APPROX {
+        // No-op — annotation only (apx: approved for approximate arithmetic)
+        return 0;
+    }
     if op == IR_UNROLL {
         // No-op — consumed by loop unrolling pass
         return 0;

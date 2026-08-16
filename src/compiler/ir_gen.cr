@@ -1446,6 +1446,7 @@ fn gen_expr(node: int) -> int {
         var_ni := ast_a(node);
         type_node := ast_b(node);
         val_node := ast_c(node);
+        is_apx := ast_int_val(node);  // apx 标签位（parser 存入 iv 字段）
         // Detect dyn variable (type annotation is `dyn`)
         is_dyn_var : ., mut = 0;
         if type_node >= 0 && ast_kind(type_node) == 0 && ast_type_val(type_node) == TI_DYN {
@@ -1473,6 +1474,7 @@ fn gen_expr(node: int) -> int {
                 if tag < 0 { tag = TI_INT; }
                 emit(IR_DYN_PACK, dyn_var, val_var, tag, 0, 0);
                 bind_local(var_ni, dyn_var);
+                if is_apx != 0 { emit(IR_APPROX, -1, 0, 0, 0, 0); }
                 return dyn_var;
             }
             // Preserve the initializer type so later operations can select
@@ -1481,6 +1483,7 @@ fn gen_expr(node: int) -> int {
             emit(IR_STORE, -1, var, val_var, 0, 0);
         }
         bind_local(var_ni, var);
+        if is_apx != 0 { emit(IR_APPROX, -1, 0, 0, 0, 0); }
         return var;
     }
 

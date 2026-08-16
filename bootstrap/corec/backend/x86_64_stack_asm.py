@@ -542,6 +542,8 @@ class X86_64StackAsmGen:
         elif isinstance(instr, MakeEnumInstr): self.gen_make_enum(instr)
         elif isinstance(instr, RefInstr): self.gen_ref(instr)
         elif isinstance(instr, PhiInstr): self.gen_phi(instr)
+        elif isinstance(instr, ApproxInstr):
+            pass  # pure annotation — no codegen
         else:
             raise NotImplementedError(f"Unknown instruction: {type(instr)}")
 

@@ -207,6 +207,9 @@ fn ir_interpret() -> int {
             if d >= 0 { w64(g_ir_vals, d * 8, 0); }
         }
 
+        // IR_APPROX — pure annotation, skip（无运算语义，不能崩）
+        if op == 51 { ip = ip + 1; continue; }
+
         // IR_STORE_PTR
         if op == 26 { if d >= 0 && s1 >= 0 { w64(g_ir_vals, s1 * 8, r64(g_ir_vals, d * 8)); } }
 

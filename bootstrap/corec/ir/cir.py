@@ -28,6 +28,7 @@ from corec.ir.coreir import (
     LoadIndexVarInstr, StoreIndexVarInstr,
     LoadEnumTagInstr, MakeEnumInstr,
     RefInstr, BranchInstr, JumpInstr, LabelInstr, PhiInstr,
+    ApproxInstr,
 )
 from corec.ir.base import IRVar
 
@@ -300,6 +301,10 @@ def _instr_kind_and_sem(instr, sem: dict) -> str:
     if isinstance(instr, PhiInstr):
         sem["choices"] = [(str(s), str(v)) for s, v in instr.choices]
         return "phi"
+    if isinstance(instr, ApproxInstr):
+        # Pure annotation — approved for approximate arithmetic, no operands
+        sem["target"] = "variable"
+        return "approx"
 
     sem["ir_type"] = type(instr).__name__
     return "unknown"

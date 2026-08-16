@@ -518,6 +518,7 @@ fn df_opcode_name(opcode: int, s3: int) -> string {
     if opcode == IR_NO_BOUNDS_CHECK { return "no_bounds_check"; }
     if opcode == IR_FAST { return "fast"; }
     if opcode == IR_UNROLL { return "unroll"; }
+    if opcode == IR_APPROX { return "approx"; }
     if opcode == IR_SECTION { return "section"; }
     if opcode == IR_HOTPATCH_ROUTE { return "hotpatch_route"; }
     if opcode == IR_DYN_TAG { return "dyn_tag"; }

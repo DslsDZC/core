@@ -392,6 +392,7 @@ EC_TA_IMMUTABLE  : int = 4004; // TA04  Assign to immutable
 EC_TA_NOT_MUT    : int = 4005; // TA05  Variable not mutable
 EC_TA_GLOBAL_MUT : int = 4006; // TA06  Global not mutable
 EC_TA_TUPLE_ARITY : int = 4007; // TA07  Tuple destructuring arity
+EC_TA_UNKNOWN_TAG : int = 4008; // TA08  Unknown declaration tag
 
 // TF0xx — Type: Function
 EC_TF_RETURN     : int = 5001; // TF01  Return type mismatch
@@ -575,6 +576,7 @@ IR_LAZY_FORCE  : int = 47;  // dest=val_var, s1=thunk_var — force evaluation
 IR_FNADDR : int = 48;  // dest=addr_var, s1=fn_name_ni — load function address (movabs + link-time patch)
 IR_I2F : int = 49;  // dest=float_var, s1=int_var — int → float（cvtsi2sd）
 IR_F2I : int = 50;  // dest=int_var, s1=float_var — float → int（cvttsd2si）
+IR_APPROX : int = 51;  // — 无操作数注解：apx 变量声明处（语义许可，后端可忽略，interp 跳过）
 
 // Resolution flag for BRANCH/JUMP (stored in type_kind field after label resolution)
 IR_RESOLVED : int = 1;

@@ -663,6 +663,9 @@ class IRGen:
         self.add_instr(AllocInstr(typ, var_ir))
         if val_ir:
             self.add_instr(StoreInstr(var_ir, val_ir))
+        if 'apx' in (let.tags or []):
+            # apx 标签：纯注解——发射 ApproxInstr（无操作数），后端可忽略
+            self.add_instr(ApproxInstr())
         self.local_vars[name] = var_ir
         return var_ir
 

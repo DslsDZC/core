@@ -518,6 +518,8 @@ class Interpreter:
             return (None, None)
         elif isinstance(instr, LabelInstr):
             pass
+        elif isinstance(instr, ApproxInstr):
+            pass  # pure annotation — no runtime semantics
         else:
             raise NotImplementedError(f"instr {type(instr)}")
         return None

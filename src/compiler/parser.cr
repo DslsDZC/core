@@ -660,7 +660,7 @@ fn parse_new_var_decl() -> int {
     }
 
     typ : ., mut = -1;
-    is_mut : ., mut = 0;   is_pub : ., mut = 0;
+    is_mut : ., mut = 0;   is_pub : ., mut = 0;   is_apx : ., mut = 0;
 
     values : string, mut;    values_cap : int, mut;
     values = alloc(64 * 8); values_cap = 64;
@@ -696,12 +696,22 @@ fn parse_new_var_decl() -> int {
                 tag := tok_lx(tag_t);
                 if tag == "mut" { is_mut = 1; }
                 else if tag == "pub" { is_pub = 1; }
+                else if tag == "apx" { is_apx = 1; }
                 else {
                     tni := str_intern(tag);
                     ei := find_plugin_entry(g_plugin_tags, g_plugin_tag_count, tni, -1);
                     if ei >= 0 {
                         pd := r64(g_plugin_tags, ei*24+16);
                         if pd != 0 { is_mut = 1; }
+                    } else {
+                        // 未知标签：TA08（已知标签 = mut/pub/apx + 插件注册标签）
+                        grow_diags(g_diag_count + 1);
+                        w64(g_diags, g_diag_count * DIAG_REC_SIZE, EC_TA_UNKNOWN_TAG);
+                        store_str_ptr(g_diags, g_diag_count * DIAG_REC_SIZE + 8, "unknown declaration tag '" + tag + "'");
+                        w64(g_diags, g_diag_count * DIAG_REC_SIZE + 16, tok_ln(tag_t));
+                        w64(g_diags, g_diag_count * DIAG_REC_SIZE + 24, tok_cl(tag_t));
+                        w64(g_diags, g_diag_count * DIAG_REC_SIZE + 32, diag_fileid_for_line(tok_ln(tag_t)));
+                        g_diag_count = g_diag_count + 1;
                     }
                 }
                 if !check(T_COMMA) { break; }
@@ -733,7 +743,7 @@ fn parse_new_var_decl() -> int {
         if i >= nc { break; }
         ni := str_intern(r64(names, i * 8));
         nv := r64(values, i * 8);
-        node := alloc_node(EXPR_LET, ni, typ, nv, 0, 0, is_mut, tok_ln(t), tok_cl(t));
+        node := alloc_node(EXPR_LET, ni, typ, nv, is_apx, 0, is_mut, tok_ln(t), tok_cl(t));
         if i == 0 {
             first_node = node;
         } else {

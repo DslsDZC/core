@@ -109,7 +109,11 @@ class Parser:
                 # Accept IDENT or any keyword as a tag (anything that's not a structural token)
                 tt = self.cur().type
                 if tt not in (TokenType.EQ, TokenType.SEMI, TokenType.COMMA, TokenType.COLON, TokenType.EOF):
-                    tags.append(self.advance().lexeme)
+                    tag = self.advance().lexeme
+                    # 已知标签：mut / pub / apx（与自举编译器一致，未知标签报错）
+                    if tag not in ('mut', 'pub', 'apx'):
+                        self.error(f"unknown declaration tag '{tag}'")
+                    tags.append(tag)
                 else:
                     break
                 if self.check(TokenType.COMMA):

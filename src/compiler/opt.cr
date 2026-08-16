@@ -437,6 +437,7 @@ fn pass_cse() {
             if op == IR_NO_BOUNDS_CHECK { ii = ii + 1; continue; }
             if op == IR_FAST { ii = ii + 1; continue; }
             if op == IR_UNROLL { ii = ii + 1; continue; }
+            if op == IR_APPROX { ii = ii + 1; continue; }
             if op == IR_SECTION { ii = ii + 1; continue; }
             if op == IR_HOTPATCH_ROUTE { ii = ii + 1; continue; }
             if op == IR_DYN_TAG { ii = ii + 1; continue; }

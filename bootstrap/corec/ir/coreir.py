@@ -134,6 +134,12 @@ class PhiInstr(Instr):
     dest: IRVar
 
 @dataclass
+class ApproxInstr(Instr):
+    """Annotation: the declared variable is approved for approximate
+    arithmetic. Pure annotation — no operands, no runtime semantics.
+    Backends must skip it; semantic enforcement is a later task."""
+
+@dataclass
 class BasicBlock(IRNode):
     name: str
     instrs: List[Instr] = field(default_factory=list)
