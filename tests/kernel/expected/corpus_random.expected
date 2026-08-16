@@ -1,0 +1,1200 @@
+infer: reject
+infer: reject
+infer: reject
+infer: reject
+infer: type: (pi (nat) (typ 0))
+infer: type: (typ 0)
+check: reject
+check: reject
+infer: type: (nat)
+convert: no
+infer: reject
+infer: type: (typ 0)
+subtype: no
+infer: type: (typ 0)
+infer: type: (typ 0)
+infer: reject
+check: reject
+infer: reject
+infer: type: (typ 0)
+infer: reject
+infer: type: (typ 0)
+infer: reject
+check: reject
+infer: reject
+convert: no
+subtype: yes
+convert: yes
+check: reject
+infer: reject
+infer: reject
+check: reject
+infer: type: (nat)
+infer: reject
+infer: reject
+infer: type: (nat)
+check: reject
+infer: reject
+check: reject
+subtype: no
+subtype: no
+convert: no
+infer: type: (nat)
+convert: no
+check: reject
+check: reject
+subtype: no
+infer: type: (typ 0)
+check: reject
+check: reject
+convert: no
+infer: reject
+check: reject
+infer: reject
+subtype: no
+check: reject
+infer: type: (pi (pi (nat) (var 1)) (typ 0))
+subtype: yes
+subtype: no
+convert: no
+check: reject
+check: reject
+infer: type: (nat)
+infer: reject
+check: reject
+check: reject
+infer: reject
+subtype: no
+convert: no
+check: reject
+subtype: no
+infer: type: (nat)
+infer: type: (nat)
+check: reject
+check: reject
+check: accept
+infer: type: (typ 0)
+subtype: no
+infer: reject
+subtype: no
+infer: type: (nat)
+infer: reject
+infer: reject
+check: reject
+infer: reject
+check: reject
+convert: yes
+convert: no
+convert: no
+infer: reject
+infer: reject
+infer: reject
+infer: type: (typ 0)
+convert: no
+infer: type: (nat)
+convert: no
+check: reject
+convert: no
+infer: type: (nat)
+infer: type: (typ 0)
+infer: reject
+infer: reject
+infer: type: (nat)
+infer: reject
+infer: reject
+infer: reject
+check: reject
+infer: reject
+infer: type: (typ 0)
+infer: reject
+infer: reject
+infer: type: (typ 0)
+infer: reject
+infer: type: (typ 0)
+check: reject
+infer: type: (typ 0)
+infer: type: (nat)
+infer: type: (typ 0)
+infer: type: (pi (nat) (typ 0))
+infer: reject
+subtype: no
+check: accept
+check: reject
+subtype: no
+check: reject
+infer: reject
+infer: type: (nat)
+infer: type: (typ 0)
+check: reject
+check: accept
+check: reject
+subtype: no
+subtype: no
+convert: no
+check: reject
+infer: reject
+infer: reject
+infer: type: (nat)
+infer: reject
+infer: reject
+subtype: no
+infer: type: (typ 0)
+convert: no
+subtype: no
+infer: reject
+check: reject
+subtype: no
+infer: reject
+check: accept
+subtype: no
+check: reject
+infer: reject
+check: reject
+infer: reject
+infer: reject
+convert: no
+convert: no
+convert: no
+subtype: no
+check: reject
+convert: no
+subtype: no
+subtype: no
+infer: reject
+subtype: no
+convert: no
+infer: reject
+infer: type: (typ 0)
+infer: reject
+subtype: yes
+infer: type: (typ 0)
+check: reject
+infer: type: (typ 0)
+infer: type: (nat)
+infer: reject
+infer: type: (typ 0)
+infer: reject
+infer: reject
+infer: reject
+infer: reject
+infer: type: (typ 0)
+infer: reject
+subtype: no
+infer: reject
+subtype: no
+infer: reject
+infer: type: (typ 0)
+convert: no
+infer: type: (nat)
+infer: type: (typ 0)
+infer: reject
+infer: type: (typ 0)
+infer: type: (nat)
+infer: type: (typ 0)
+subtype: no
+infer: reject
+subtype: no
+infer: type: (typ 0)
+infer: reject
+check: reject
+infer: reject
+infer: type: (typ 0)
+infer: type: (typ 0)
+subtype: no
+infer: reject
+subtype: yes
+subtype: yes
+infer: type: (typ 0)
+infer: type: (typ 0)
+subtype: no
+convert: no
+infer: reject
+infer: type: (typ 0)
+infer: reject
+check: accept
+check: reject
+infer: type: (nat)
+infer: type: (nat)
+check: reject
+convert: no
+infer: reject
+check: reject
+infer: type: (nat)
+infer: type: (typ 0)
+convert: no
+infer: reject
+convert: yes
+infer: reject
+infer: reject
+infer: reject
+infer: reject
+infer: reject
+infer: type: (nat)
+convert: no
+infer: type: (nat)
+convert: no
+infer: type: (typ 0)
+subtype: yes
+subtype: no
+infer: type: (nat)
+infer: reject
+convert: no
+infer: type: (nat)
+infer: reject
+infer: reject
+subtype: no
+subtype: no
+check: reject
+check: reject
+convert: no
+infer: reject
+infer: type: (nat)
+check: reject
+convert: no
+check: reject
+infer: reject
+convert: no
+infer: reject
+check: reject
+check: reject
+convert: no
+check: reject
+infer: type: (nat)
+infer: reject
+infer: reject
+infer: reject
+check: reject
+convert: no
+subtype: no
+infer: reject
+infer: type: (typ 0)
+subtype: no
+infer: type: (typ 0)
+check: reject
+check: accept
+convert: no
+check: reject
+check: accept
+infer: type: (nat)
+check: reject
+convert: no
+infer: type: (typ 0)
+check: reject
+infer: type: (typ 0)
+convert: no
+infer: reject
+convert: no
+infer: reject
+infer: type: (typ 0)
+infer: type: (typ 0)
+infer: type: (typ 0)
+infer: reject
+infer: type: (typ 0)
+infer: reject
+check: reject
+convert: no
+subtype: no
+check: reject
+convert: no
+infer: type: (typ 0)
+infer: reject
+infer: type: (nat)
+infer: reject
+infer: reject
+check: accept
+convert: no
+subtype: yes
+convert: no
+infer: reject
+infer: reject
+check: reject
+convert: no
+infer: reject
+convert: no
+convert: yes
+infer: type: (nat)
+infer: reject
+check: accept
+infer: type: (nat)
+convert: no
+convert: no
+infer: reject
+infer: type: (typ 0)
+infer: reject
+convert: no
+check: reject
+convert: no
+subtype: no
+convert: no
+subtype: no
+infer: reject
+check: accept
+infer: reject
+check: accept
+subtype: no
+check: reject
+subtype: no
+check: reject
+infer: type: (typ 0)
+infer: type: (typ 0)
+check: reject
+infer: reject
+infer: type: (typ 0)
+infer: type: (nat)
+infer: reject
+convert: no
+check: reject
+check: reject
+subtype: no
+infer: type: (typ 0)
+infer: reject
+infer: reject
+infer: reject
+infer: type: (nat)
+convert: no
+check: accept
+check: reject
+subtype: no
+check: reject
+convert: no
+check: reject
+check: reject
+check: reject
+subtype: no
+convert: no
+check: reject
+infer: reject
+subtype: no
+infer: type: (nat)
+convert: no
+convert: no
+convert: no
+infer: type: (typ 0)
+convert: no
+infer: type: (typ 0)
+infer: reject
+subtype: no
+subtype: no
+infer: type: (typ 0)
+subtype: no
+check: reject
+convert: no
+subtype: no
+infer: reject
+infer: reject
+check: accept
+infer: type: (typ 0)
+check: reject
+infer: type: (typ 0)
+check: reject
+infer: type: (typ 0)
+infer: reject
+infer: reject
+infer: reject
+infer: reject
+infer: reject
+check: reject
+convert: no
+check: reject
+infer: reject
+convert: no
+convert: no
+convert: no
+check: accept
+check: reject
+check: reject
+subtype: no
+infer: type: (nat)
+infer: reject
+infer: reject
+infer: reject
+infer: type: (nat)
+subtype: no
+infer: type: (pi (nat) (nat))
+infer: reject
+infer: reject
+infer: reject
+check: reject
+infer: reject
+infer: type: (nat)
+infer: reject
+infer: type: (typ 0)
+infer: reject
+check: reject
+infer: reject
+subtype: yes
+convert: no
+convert: no
+check: reject
+infer: reject
+convert: no
+infer: type: (pi (nat) (typ 0))
+check: reject
+convert: no
+convert: no
+infer: reject
+infer: type: (pi (nat) (typ 0))
+subtype: no
+convert: no
+infer: type: (nat)
+infer: type: (nat)
+infer: reject
+infer: type: (typ 0)
+infer: reject
+check: reject
+convert: no
+infer: reject
+infer: type: (typ 0)
+subtype: no
+convert: no
+subtype: no
+subtype: no
+infer: type: (typ 0)
+check: reject
+subtype: no
+check: reject
+subtype: no
+subtype: no
+convert: no
+infer: type: (typ 0)
+check: reject
+check: reject
+subtype: no
+infer: reject
+infer: reject
+convert: no
+infer: reject
+infer: reject
+infer: reject
+infer: type: (typ 0)
+convert: no
+infer: type: (nat)
+infer: reject
+infer: reject
+infer: type: (typ 0)
+check: reject
+infer: type: (typ 0)
+convert: yes
+infer: reject
+check: reject
+convert: no
+subtype: no
+infer: type: (typ 0)
+infer: reject
+check: reject
+infer: type: (typ 0)
+subtype: no
+infer: type: (pi (nat) (typ 0))
+infer: type: (typ 0)
+subtype: no
+infer: type: (nat)
+infer: reject
+infer: reject
+check: reject
+subtype: no
+check: reject
+infer: reject
+convert: no
+infer: reject
+infer: type: (typ 0)
+subtype: no
+infer: reject
+infer: reject
+infer: type: (nat)
+check: reject
+check: reject
+infer: type: (typ 0)
+infer: reject
+subtype: no
+check: reject
+convert: no
+infer: reject
+infer: type: (nat)
+infer: type: (nat)
+subtype: no
+subtype: no
+subtype: no
+subtype: no
+infer: reject
+subtype: no
+infer: type: (nat)
+convert: no
+infer: type: (nat)
+infer: type: (typ 0)
+check: accept
+check: reject
+infer: reject
+infer: type: (nat)
+subtype: no
+infer: reject
+infer: reject
+check: reject
+subtype: no
+infer: reject
+check: reject
+check: reject
+infer: type: (typ 0)
+convert: no
+infer: reject
+infer: reject
+infer: reject
+infer: reject
+infer: type: (nat)
+check: accept
+subtype: no
+infer: type: (pi (nat) (typ 0))
+infer: type: (nat)
+convert: no
+subtype: no
+infer: type: (typ 0)
+infer: type: (nat)
+infer: type: (typ 0)
+check: reject
+infer: type: (nat)
+subtype: no
+convert: yes
+infer: type: (nat)
+convert: yes
+check: reject
+check: reject
+convert: no
+infer: type: (nat)
+convert: yes
+infer: reject
+check: reject
+infer: type: (typ 0)
+check: reject
+check: reject
+check: reject
+convert: no
+infer: reject
+infer: type: (typ 0)
+infer: type: (nat)
+infer: reject
+infer: type: (typ 0)
+infer: reject
+infer: type: (pi (nat) (nat))
+infer: reject
+infer: type: (typ 0)
+infer: reject
+subtype: yes
+check: reject
+check: reject
+convert: no
+check: reject
+infer: reject
+infer: reject
+infer: type: (nat)
+check: reject
+convert: no
+infer: reject
+infer: reject
+infer: type: (pi (pi (nat) (nat)) (typ 0))
+infer: type: (typ 0)
+infer: type: (nat)
+infer: reject
+check: reject
+infer: reject
+check: reject
+convert: no
+convert: no
+infer: reject
+check: reject
+infer: reject
+convert: no
+subtype: no
+infer: type: (nat)
+check: reject
+infer: reject
+infer: type: (nat)
+check: reject
+check: reject
+convert: yes
+infer: reject
+infer: type: (nat)
+convert: no
+infer: type: (typ 0)
+check: reject
+infer: reject
+subtype: no
+infer: reject
+convert: no
+infer: type: (pi (nat) (typ 0))
+infer: reject
+check: reject
+subtype: no
+subtype: no
+check: reject
+infer: type: (nat)
+convert: no
+infer: reject
+convert: no
+infer: reject
+check: reject
+infer: reject
+infer: reject
+convert: no
+infer: type: (nat)
+check: reject
+infer: reject
+convert: no
+check: accept
+convert: no
+check: accept
+check: reject
+infer: reject
+subtype: no
+infer: reject
+infer: type: (typ 0)
+convert: no
+check: reject
+infer: reject
+infer: type: (typ 0)
+infer: type: (typ 0)
+infer: reject
+infer: reject
+infer: type: (typ 0)
+check: reject
+subtype: no
+subtype: no
+infer: reject
+check: reject
+subtype: yes
+infer: type: (pi (nat) (typ 0))
+subtype: no
+subtype: no
+infer: type: (nat)
+infer: type: (typ 0)
+check: reject
+subtype: no
+infer: reject
+infer: type: (typ 0)
+subtype: no
+infer: reject
+convert: no
+convert: no
+infer: type: (typ 0)
+check: reject
+subtype: no
+infer: type: (nat)
+infer: reject
+infer: reject
+infer: reject
+check: reject
+check: reject
+infer: type: (typ 0)
+convert: no
+convert: no
+infer: type: (nat)
+check: reject
+infer: reject
+check: reject
+infer: reject
+convert: no
+subtype: no
+infer: reject
+check: reject
+infer: type: (typ 0)
+infer: type: (typ 0)
+check: reject
+subtype: no
+infer: reject
+check: reject
+infer: reject
+subtype: no
+infer: type: (pi (nat) (nat))
+convert: no
+subtype: no
+subtype: no
+subtype: no
+check: reject
+check: reject
+infer: reject
+check: accept
+infer: reject
+infer: type: (typ 0)
+check: reject
+convert: no
+subtype: no
+infer: type: (typ 0)
+check: reject
+convert: no
+infer: reject
+subtype: no
+infer: reject
+infer: reject
+infer: type: (typ 0)
+subtype: yes
+subtype: no
+infer: reject
+convert: no
+check: reject
+infer: reject
+subtype: no
+check: accept
+infer: reject
+convert: no
+infer: reject
+check: reject
+infer: reject
+check: reject
+subtype: no
+infer: reject
+infer: type: (typ 0)
+infer: reject
+check: reject
+infer: reject
+infer: type: (typ 0)
+check: accept
+convert: no
+subtype: no
+infer: reject
+check: reject
+infer: type: (typ 0)
+infer: reject
+infer: type: (typ 0)
+infer: reject
+convert: no
+check: reject
+subtype: no
+convert: no
+infer: type: (typ 0)
+infer: reject
+infer: type: (typ 0)
+subtype: no
+infer: reject
+infer: reject
+infer: reject
+infer: reject
+infer: type: (nat)
+check: reject
+convert: no
+infer: reject
+infer: type: (pi (nat) (typ 0))
+check: accept
+subtype: no
+check: accept
+convert: no
+subtype: no
+infer: reject
+infer: reject
+convert: no
+subtype: no
+convert: no
+check: reject
+infer: type: (typ 0)
+infer: type: (nat)
+check: reject
+subtype: no
+check: reject
+check: reject
+check: reject
+subtype: no
+check: reject
+infer: reject
+check: reject
+convert: no
+infer: type: (typ 0)
+convert: no
+infer: reject
+subtype: no
+convert: no
+check: accept
+subtype: no
+subtype: no
+subtype: no
+convert: no
+check: reject
+check: reject
+convert: no
+infer: type: (nat)
+subtype: no
+infer: type: (typ 0)
+infer: reject
+infer: reject
+infer: reject
+convert: no
+check: reject
+convert: no
+infer: type: (nat)
+infer: reject
+subtype: no
+infer: type: (nat)
+infer: reject
+convert: no
+check: reject
+subtype: no
+infer: reject
+check: reject
+subtype: yes
+infer: reject
+infer: type: (typ 0)
+check: accept
+infer: type: (typ 0)
+infer: reject
+infer: reject
+check: reject
+infer: type: (typ 0)
+subtype: no
+convert: no
+infer: reject
+infer: type: (typ 0)
+infer: reject
+subtype: no
+infer: type: (nat)
+check: accept
+check: accept
+infer: reject
+infer: type: (typ 0)
+infer: reject
+infer: type: (nat)
+infer: type: (typ 0)
+infer: reject
+convert: no
+infer: type: (nat)
+convert: no
+infer: type: (typ 0)
+subtype: no
+convert: no
+infer: reject
+infer: type: (nat)
+subtype: no
+convert: no
+infer: type: (nat)
+check: reject
+check: reject
+convert: no
+subtype: no
+infer: reject
+convert: no
+check: reject
+infer: reject
+convert: no
+subtype: no
+check: reject
+infer: type: (typ 0)
+infer: reject
+check: accept
+infer: reject
+infer: type: (nat)
+convert: no
+infer: type: (typ 0)
+check: reject
+infer: reject
+infer: reject
+infer: reject
+infer: reject
+convert: no
+infer: reject
+subtype: no
+check: reject
+infer: type: (typ 0)
+infer: reject
+check: reject
+check: reject
+subtype: no
+check: reject
+infer: type: (typ 0)
+infer: reject
+convert: no
+convert: no
+infer: reject
+infer: reject
+subtype: no
+convert: no
+check: reject
+infer: type: (pi (nat) (typ 0))
+subtype: no
+convert: no
+infer: type: (typ 0)
+subtype: no
+subtype: no
+infer: reject
+infer: reject
+infer: reject
+subtype: no
+infer: reject
+infer: reject
+subtype: no
+check: reject
+infer: type: (typ 0)
+infer: reject
+infer: type: (nat)
+infer: type: (nat)
+infer: type: (nat)
+convert: no
+check: reject
+convert: no
+infer: type: (typ 0)
+infer: reject
+infer: reject
+convert: no
+infer: reject
+infer: reject
+infer: type: (typ 0)
+subtype: no
+infer: reject
+infer: reject
+subtype: no
+check: reject
+infer: reject
+infer: type: (typ 0)
+infer: reject
+check: reject
+subtype: yes
+subtype: no
+convert: no
+convert: no
+infer: type: (typ 0)
+infer: type: (typ 0)
+infer: type: (typ 0)
+infer: reject
+infer: reject
+subtype: no
+subtype: no
+check: reject
+subtype: no
+convert: no
+convert: no
+check: accept
+infer: type: (pi (nat) (typ 0))
+infer: reject
+infer: reject
+infer: reject
+convert: no
+infer: reject
+convert: no
+infer: type: (nat)
+infer: type: (typ 0)
+check: reject
+subtype: no
+infer: type: (pi (nat) (typ 0))
+subtype: no
+infer: reject
+infer: reject
+subtype: no
+check: reject
+infer: reject
+infer: reject
+infer: reject
+infer: reject
+check: reject
+subtype: no
+subtype: yes
+convert: no
+convert: no
+convert: no
+convert: no
+infer: type: (typ 0)
+check: reject
+subtype: no
+infer: type: (typ 0)
+subtype: no
+subtype: no
+check: reject
+check: reject
+subtype: yes
+check: reject
+infer: reject
+check: accept
+infer: reject
+infer: reject
+infer: reject
+subtype: no
+infer: reject
+infer: type: (typ 0)
+infer: type: (pi (nat) (nat))
+infer: reject
+infer: type: (typ 0)
+infer: reject
+infer: reject
+check: reject
+infer: type: (typ 0)
+check: reject
+infer: reject
+infer: type: (pi (nat) (typ 0))
+subtype: no
+check: reject
+infer: type: (typ 0)
+subtype: no
+infer: type: (typ 0)
+check: reject
+check: reject
+check: reject
+check: accept
+subtype: no
+infer: reject
+infer: type: (typ 0)
+infer: reject
+infer: type: (typ 0)
+check: reject
+check: reject
+infer: reject
+subtype: no
+infer: type: (nat)
+infer: type: (typ 0)
+infer: reject
+check: accept
+infer: type: (nat)
+check: reject
+subtype: no
+infer: type: (typ 0)
+infer: type: (typ 0)
+subtype: no
+check: accept
+convert: no
+subtype: no
+infer: reject
+infer: reject
+subtype: no
+subtype: no
+infer: reject
+convert: no
+infer: type: (typ 0)
+subtype: no
+infer: type: (typ 0)
+infer: reject
+infer: reject
+subtype: no
+subtype: no
+infer: reject
+infer: type: (typ 0)
+check: accept
+convert: no
+infer: reject
+convert: no
+check: reject
+check: reject
+infer: reject
+subtype: no
+infer: type: (typ 0)
+infer: type: (nat)
+infer: type: (nat)
+convert: no
+infer: reject
+infer: type: (nat)
+subtype: no
+infer: reject
+check: reject
+infer: type: (typ 0)
+subtype: no
+check: reject
+check: reject
+convert: no
+convert: no
+subtype: no
+infer: reject
+convert: no
+subtype: no
+convert: no
+subtype: no
+subtype: no
+convert: no
+infer: reject
+infer: type: (pi (nat) (typ 0))
+infer: type: (nat)
+infer: type: (pi (nat) (typ 0))
+infer: type: (typ 0)
+infer: reject
+convert: no
+check: reject
+infer: type: (typ 0)
+infer: type: (typ 0)
+infer: reject
+infer: reject
+convert: no
+check: reject
+subtype: no
+infer: reject
+infer: reject
+check: reject
+infer: reject
+infer: reject
+infer: reject
+check: reject
+infer: reject
+convert: no
+infer: reject
+subtype: no
+check: accept
+infer: reject
+subtype: no
+infer: reject
+subtype: no
+check: accept
+infer: type: (typ 0)
+infer: reject
+infer: type: (nat)
+convert: no
+check: accept
+infer: type: (typ 0)
+infer: type: (nat)
+infer: reject
+infer: type: (nat)
+check: reject
+convert: no
+infer: reject
+check: accept
+check: reject
+convert: no
+convert: no
+infer: reject
+infer: type: (typ 0)
+convert: no
+infer: reject
+convert: no
+infer: type: (nat)
+check: reject
+infer: type: (typ 0)
+infer: type: (nat)
+check: reject
+check: reject
+convert: no
+check: reject
+infer: reject
+infer: type: (typ 0)
+convert: no
+infer: type: (nat)
+subtype: no
+check: accept
+infer: reject
+infer: type: (nat)
+check: reject
+infer: reject
+check: reject
+infer: type: (typ 0)
+infer: type: (nat)
+infer: reject
+subtype: no
+convert: no
+infer: reject
+convert: yes
+subtype: yes
+convert: no
+convert: no
+check: reject
+infer: type: (typ 0)
+infer: type: (typ 0)
+infer: type: (typ 0)
+subtype: no
+infer: reject
+infer: type: (typ 0)
+infer: type: (nat)
+check: reject
+infer: type: (nat)
+infer: reject
+convert: no
+convert: no
+infer: reject
+infer: reject
+check: reject
+check: reject
+check: reject
+infer: type: (nat)
+subtype: no
+subtype: no
+check: reject
+infer: reject
+infer: type: (typ 0)
+convert: yes
+infer: type: (nat)

@@ -96,18 +96,18 @@ compcert/
 | 7 | 字符串拼接 + println 崩溃/挂起（`"AB"+"CD"`） | 自举产物坏代码；check_error 的错误 msg 因此为空 |
 | 9 | 数组读取值错位（ptr_arith 的 `*p != 30`——旧工具链产物） | 数组布局/header 问题（新工具链下正常程序已通过，待复核） |
 | 10 | region_check B11 对 deref 读出的 int 误报指针逃逸 | 部分合法程序被拦（region_check 的 pts 语义需按类型过滤） |
-| 13 | ~~float 类型是壳~~ **已实现（2026-08-11）**：字面量（IEEE 754 位模式，±1ulp）+ 算术（addsd/subsd/mulsd/divsd）+ 比较（comisd+setcc），运行时验证通过 | 待续：int↔float 转换、XMM 参数传递、float 打印 |
-| 14 | `.ccr` 序列化 s1 用 32 位（buf_write_i32）——大 int 常量 / float 位模式 > 2^31 被截断（静默损坏） | 修复：s1 改 64 位（写/读/尺寸同步） |
+| 13 | ~~float 类型是壳~~ **已实现（2026-08-11）**：字面量（IEEE 754 位模式，±1ulp）+ 算术（addsd/subsd/mulsd/divsd）+ 比较（comisd+setcc），运行时验证通过——即 apx 后端快路径（binary64）的早期实现（当时类型名为 float，2026-08-16 设计定案迁移为 dex + apx） | 待续：int↔小数转换、XMM 参数传递、小数打印（阶段 4-6 完成） |
+| 14 | `.ccr` 序列化 s1 用 32 位（buf_write_i32）——大 int 常量 / 小数（当时 float）位模式 > 2^31 被截断（静默损坏） | 修复：s1 改 64 位（写/读/尺寸同步） |
 | 15 | `buf_read_i64` 缺 `h3 < 128` 的 else 分支——高位字节（bit 56-62）贡献丢失（0x4009... → 0x0009...） | 修复：补 else 分支 |
-| 16 | `int_str` 对部分值返回空字符串（int_str(7) 恒空、int_str(567) 编译相关不稳定）——打印链 bug（预先存在，大数路径暴露） | 未修——影响 float 打印的精度显示（3.14 → "3.4"）；单独处理 |
+| 16 | `int_str` 对部分值返回空字符串（int_str(7) 恒空、int_str(567) 编译相关不稳定）——打印链 bug（预先存在，大数路径暴露） | 未修——影响小数（当时 float）打印的精度显示（3.14 → "3.4"）；单独处理 |
 
-## float 支持实现记录（阶段 4-6，2026-08-11）
+## 小数运算（binary64）实现记录（阶段 4-6，2026-08-11；当时类型名为 float，2026-08-16 设计定案后语义归入 apx 后端快路径）
 
 | 阶段 | 内容 | 验证 |
 |---|---|---|
-| 4 | int↔float 转换：IR_I2F/IR_F2I + cvtsi2sd（F2 0F 2A）/cvttsd2si（F2 48 0F 2C）；ir_gen float 运算中 int 操作数隐式转换 | `3.14 + 2`（int 2 隐式转）> 5.0 → exit 0 ✓ |
-| 5 | XMM 参数传递（SysV：int 用 ir 0-5 → rdi..r9，float 用 fr 0-7 → xmm0-7，独立编号）+ float 返回（xmm0）+ 栈参数（float 超 8 用 sub+movsd） | `add_f(1.5, 2.5)` = 4.0 > 3.9 → exit 0 ✓ |
-| 6 | float 打印：`float_str_bits`（位模式 → 十进制，长除小数提取 + 去尾零 + 简单舍入） | 2.0→"2"、0.5→"0.5"、6.5→"6.5"、-1.0→"-1" ✓；3.14→"3.4"（int_str bug 干扰，见发现 16） |
+| 4 | int↔小数转换（当时 float = binary64，即 apx 快路径）：IR_I2F/IR_F2I + cvtsi2sd（F2 0F 2A）/cvttsd2si（F2 48 0F 2C）；ir_gen 小数运算中 int 操作数隐式转换 | `3.14 + 2`（int 2 隐式转）> 5.0 → exit 0 ✓ |
+| 5 | XMM 参数传递（SysV：int 用 ir 0-5 → rdi..r9，小数（当时 float）用 fr 0-7 → xmm0-7，独立编号）+ 小数返回（xmm0）+ 栈参数（小数超 8 用 sub+movsd） | `add_f(1.5, 2.5)` = 4.0 > 3.9 → exit 0 ✓ |
+| 6 | 小数打印：`float_str_bits`（位模式 → 十进制，长除小数提取 + 去尾零 + 简单舍入）——迁移后为 dex 打印（保留为 apx 路径实现） | 2.0→"2"、0.5→"0.5"、6.5→"6.5"、-1.0→"-1" ✓；3.14→"3.4"（int_str bug 干扰，见发现 16） |
 
 ## 寄存器分配对照结论（任务 3，2026-08-11）
 
@@ -134,6 +134,6 @@ compcert/
 | 栈参数（第 7+ 个） | S Outgoing，调用点 [rsp+0..] | push r10（右到左）+ add rsp 清理 | ✅ 一致 |
 | 栈帧 16 字节对齐 | frame_env_aligned 证明 | 修复 11 前未对齐 | ✅ 已修 |
 | 返回值 | rax（128 位用 rdx:rax） | rax（无 128 位类型） | ✅ 一致 |
-| varargs | 调用点 AL = XMM 参数数 | 不设 AL（无 float → AL 无意义） | ✅ 无 float 时正确 |
+| varargs | 调用点 AL = XMM 参数数 | 不设 AL（无小数参数 → AL 无意义） | ✅ 无小数参数时正确 |
 | outgoing 区域 | 固定帧内区域 | push/add 临时区 | ✅ 功能等价 |
-| float 参数 | XMM0-7 | 无 SSE 实现（发现 13） | ❌ 类型壳 |
+| 小数参数（当时 float） | XMM0-7 | 无 SSE 实现（发现 13；阶段 4-5 已补 XMM 传递） | ❌ 当时为类型壳（apx 快路径后已实现） |

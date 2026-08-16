@@ -246,10 +246,11 @@ fn find_so_fn(name_idx: int) -> int {
 
 fn check_error(code: int, msg: string, line: int, col: int) {
     grow_diags(g_diag_count + 1);
-    w64(g_diags, g_diag_count * 32, code);
-    store_str_ptr(g_diags, g_diag_count * 32 + 8, msg);
-    w64(g_diags, g_diag_count * 32 + 16, line);
-    w64(g_diags, g_diag_count * 32 + 24, col);
+    w64(g_diags, g_diag_count * DIAG_REC_SIZE, code);
+    store_str_ptr(g_diags, g_diag_count * DIAG_REC_SIZE + 8, msg);
+    w64(g_diags, g_diag_count * DIAG_REC_SIZE + 16, line);
+    w64(g_diags, g_diag_count * DIAG_REC_SIZE + 24, col);
+    w64(g_diags, g_diag_count * DIAG_REC_SIZE + 32, diag_fileid_for_line(line));
     g_diag_count = g_diag_count + 1;
 }
 

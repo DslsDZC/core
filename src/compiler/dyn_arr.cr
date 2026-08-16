@@ -704,11 +704,11 @@ fn grow_label_poses(needed: int) {
 // Grow functions for newly-converted arrays
 // ============================================================
 
-// Diag struct: code(8) + msg(8) + line(8) + col(8) = 32 bytes
+// Diag struct: code(8) + msg(8) + line(8) + col(8) + file_id(8) = 40 bytes
 fn grow_diags(needed: int) {
     if needed < g_diag_cap { return; }
     nc : ., mut = g_diag_cap * 2; if nc < 16 { nc = 16; } if nc < needed { nc = needed + 16; }
-    nb := alloc(nc * 32); _dyncpy(g_diags, g_diag_cap * 32, nb);
+    nb := alloc(nc * DIAG_REC_SIZE); _dyncpy(g_diags, g_diag_cap * DIAG_REC_SIZE, nb);
     g_diags = nb; g_diag_cap = nc; }
 
 // FileEntry: fileid_ni(8) + path(8) = 16 bytes
