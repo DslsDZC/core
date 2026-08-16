@@ -203,15 +203,16 @@
 
 ## 范围外附录：bootstrap/corec（Python 自举编译器，预扫范围外但构建关键）
 
-`build_selfhost_native.py` 用 bootstrap 编译 src/compiler——**bootstrap 目前不认识 `dex`**（无任何 dex 支持），且保留完整 float 实现（7 文件 21 处，2026-08-16 复查；口径 = 含大小写 float/FLOAT_LIT 的站点行数，type_checker.py:230 一行双命中计 1 处；小写 "float" grep 仅 19 行）：
+`build_selfhost_native.py` 用 bootstrap 编译 src/compiler——**bootstrap 目前不认识 `dex`**（无任何 dex 支持），且保留完整 float 实现（8 文件 22 处，2026-08-16 复查；口径 = 含大小写 float/FLOAT_LIT 的站点行数，type_checker.py:230 一行双命中计 1 处；小写 "float" grep 仅 19 行，FLOAT_LIT 专属 3 行）：
 
+- `bootstrap/corec/syntax/tokens.py:7`（`FLOAT_LIT = auto()` 枚举成员定义——FLOAT_LIT 全大写，大小写敏感 "float" grep 不命中，附录口径须含大小写，补列）
 - `bootstrap/corec/frontend/lexer.py:81/94/107-108`（is_float 字面量扫描 + FLOAT_LIT 令牌发射——108 为 `Token(TokenType.FLOAT_LIT, ...)`，全大写不命中 "float" grep，补列）
 - `bootstrap/corec/frontend/parser.py:24`（type_name lexeme）、`327`（base_types 集合）、`508-509`（FLOAT_LIT 分支检查 + float 字面量节点——508 为 `check(TokenType.FLOAT_LIT)`，补列）
 - `bootstrap/corec/frontend/type_checker.py:199`（kind_map）、`220-222`（float 算术 + 提升规则）、`230`（比较规则 int/float/string——补列）
 - `bootstrap/corec/frontend/ir_gen.py:165`（float 字面量）、`629/637`（kind_map）
 - `bootstrap/corec/ir/cir.py:42`（docstring）
 - `bootstrap/corec/backend/interpreter.py:28`（float 默认值 0.0）、`91-92`（float 常量）
-- `bootstrap/corec/backend/x86_64_stack_asm.py:145`（float 常量发射）
+- `bootstrap/corec/backend/x86_64_stack_asm.py:145`（`isinstance(val, float)` float 常量发射）
 
 **处理建议**：Task 2（加 dex）必须同步在 bootstrap 落 dex 类型支持，否则自举断裂；bootstrap 自身实现 binary64 语义（Python float），按 `dex,apx` 同类处理（认识 dex 类型名、保留 binary64 实现 = apx 快路径参考实现）最贴契约——**需维护者确认后再纳入 Task 5 范围**。
 
@@ -232,9 +233,11 @@ grep -rn "_f32\|_f64" src/ tests/ grammar/        # 3 处：ast.cr:84（注释�
 grep -rn "FLOAT_LIT" grammar/                     # tokens.ebnf:24、core.ebnf:57/59——全大写，原大小写敏感 "float" grep 不命中，本轮补入表（保留×3）✓
 grep -rn "float" tests/suite/ examples/ vscode-core/ spec/ src/runtime/   # 0 命中 ✓
 grep -rno "\bfloat\b" docs/                       # 22 文件 163 处（含本清单自身 74 处）→ 其余 21 文件 89 处 → docs 汇总行 ✓（另 3 个 pseudocode 文件仅含 TY_FLOAT 等变体）
+grep -rn "FLOAT_LIT" bootstrap/corec/             # tokens.py:7、lexer.py:108、parser.py:508——全大写不命中 "float" grep，附录口径须含大小写（小写 grep 仅 19 行）✓
+grep -rn "float\|FLOAT_LIT" bootstrap/corec/ | wc -l   # 22——附录 8 文件 22 处闭合（清单逐行核对）✓
 ```
 
-计数核对：主表 76 行 = dex 38 + dex,apx 16 + 保留 21 + 删除 1（原 73 行**分类结论不动**，补入 3 行保留：core.ebnf 57-58/59、tokens.ebnf:24）；docs 汇总 1 行（21 文件 89 处，词边界口径）；范围外附录 21 处（7 文件，未计入主表）。无未列入的 float 站点。
+计数核对：主表 76 行 = dex 38 + dex,apx 16 + 保留 21 + 删除 1（原 73 行**分类结论不动**，补入 3 行保留：core.ebnf 57-58/59、tokens.ebnf:24）；docs 汇总 1 行（21 文件 89 处，词边界口径）；范围外附录 22 处（8 文件，未计入主表）。无未列入的 float 站点。
 
 ## 分类争议点
 
