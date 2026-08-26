@@ -23,7 +23,7 @@
 4. **双方都生效**：语言层与 crasm 层共用同一全局映射表与检查
 5. **落地顺序**：先定义表描述格式 → 再完成 x64 映射表
 6. **范式无关**：设备声明不绑定物理地址——地址绑定下沉到投影层（与「地址 = 映射」定稿一致）
-7. **暂不接入能力模型**：能力格 v2（memory-model-capability-lattice.md）讨论中，本设计不绑定，定稿后另行评估
+7. **暂不接入能力模型**：能力格 v3（memory-model-capability-lattice.md）讨论中，本设计不绑定，定稿后另行评估
 
 ## 三、架构：三层结构（描述 → 检查 → 发射）
 
@@ -150,7 +150,7 @@ IR_MMIO_READ/WRITE（语义引用 device+reg）
 
 - 中断 / 定时器 / GPIO——参考机第一版只有 UART
 - 页表 / MMU / 内存管理——直接物理地址，单核
-- 能力模型接入——能力格 v2 定稿后另行评估
+- 能力模型接入——能力格 v3 定稿后另行评估
 - 设备语义注解（表项携带规约语义）——留给规约层，后续展开
 
 ## 七、参考
@@ -158,4 +158,4 @@ IR_MMIO_READ/WRITE（语义引用 device+reg）
 - `docs/crasm.md`、`docs/superpowers/specs/2026-08-08-crasm-design.md`（特权指令固定集、平台映射表）
 - `docs/pointer-model.md`（alloc_at 声明式进图、unsafe 边界、地址 = 映射）
 - `docs/superpowers/specs/2026-08-16-platform-abstract-design.md`（语义接口 + 后端实现原则）
-- `docs/memory-model-capability-lattice.md`（能力格 v2，讨论中——本设计不绑定）
+- `docs/memory-model-capability-lattice.md`（能力格 v3，讨论中——本设计不绑定）
