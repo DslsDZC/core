@@ -88,9 +88,10 @@
 - state edges（副作用链 + 循环终止依赖）+ .ccr v5（SG 段 24B + edge kind + v4 兼容）
 
 ### 已知缺口（region 化相关，待修）
-- 缓存命中路径 SG 段不完整（load_cir_cache 不恢复嵌套 region——仅函数级 region）
-- while 循环无终止依赖（while 不生成 region）
+- 缓存命中路径 SG 段不完整（已修复，2026-08-18：CIR v13 保存/恢复嵌套 region 与 node→region 映射；`test_nested_regions_cache_persist` 覆盖）
+- while 循环无终止依赖（已修复，2026-08-18：while 使用 SG_LOOP、arena reset 与终止 state edge；`test_while_region_and_termination_edge` / `test_while_break_continue_run` 覆盖）
 - 终止边源边界与链头推进（已修复，2026-08-08——final review Important #1：sg_pop 终止边源须在 region 内 + 链头推进到 exit 节点，test_termination_edge_source_guard 覆盖）
+- 解释器内联 callee 循环不更新局部状态（已修复，2026-08-18：补齐 callee `ALLOC/STORE/LOAD`、arena 与立即 return 语义；`test_inline_callee_while_run` 覆盖）
 - callee inline 执行中的循环崩溃（解释器限制，预存）
 
 ## 预存 Bug（不阻塞开发，待修复）
@@ -158,6 +159,17 @@
 - 整数转指针产生 `asp=1`，解引必须位于 `unsafe`
 - 动态偏移使用 points-to 目标的实际 allocation base 生成 ELF 检查；多目标无法唯一定位基址时保守拒绝
 - 回归见 `tests/selfhost/test_pointer_safety.py`
+
+### 内存模型方向：能力 + 格（v3 讨论中，2026-08-26 记）
+- 备忘：`docs/memory-model-capability-lattice.md`（v1 2026-08-16 → v2 2026-08-20 → v3 2026-08-26）
+- v2 定论：**该用能力**——职责 = 不可重算结构的身份与授权；判据 = 表达范围（存储半边缓存语义已定稿 ∪ dataflow-design §8 执行标注空间——后者突破「值 = 配方」公理，强制需要句柄 + 授权）
+- 形态：能力 = ⟨身份符号, 授权集, 域约束, 派生源⟩；结构 = 能力树（seL4/KeyKOS 先例，编译期兑现，运行期经典路径零新增）；代数 = PCM × 布尔格（+可复制性）；分级扩展点 = 分数权限
+- v3 定位：三层映射总纲（图 → 格 → 二进制；超图灵性属于图不属于格）；能力**不提升顶层原语** = 图上「可能关系」（consult/assume/measure/pass 即关系实例）
+- **验证主线（v3）**：Graph → Lattice 映射通用性 8 项清单（备忘 §十二）——因果 / 非因果 / 模糊 / 非确定 / 并发异步 / 反馈 / 超图灵 / 格层不重引入顺序执行；每项通过 = 先规格后证明；全部成立后再评估能力是否提升一等概念
+- 待办：
+  - 开放问题收敛（v2 5 项 + v3 3 项：清单逐项论证 / 格层无顺序判据 / 能力提升判据精确化）
+  - 推进为正式规格（docs/superpowers/specs/）
+  - 实现规划：能力流分析（PointerAnalysis 推广）+ 三 pass 能力化重写——内存模型层面大改
 
 ## 待实现特性
 
