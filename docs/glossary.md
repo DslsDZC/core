@@ -76,6 +76,7 @@
 | rematerialization（remat） | 配方重算恢复材料（条款 3 再生等价） |
 | 共存偏序 width | 最小寄存器数（Dilworth 定理）；区间序 First Fit 贪心 = 最优 |
 | order-free 正确性 | 驱逐不变量对全部可能执行成立——强于 CFG 正确性（只对一个线性化成立） |
+| 上下文贪心（CAG） | 分配器正式算法：存在结构上的 First Fit 贪心扫描——上下文 = 共存 / 再生成本 / region 生命周期 / 调用点 / 使用次数（`regalloc-cache-mapping.md` §五） |
 | spill（溢出） | 寄存器压力下条目的材料移 home（驱逐的分配侧形态）——装载/存储成对 |
 | 栈槽（stack slot） | home 的经典实现（函数相对偏移，disp8 友好） |
 | 装载 / 存储（load/store） | 材料在 home 与寄存器缓存之间的移动（fill / write-back） |
