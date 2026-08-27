@@ -187,6 +187,18 @@
   - 文档复核（coreir-schema / CLAUDE.md / project-book / compcert-reference——描述已先行更新）
   - 寄存器分配判定接入格形态（存在区间/共存消费 + 贪心放置，docs/regalloc-cache-mapping.md §4）
 
+### 寄存器分配 = 缓存语义映射实例（落地，2026-08-27 记）
+- 设计：`docs/regalloc-cache-mapping.md`（正式参考）+ `docs/superpowers/specs/2026-08-27-regalloc-cache-mapping-design.md`（设计记录）——分配 = 格 → 编码的映射实例（条款 7）；驱逐不变量 = order-free 语义保持；判定单层、算法自由（贪心零证明）
+- 执行人：第二维护者（TODO 横向扩展）；验证闭环：DslsDZC
+- 事项：
+  - 共存关系落定：图活性存活区间相交（复用 RegionCheck cur_seq/exit_seq 机制）；条目版本（IR_STORE 切分）的图表示确认
+  - 判定规约：一致性四条（共存互斥 / 读点无陈旧 / 驱逐配对 / 调用失效）写成 .corespec（先规格后实现）
+  - 贪心放置策略：版本区间 + 共存检查 + 驱逐写回（`opt.cr` alloc_registers 增量升级；解锁 caller-saved = 调用点失效契约落地）
+  - 无配方条目规则：边界 + 图内不可重算必须有 home、驱逐必写回（memory-model 条款 4b 落地）
+  - checker：编译期一致性自检（debug 全开，release 可选）
+  - 格形态接入：存在区间/共存消费（格形态 v6 落地后，见「格形态 IR 升级」节）
+  - （远期）证书层：最优性证书（DP 表重放或 ILP 对偶）——验证「最优」而不只是「一致」
+
 ## 待实现特性
 
 ### 控制流自动惰性（2026-08-09 记）
