@@ -5,7 +5,7 @@
 - **所有语言统一走 `@ffi`，参数描述运行时特征。**
 - `@ffi` 是编译控制，不改变语义，只改变编译方式——和 `@inline` 在同一分类。
 - C ABI 是默认接口，所有其他语言最终也通过 C ABI 对接。
-- **平台接口隔离在后端。** 常规 I/O 走标准库流语义接口（print/println/read_file/write_file 保持），read/write 等系统调用是平台桥后端的实现细节；`extern fn` 直接声明系统接口是绕过语义层的逃生通道，属 unsafe 范畴。
+- **平台接口隔离在后端。** 常规 I/O 走标准库流语义接口（print/println/read_file/write_file 保持），read/write 等系统调用是平台桥后端的实现细节；`extern fn` 直接声明系统接口是绕过语义层的例外入口，属 unsafe 范畴。
 
 ## 语法
 
