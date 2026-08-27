@@ -14,7 +14,7 @@
 | **CIC**（归纳构造演算） | Rocq / Lean 4 |  依赖类型+归纳+高阶 | 中等（Rocq 7.8k 行 / **Lean 3k 行**） |  函数外延性/商类型要公理 |  SMTCoq（Rocq）、hammer |
 | **MLTT**（Martin-Löf） | Agda / McTT |  同 CIC 族（归纳族更精确） | 中等 |  同 CIC |  弱 |
 | **HoTT/Cubical** | Cubical Agda、redtt |  + 商类型/外延性定理可证 | 大（归一化复杂） |  理论最优 |  生态小 |
-| **HOL**（简单类型论） | Isabelle/HOL、HOL Light |  无依赖类型（表达力上限） | 极小（HOL Light ~500 行） |  外延性天然 |  sledgehammer 最强 |
+| **HOL**（简单类型论） | Isabelle/HOL、HOL Light |  无依赖类型（表达力上限） | 极小（HOL Light ~500 行） |  外延性天然 |  sledgehammer 自动化领先 |
 | **LF/公理拼装** | Metamath |  靠公理 | 极小（~600 行） | 依赖公理集 |  |
 
 **选型结论**：对 Core 的约束（依赖类型表达力 + 自举路线 + SMT 证书架构）——
