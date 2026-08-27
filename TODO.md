@@ -188,7 +188,7 @@
   - 寄存器分配判定接入格形态（存在区间/共存消费 + 贪心放置，docs/regalloc-cache-mapping.md §4）
 
 ### 寄存器分配 = 缓存语义映射实例（落地，2026-08-27 记）
-- 设计：`docs/regalloc-cache-mapping.md`（正式参考）+ `docs/superpowers/specs/2026-08-27-regalloc-cache-mapping-design.md`（设计记录）——分配 = 格 → 编码的映射实例（条款 7）；驱逐不变量 = order-free 语义保持；判定单层、算法自由（贪心零证明）
+- 设计：`docs/regalloc-cache-mapping.md`（正式参考）+ `docs/superpowers/specs/2026-08-27-regalloc-cache-mapping-design.md`（设计记录）——分配 = 格 → 编码的映射实例（条款 7）；驱逐不变量 = order-free 语义保持；判定单层、分配算法定案 = 上下文贪心（零证明）
 - 执行人：第二维护者（TODO 横向扩展）；验证闭环：DslsDZC
 - 事项：
   - 共存关系落定：图活性存活区间相交（复用 RegionCheck cur_seq/exit_seq 机制）；条目版本（IR_STORE 切分）的图表示确认
