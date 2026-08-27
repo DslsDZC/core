@@ -178,7 +178,7 @@
 - 执行人：第二维护者（TODO 横向扩展）；验证闭环：DslsDZC
 - 事项：
   - 命名定案（扩展名 / magic / CLI 去留）
-  - 格式 v6 序列化/反序列化（ccr_io.cr，v5 兼容加载）
+  - 格式 v6 序列化/反序列化（ccr_io.cr）+ v5 → v6 一次性转换工具（数学结构大改：线性程序 → 存在结构，不承诺后向兼容）
   - v6 存在结构段：条目版本 + 存在区间（图活性）+ 共存 + home + 无配方标记（memory-model 条款 4b）
   - ELF 后端适配（src/arch/linux/ld/）
   - CLI / corearch 参数迁移（若走方案 B）
