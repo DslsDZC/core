@@ -172,6 +172,21 @@
   - 寄存器分配实现规划：共存关系落定（图活性）→ 判定规约 → 贪心放置（opt.cr 升级）→ checker 自检
   - 实现规划（远期）：能力流分析（PointerAnalysis 推广）+ 三 pass 能力化重写——内存模型层面大改
 
+### 格形态 IR 升级（C 路线，2026-08-27 记）
+- 设计：`docs/superpowers/specs/2026-08-27-lattice-form-ir-design.md`——`.ccr` 升级为格形态（v6）；三层形态：图 = `.cir` / 格 = `.ccr`（格形态）/ 编码 = ELF
+- 命名决策点（待 DslsDZC 拍板）：方案 A 扩展名保留（缩写展开 = Core Region Representation）/ 方案 B 新扩展名（.rir / .cer / .exr）
+- 执行人：第二维护者（TODO 横向扩展）；验证闭环：DslsDZC
+- 事项：
+  - 命名定案（扩展名 / magic / CLI 去留）
+  - 格式 v6 序列化/反序列化（ccr_io.cr，v5 兼容加载）
+  - v6 存在结构段：条目版本 + 存在区间（图活性）+ 共存 + home + 无配方标记（memory-model 条款 4b）
+  - ELF 后端适配（src/arch/linux/ld/）
+  - CLI / corearch 参数迁移（若走方案 B）
+  - 自举管线（build_selfhost_native.py、bootstrap/corec/ir/ccr.py）
+  - 测试迁移（tests/selfhost/、tests/bootstrap/）
+  - 文档复核（coreir-schema / CLAUDE.md / project-book / compcert-reference——描述已先行更新）
+  - 寄存器分配判定接入格形态（存在区间/共存消费 + 贪心放置，docs/regalloc-cache-mapping.md §4）
+
 ## 待实现特性
 
 ### 控制流自动惰性（2026-08-09 记）

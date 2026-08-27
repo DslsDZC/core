@@ -7,11 +7,11 @@ Core 编译器使用两种中间表示：
 | 格式 | 全称 | 用途 | 生产者 | 消费者 |
 |------|------|------|--------|--------|
 | `.cir` | Core IR Graph | HDFG + 规约约束（验证 IR） | `corec`（前端） | 验证工具 / `corearch` / 解释器 |
-| `.ccr` | Core Control-flow Representation | 线性 CFG IR（前后端接口） | `corec`（前端） | `corearch`（后端） |
+| `.ccr` | Core Region Representation（C 路线：格形态，v6 演进中） | 格层存在结构的线性投影（region 段；升级设计见 `docs/superpowers/specs/2026-08-27-lattice-form-ir-design.md`） | `corec`（前端） | `corearch`（后端） |
 
 **`.cir` 是 Core 的验证核心。** 它承载程序的完整语义（HDFG）。验证工具消费 `.cir` + `.csr`（规约约束元数据）进行验证。
 
-自托管编译器在 IR 生成期间同时构建HDFG（`.cir`）和线性 IR（`.ccr`），然后 `lower_to_ccr()` 将图节点拷贝为线性指令数组供 x86-64 后端消费。
+自托管编译器在 IR 生成期间同时构建 HDFG（`.cir`，图形态）和格层线性投影（`.ccr`，格形态 v5），然后 `lower_to_ccr()` 将图节点拷贝为线性指令数组供 x86-64 后端消费。
 
 ---
 
