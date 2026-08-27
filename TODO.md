@@ -194,7 +194,7 @@
 - 参考：`docs/lazy.md`、`docs/superpowers/specs/2026-07-30-lazy-eval-design.md`、`src/compiler/ir_gen.cr`、`src/compiler/dataflow.cr`、`tests/suite/lazy_test.cr`（当前仅验证"包装后输出不变"）
 
 ### .crasm 统一汇编抽象层（2026-08-09 记）
-- 目标：内核路线（project-book 第五阶段）的汇编级能力——MMIO、特权指令、中断。跨平台统一指令集 + 无限虚拟寄存器 + 平台映射表，寄存器分配复用 `alloc_registers` 线性扫描器
+- 目标：内核路线（project-book 第五阶段）的汇编级能力——MMIO、特权指令、中断。跨平台统一指令集 + 无限虚拟寄存器 + 平台映射表，寄存器分配按 v4 方向（缓存语义映射实例，`docs/regalloc-cache-mapping.md`——无限虚拟寄存器 + 平台映射表正是映射实例形态；现 `alloc_registers` 线性扫描器为升级起点）
 - 现状：设计已批准（2026-08-08 brainstorming 逐节确认），2026-08-09 整理为正式文档 `docs/crasm.md`；**尚未实现**——lexer/parser 无 asm 语法，汇编仅存在于 rt.s 手工汇编与 ELF 后端机器码发射
 - 方向（按里程碑顺序）：
   1. `.crasm` 词法/解析（结构化指令 → AST 复用）
