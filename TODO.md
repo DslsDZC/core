@@ -174,10 +174,10 @@
 
 ### 格形态 IR 升级（C 路线，2026-08-27 记）
 - 设计：`docs/superpowers/specs/2026-08-27-lattice-form-ir-design.md`——`.ccr` 升级为格形态（v6）；三层形态：图 = `.cir` / 格 = `.ccr`（格形态）/ 编码 = ELF
-- 命名决策点（待 DslsDZC 拍板）：方案 A 扩展名保留（缩写展开 = Core Region Representation）/ 方案 B 新扩展名（.rir / .cer / .exr）
+- 命名已定案（2026-08-27）：方案 A——扩展名 `.ccr` 保留，缩写展开 = Core Region Representation；扩展名 / magic / CLI 不动
 - 执行人：第二维护者（TODO 横向扩展）；验证闭环：DslsDZC
 - 事项：
-  - 命名定案（扩展名 / magic / CLI 去留）
+  - 命名落地（方案 A 已定案：扩展名 / magic / CLI 不动；展开 = Core Region Representation，文档已先行更新，执行阶段复核）
   - 格式 v6 序列化/反序列化（ccr_io.cr）+ v5 → v6 一次性转换工具（数学结构大改：线性程序 → 存在结构，不承诺后向兼容）
   - v6 存在结构段：条目版本 + 存在区间（图活性）+ 共存 + home + 无配方标记（memory-model 条款 4b）
   - ELF 后端适配（src/arch/linux/ld/）
