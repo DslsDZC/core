@@ -100,7 +100,7 @@
 ## 8. 关联
 
 - `docs/regalloc-cache-mapping.md` — 分配 = 缓存语义映射实例；§4 判定消费格形态
-- `docs/memory-model-capability-lattice.md` v4 — 三层映射（图 → 格 → 编码）；条款 4b（图内不可重算）；律封闭物开放
+- `docs/memory-model-capability-lattice.md` v4 — 三层映射（图 → 格 → 编码）；条款 4b（图内不可重算）；规则封闭对象开放
 - `docs/memory-model.md` §一 — 缓存语义七条 + 条款 4b
 - `docs/ir-schema/coreir-schema.md` — `.ccr` 格式 schema（v6 落地时更新）
 - `docs/dataflow-design.md` — 图（`.cir`）语义；§8 执行标注空间

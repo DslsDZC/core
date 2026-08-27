@@ -103,7 +103,7 @@
 ## 九、关联
 
 - `docs/superpowers/specs/2026-08-27-regalloc-cache-mapping-design.md` — 设计决策记录（日期、排除方向、落地顺序）
-- `docs/memory-model-capability-lattice.md` v4 §11.5 — 备忘摘要与定位；v4 §4.5/§4.6（律封闭物开放、无格承诺）；v4 §5.3（图内不可重算条款）
+- `docs/memory-model-capability-lattice.md` v4 §11.5 — 备忘摘要与定位；v4 §4.5/§4.6（规则封闭对象开放、无格承诺）；v4 §5.3（图内不可重算条款）
 - `docs/memory-model.md` §一 — 缓存语义七条（待并入「图内不可重算」条款）
 - `docs/dataflow-design.md` §8 — 执行标注空间（无配方条目的来源）
 - `docs/pointer-model.md` — RegionCheck：存在区间的现有实现
