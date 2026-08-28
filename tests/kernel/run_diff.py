@@ -4,9 +4,10 @@ CORE = pathlib.Path("/home/DslsDZC/core")
 HARNESS = "/home/DslsDZC/mctt/_build/default/driver/harness/harness.exe"
 KERNEL = str(CORE / "build/kernel")
 
-def run(cmd, inp):
-    p = subprocess.run(cmd, input=inp, capture_output=True, text=True)
-    return p.stdout.splitlines()
+def run(cmd, path):
+    # 两侧均为文件参数模式（protocol.md §7：QUERY_FILE...；Core 无 stdin API）
+    p = subprocess.run([*cmd, path], capture_output=True, text=True)
+    return p.stdout.splitlines(), p.returncode
 
 def main():
     cases = CORE / "tests/kernel/cases"
@@ -14,10 +15,14 @@ def main():
     fails = []
     total = 0
     for name in ["exhaustive", "random", "manual"]:
-        txt = (cases / f"corpus_{name}.txt").read_text()
+        path = str(cases / f"corpus_{name}.txt")
         exp = (expd / f"corpus_{name}.expected").read_text().splitlines()
-        a = run([HARNESS], txt)
-        b = run([KERNEL], txt)
+        a, ra = run([HARNESS], path)
+        b, rb = run([KERNEL], path)
+        if ra != 0:
+            fails.append((name, "harness-exit", ra, "", ""))
+        if rb != 0:
+            fails.append((name, "kernel-exit", rb, "", ""))
         assert len(a) == len(exp) == len(b), (name, len(a), len(exp), len(b))
         for i, (x, y, e) in enumerate(zip(a, b, exp)):
             total += 1

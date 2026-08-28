@@ -919,9 +919,9 @@ eval_sub_compose : ⟦ τ ⟧s ρ ↘ ρτ   ⟦ σ ⟧s ρτ ↘ ρτσ
 `Rne m in s ↘ M`（read_ne，Readback/Definitions.v:37）、
 `Rtyp m in s ↘ M`（read_typ，Readback/Definitions.v:63）。
 `s` = 深度（上下文长度）；读出把 domain（含绝对名）转回带 de Bruijn 索引的 nf/ne。
-互归纳，共 12 条。
+互归纳，共 13 条（read_nf 6 + read_ne 3 + read_typ 4；2026-08-28 修正：原「12 条」漏计 read_nf_neut）。
 
-**read_nf（5 条）**：
+**read_nf（6 条）**：
 
 ```
 read_nf_type :

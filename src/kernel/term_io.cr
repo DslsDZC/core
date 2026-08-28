@@ -71,10 +71,12 @@ fn kern_new(k: int) -> int {
 }
 
 fn kern_set(n: int, slot: int, v: int) {
+    if n < 0 { return; }   // arena 满（kern_new = -1）时防静默覆盖节点 0
     w64(g_kernel_nodes, (n + slot) * 8, v);
 }
 
 fn kern_get(n: int, slot: int) -> int {
+    if n < 0 { return -1; }
     return r64(g_kernel_nodes, (n + slot) * 8);
 }
 
