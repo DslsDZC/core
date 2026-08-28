@@ -69,7 +69,36 @@ code --install-extension editor/vscode-core/
 - 设置 `corelsp.enabled = false` 可关闭 LSP（仅保留语法高亮）。
 - 从源码调试：VS Code 打开 `editor/vscode-core/` 按 F5（见 `.vscode/tasks.json`）。
 
+## Zed（2026-08-28 接入）
+
+`editor/zed/`（tree-sitter 语法）+ corelsp LSP。Zed 无需扩展。
+
+**本仓库已内置项目配置**（`.zed/settings.json`，打开即用）——binary 相对路径以工作区根（仓库根）解析：
+
+```json
+{
+  "lsp": {
+    "corelsp": {
+      "binary": { "path": "build/corelsp" }
+    }
+  },
+  "languages": {
+    "Core": {
+      "language_servers": ["corelsp"],
+      "file_types": ["cr"]
+    }
+  }
+}
+```
+
+**其他项目/全局接入**：全局 `~/.config/zed/settings.json` 同上，`binary.path` 建议用 **绝对路径**（全局配置无工作区根可解析相对路径）。
+
+- `languages.Core`：注册 Core 语言（Zed 内置无 `.cr` 映射）——`file_types` 把 `.cr` 归入该语言，`language_servers` 挂上 corelsp。
+- 已通告能力（2026-08-28 补 `hoverProvider`/`definitionProvider` 通告）：诊断（全量同步）、悬浮、跳转定义、补全（`@` 触发）、文档符号、语义令牌。
+- Zed 默认键位：`F12` 跳转定义；悬停即看；LSP 诊断自动显示。
+- 构建 corelsp：`python3 build_selfhost_native.py`（产出 `build/corelsp`）。
+
 ## 其他编辑器
 
-Zed：`editor/zed/`（tree-sitter 语法，暂无 LSP 接入——corelsp 为 stdio 协议，可参照
-[Zed 自定义语言服务器](https://zed.dev/docs/languages) 文档自行接入）。
+其余编辑器（Emacs/LSP-mode、Helix 等）：corelsp 为标准 stdio LSP 服务器，参照各自
+[自定义语言服务器](https://zed.dev/docs/languages) 配置模式接入（要点：绝对路径 + `.cr` 文件类型注册 + language_servers 挂载）。
