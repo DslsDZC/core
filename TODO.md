@@ -223,6 +223,13 @@
   - coreview 联动（代码 ↔ 图双向高亮）
   - VS Code 客户端（协议层已编辑器无关）
 
+### 设计定稿待实现（补挂账，2026-08-28 审计）
+- **概率性 pass**（probabilistic-pass，2026-07-30 已批准）：src/ 零实现，仅文档（`docs/probabilistic.md`）——范式相关，优先级低，待排期
+- **硬件映射表**（hw-map，2026-08-23 已批准）：无实现——**依赖 crasm 的映射表**（crasm 未实现则链式阻塞）。关联 `docs/superpowers/specs/2026-08-23-hw-map-design.md`
+- **平台桥抽象**（platform-abstract，2026-08-16 定案）：设计定案待实现——语义接口 + 后端实现原则；程序 IO = 流转导器。关联 `docs/superpowers/specs/2026-08-16-platform-abstract-design.md`
+- **错误码体系**（error-codes，2026-08-08 已批准）：`EC_R_*` 常量在 ast.cr/checker.cr/main.cr 有引用但体系完整度待确认（历史 BC17 曾记录「全仓库无引用」——需复核现状）
+- **裸指针 asp 标记**（bare-ptr-model）：实现状态待确认（TODO 旧条目「整数转指针标记 asp=1」的源码落点需核实）
+
 ## 待实现特性
 
 ### 控制流自动惰性（2026-08-09 记）
