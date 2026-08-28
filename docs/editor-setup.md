@@ -73,12 +73,12 @@ code --install-extension editor/vscode-core/
 
 ### 方式一：扩展（推荐，完整形态：语法高亮 + LSP）
 
-`editor/zed/` 是 Zed 扩展（core-language v0.2.0，语法 grammar 来自 `dslsdzc/core-plugin-zed`，LSP 挂 corelsp）：
+扩展仓库 = **`dslsdzc/core-plugin-zed`**（本地开发路径 `~/core-plugin-zed`；core-language v0.3.0——Rust wasm 扩展：`language_server_command` 返回 corelsp 命令路径 + `extension.toml` `[lib]` 声明；语法 grammar 同源）：
 
-1. Zed → Extensions（扩展）面板 → **Install Dev Extension（安装开发扩展）** → 选择 `editor/zed/`
+1. Zed → Extensions（扩展）面板 → **Install Dev Extension（安装开发扩展）** → 选择 `~/core-plugin-zed`
 2. 打开 `.cr` 文件：语法高亮 + 诊断 + 悬停 + F12 跳转 + `@` 补全 + 语义着色全部生效
 
-扩展声明：`extension.toml`（`language_servers` 段）+ `language_servers/corelsp/config.toml`（command = `build/corelsp`，相对路径以工作区根解析）+ `languages/core/config.toml`（`language_servers = ["corelsp"]`）。
+扩展结构：`extension.toml`（`[lib]` + `language_servers` 段）、`src/lib.rs`（`language_server_command` → corelsp 绝对路径）、`languages/core/config.toml`（`language_servers = ["corelsp"]`）、`grammars/`（语法）。**命令路径在 Rust 代码里**（`~/core-plugin-zed/src/lib.rs`）——纯 TOML 无法指定，这是 Zed 扩展的机制约束。构建：`cargo build --release --target wasm32-wasip1` → `extension.wasm`。
 
 ### 方式二：settings.json（无扩展时的 LSP 兜底）
 
