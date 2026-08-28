@@ -199,6 +199,30 @@
   - 格形态接入：存在区间/共存消费（格形态 v6 落地后，见「格形态 IR 升级」节）
   - （远期）证书层：最优性证书（DP 表重放或 ILP 对偶）——验证「最优」而不只是「一致」
 
+### LSP 生产化（2026-08-28 定稿，五问决策）
+- 设计：`docs/superpowers/specs/2026-08-28-lsp-production-design.md`——Zed 优先 / 混合数据通道（LSP 承载渲染 + coreview 独立查看器）/ 分阶段架构（闭包级 → 项目级）/ corelsp 增量演进
+- 执行人：第二维护者（TODO 横向扩展）；验证闭环：DslsDZC
+- **P0（现在，闭包级）**：
+  - session.cr 策略接口（文件级/闭包级/项目级三实现共用，rpc/lsp 层只面对接口）
+  - ClosureSession：import 闭包检查（复用 res_imports）——消除跨文件 Undefined name 假错误
+  - 错误恢复（diag 机制补全，parser 崩一处不拖垮整文件）
+  - hover 富内容 v1：指针 points-to（闭包近似，复用 ptr_analysis）/ 配方（值 = 产生节点）/ 范式标注（region 种类）
+  - inlay hints v1：赋值版本链（条款 5 版本化）
+  - 诊断增强：unsafe/例外入口区域标记（CORE-E 代码分类）
+  - 协议测试扩展（富内容/inlay/诊断 code）+ Zed 端到端验证（验收：日常写 Core 无假错误 + 指针 hover 可用）
+- **P1（格形态 v6 后，项目级）**：
+  - coreview v1（Web 查看器：HDFG 图视图 DFNode/DFEdge + region + state edges；管线探索器源码↔AST↔HDFG↔格形态↔汇编；数据源 corec cir/ccr dump）
+  - ProjectSession：全项目编译 + 三 pass + 图构建 + 缓存失效（增量/失效传播）
+  - 增量同步（textDocumentSync=2）
+  - hover v2：证明状态（#check/#ensure）/ 精确 pts
+  - rename / code actions / workspace symbol / references
+- **P2（随主线）**：
+  - 惰性显示（inlay，依赖惰性分析落地）
+  - 寄存器/驱逐显示（依赖分配器实现）
+  - spec-aware LSP（hover 规约/反例落源码，依赖验证管线——翻译桥/CIC）
+  - coreview 联动（代码 ↔ 图双向高亮）
+  - VS Code 客户端（协议层已编辑器无关）
+
 ## 待实现特性
 
 ### 控制流自动惰性（2026-08-09 记）
