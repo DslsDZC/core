@@ -22,9 +22,8 @@
 //
 // g_json_strs：字符串池（原始字节，UTF-8 直通存储；独立长度计数管理）。
 //
-// \uXXXX：解析只得到码点（编码为 UTF-8 存入池）；UTF-16 代理对不做合并——
-//   "😀" 两个码点各自 3 字节编码存储，stringify 时单独解码回两个
-//   \uXXXX，往返一致。TODO：将来做代理对合并与键规范化。
+// \uXXXX：解析为 Unicode 码点并合并 UTF-16 代理对；stringify 对非 ASCII
+//   统一使用大写 \uXXXX（非 BMP 输出为一对代理项）。
 
 // ── 常量（全局初始化必须是字面量——ELF 后端限制）──
 J_NULL : int = 0;  J_BOOL : int = 1;  J_NUM : int = 2;
@@ -114,10 +113,14 @@ fn json_new(kind: int) -> int {
 }
 
 fn json_set(node: int, slot: int, val: int) {
+    if node < 0 || node % J_NODE_SLOTS != 0 || node / J_NODE_SLOTS >= g_json_count ||
+       slot < 0 || slot >= J_NODE_SLOTS { return; }
     _jw64(g_json_nodes, (node + slot) * 8, val);
 }
 
 fn json_get(node: int, slot: int) -> int {
+    if node < 0 || node % J_NODE_SLOTS != 0 || node / J_NODE_SLOTS >= g_json_count ||
+       slot < 0 || slot >= J_NODE_SLOTS { return -1; }
     return _jr64(g_json_nodes, (node + slot) * 8);
 }
 
@@ -126,6 +129,8 @@ fn json_get(node: int, slot: int) -> int {
 g_json_parse_pos : int, mut;
 g_json_parse_text : string, mut;
 g_json_parse_failed : int, mut;
+g_json_parse_depth : int, mut;
+J_MAX_PARSE_DEPTH : int = 128;
 
 fn _jp_len() -> int { return str_len(g_json_parse_text); }
 
@@ -177,21 +182,35 @@ fn _jnum() -> int {
         else { break; }
     }
     if g_json_parse_pos == dstart { g_json_parse_failed = 1; return 0; }
+    if g_json_parse_pos - dstart > 1 && load8(g_json_parse_text, dstart) == 48 {
+        g_json_parse_failed = 1; return 0;
+    }
     v : ., mut = 0;
     i : ., mut = dstart;
     loop {
         if i >= g_json_parse_pos { break; }
-        if v > 922337203685477580 { g_json_parse_failed = 1; return 0; }
-        v = v * 10 + (load8(g_json_parse_text, i) - 48);
+        digit := load8(g_json_parse_text, i) - 48;
+        // Accumulate negative values negatively so INT64_MIN is representable.
+        if neg != 0 {
+            if v < -922337203685477580 ||
+               (v == -922337203685477580 && digit > 8) {
+                g_json_parse_failed = 1; return 0;
+            }
+            v = v * 10 - digit;
+        } else {
+            if v > 922337203685477580 ||
+               (v == 922337203685477580 && digit > 7) {
+                g_json_parse_failed = 1; return 0;
+            }
+            v = v * 10 + digit;
+        }
         i = i + 1;
     }
-    if v < 0 { g_json_parse_failed = 1; return 0; }   // 乘法回绕 = 溢出
     // 尾随 '.' / 'e' / 'E'：v1 不支持浮点 → 失败（不静默截断）
     if g_json_parse_pos < _jp_len() {
         c2 := load8(g_json_parse_text, g_json_parse_pos);
         if c2 == 46 || c2 == 101 || c2 == 69 { g_json_parse_failed = 1; return 0; }
     }
-    if neg != 0 { v = -v; }
     return v;
 }
 
@@ -219,11 +238,29 @@ fn _jstr_cp(cp: int) {
     } else if cp < 2048 {
         _jstr_byte(192 + cp / 64);
         _jstr_byte(128 + cp % 64);
-    } else {
+    } else if cp < 65536 {
         _jstr_byte(224 + cp / 4096);
         _jstr_byte(128 + (cp / 64) % 64);
         _jstr_byte(128 + cp % 64);
+    } else if cp <= 1114111 {
+        _jstr_byte(240 + cp / 262144);
+        _jstr_byte(128 + (cp / 4096) % 64);
+        _jstr_byte(128 + (cp / 64) % 64);
+        _jstr_byte(128 + cp % 64);
+    } else { g_json_parse_failed = 1; }
+}
+
+fn _jparse_hex4(pos: int) -> int {
+    cp : ., mut = 0;
+    i : ., mut = 0;
+    loop {
+        if i >= 4 { break; }
+        hv := _jhex_val(load8(g_json_parse_text, pos + i));
+        if hv < 0 { g_json_parse_failed = 1; return -1; }
+        cp = cp * 16 + hv;
+        i = i + 1;
     }
+    return cp;
 }
 
 // 解析 JSON 字符串（当前位置必须是 '"'），返回 J_STR 节点；失败返回 -1
@@ -249,21 +286,32 @@ fn _jparse_str() -> int {
             g_json_parse_pos = g_json_parse_pos + 1;
             if e == 34 { _jstr_byte(34); }
             else if e == 92 { _jstr_byte(92); }
+            else if e == 47 { _jstr_byte(47); }
+            else if e == 98 { _jstr_byte(8); }
+            else if e == 102 { _jstr_byte(12); }
             else if e == 110 { _jstr_byte(10); }
             else if e == 114 { _jstr_byte(13); }
             else if e == 116 { _jstr_byte(9); }
             else if e == 117 {   // 'u'
                 if g_json_parse_pos + 4 > _jp_len() { g_json_parse_failed = 1; return -1; }
-                cp : ., mut = 0;
-                i2 : ., mut = 0;
-                loop {
-                    if i2 >= 4 { break; }
-                    hv := _jhex_val(load8(g_json_parse_text, g_json_parse_pos + i2));
-                    if hv < 0 { g_json_parse_failed = 1; return -1; }
-                    cp = cp * 16 + hv;
-                    i2 = i2 + 1;
-                }
+                cp := _jparse_hex4(g_json_parse_pos);
+                if cp < 0 { return -1; }
                 g_json_parse_pos = g_json_parse_pos + 4;
+                if cp >= 55296 && cp <= 56319 {
+                    // A high surrogate must be immediately followed by a low
+                    // surrogate escape; store the resulting scalar as UTF-8.
+                    if g_json_parse_pos + 6 > _jp_len() ||
+                       load8(g_json_parse_text, g_json_parse_pos) != 92 ||
+                       load8(g_json_parse_text, g_json_parse_pos + 1) != 117 {
+                        g_json_parse_failed = 1; return -1;
+                    }
+                    low := _jparse_hex4(g_json_parse_pos + 2);
+                    if low < 56320 || low > 57343 { g_json_parse_failed = 1; return -1; }
+                    g_json_parse_pos = g_json_parse_pos + 6;
+                    cp = 65536 + (cp - 55296) * 1024 + (low - 56320);
+                } else if cp >= 56320 && cp <= 57343 {
+                    g_json_parse_failed = 1; return -1;
+                }
                 _jstr_cp(cp);
             }
             else { g_json_parse_failed = 1; return -1; }   // 未知转义
@@ -278,7 +326,8 @@ fn _jparse_str() -> int {
 
 // ── 值解析（递归下降）──
 
-fn _jparse_obj() -> int {
+fn _jparse_obj(depth: int) -> int {
+    if depth > J_MAX_PARSE_DEPTH { g_json_parse_failed = 1; return -1; }
     g_json_parse_pos = g_json_parse_pos + 1;   // 消费 '{'
     tbl : ., mut = -1;      // 成员表偏移（惰性：首成员时分配）
     count : ., mut = 0;
@@ -298,7 +347,7 @@ fn _jparse_obj() -> int {
         _jskip_ws();
         if _jp_peek() != 58 { g_json_parse_failed = 1; return -1; }   // ':'
         g_json_parse_pos = g_json_parse_pos + 1;
-        val := parse_value();
+        val := parse_value(depth + 1);
         if val < 0 { return -1; }
         // 表 = 可增长列表：新成员时把已有成员迁移到当前末尾（子容器表在下方，
         // 不受影响），再写入新成员——保证成员表连续且不与子容器表重叠。
@@ -331,7 +380,8 @@ fn _jparse_obj() -> int {
     return n;
 }
 
-fn _jparse_arr() -> int {
+fn _jparse_arr(depth: int) -> int {
+    if depth > J_MAX_PARSE_DEPTH { g_json_parse_failed = 1; return -1; }
     g_json_parse_pos = g_json_parse_pos + 1;   // 消费 '['
     tbl : ., mut = -1;      // 元素表偏移（惰性：首元素时分配）
     count : ., mut = 0;
@@ -346,7 +396,7 @@ fn _jparse_arr() -> int {
             g_json_parse_pos = g_json_parse_pos + 1;
             _jskip_ws();
         }
-        v := parse_value();
+        v := parse_value(depth + 1);
         if v < 0 { return -1; }
         if count == 0 {
             tbl = g_json_tables_len;
@@ -375,12 +425,13 @@ fn _jparse_arr() -> int {
     return n;
 }
 
-fn parse_value() -> int {
+fn parse_value(depth: int) -> int {
+    if depth > J_MAX_PARSE_DEPTH { g_json_parse_failed = 1; return -1; }
     _jskip_ws();
     c := _jp_peek();
     if c < 0 { return -1; }
-    if c == 123 { return _jparse_obj(); }
-    if c == 91 { return _jparse_arr(); }
+    if c == 123 { return _jparse_obj(depth); }
+    if c == 91 { return _jparse_arr(depth); }
     if c == 34 { return _jparse_str(); }
     if c == 116 {   // 't' → true
         if _jk_match("true") != 0 { n1 := json_new(J_BOOL); json_set(n1, 1, 1); return n1; }
@@ -413,9 +464,10 @@ fn json_parse(text: string) -> int {
     g_json_strs_len = 0;
     g_json_tables_len = 0;
     g_json_parse_failed = 0;
+    g_json_parse_depth = 0;
     g_json_parse_text = text;
     g_json_parse_pos = 0;
-    idx := parse_value();
+    idx := parse_value(0);
     if g_json_parse_failed != 0 { return -1; }
     if idx < 0 { return -1; }
     _jskip_ws();
@@ -560,7 +612,8 @@ fn _jstringify_rec(idx: int) -> string {
 
 // 节点 → JSON 文本；非法索引返回空串
 fn json_stringify(idx: int) -> string {
-    if idx < 0 || g_json_count == 0 { return ""; }
+    if idx < 0 || idx % J_NODE_SLOTS != 0 || idx / J_NODE_SLOTS >= g_json_count ||
+       g_json_count == 0 { return ""; }
     return _jstringify_rec(idx);
 }
 
@@ -568,10 +621,12 @@ fn json_stringify(idx: int) -> string {
 
 // 对象按键查找：线性扫描成员表；找不到返回 -1
 fn json_obj_get(obj: int, key: string) -> int {
-    if json_get(obj, 0) != J_OBJ { return -1; }
+    if obj < 0 || obj % J_NODE_SLOTS != 0 || obj / J_NODE_SLOTS >= g_json_count ||
+       json_get(obj, 0) != J_OBJ { return -1; }
     tbl := json_get(obj, 1);
     cnt := json_get(obj, 2);
     kl := str_len(key);
+    found_value : ., mut = -1;
     i : ., mut = 0;
     loop {
         if i >= cnt { break; }
@@ -585,16 +640,17 @@ fn json_obj_get(obj: int, key: string) -> int {
                 if load8(g_json_strs, koff + j) != load8(key, j) { matched = 0; break; }
                 j = j + 1;
             }
-            if matched != 0 { return _jr64(g_json_tables, tbl + i * J_MEMBER_BYTES + 16); }
+            if matched != 0 { found_value = _jr64(g_json_tables, tbl + i * J_MEMBER_BYTES + 16); }
         }
         i = i + 1;
     }
-    return -1;
+    return found_value;
 }
 
 // 数组按下标取元素；越界或非数组返回 -1
 fn json_array_get(arr: int, i: int) -> int {
-    if json_get(arr, 0) != J_ARRAY { return -1; }
+    if arr < 0 || arr % J_NODE_SLOTS != 0 || arr / J_NODE_SLOTS >= g_json_count ||
+       json_get(arr, 0) != J_ARRAY { return -1; }
     cnt := json_get(arr, 2);
     if i < 0 || i >= cnt { return -1; }
     tbl := json_get(arr, 1);

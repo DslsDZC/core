@@ -56,8 +56,12 @@ fn main() -> int {
 
     // 3. 字符串转义往返：\" \\ \n
     check_roundtrip("\"a\\\"b\\\\c\\nd\"", "\"a\\\"b\\\\c\\nd\"");
-    // \uXXXX：只解析为码点，序列化输出大写十六进制
+    // \uXXXX：解析为码点，序列化输出大写十六进制
     check_roundtrip("\"\\u4e2d\\u00e9\"", "\"\\u4E2D\\u00E9\"");
+    // UTF-16 surrogate pair becomes one Unicode scalar and round-trips in
+    // the canonical JSON form.
+    check_roundtrip("\"\\uD83D\\uDE00\"", "\"\\uD83D\\uDE00\"");
+    check_roundtrip("\"a\\b\\f\\/\"", "\"a\\u0008\\u000C/\"");
 
     // 4. json_obj_get：{"position": {"line": 3, "character": 7}} 取 line → 3
     root := json_parse("{\"position\": {\"line\": 3, \"character\": 7}}");
@@ -81,6 +85,31 @@ fn main() -> int {
     t_expect(n >= 0 && json_get(n, 0) == J_NUM && json_get(n, 1) == -42,
         "num: -42 -> J_NUM a=-42");
     t_expect(str_eq(json_stringify(n), "-42") != 0, "stringify: -42");
+
+    // JSON object keys are last-wins, and signed 64-bit boundaries are valid.
+    dup := json_parse("{\"x\":1,\"x\":2}");
+    dx := json_obj_get(dup, "x");
+    t_expect(dx >= 0 && json_get(dx, 1) == 2, "obj_get: duplicate key last wins");
+    min_i64 := json_parse("-9223372036854775808");
+    max_i64 := json_parse("9223372036854775807");
+    t_expect(min_i64 >= 0 && json_get(min_i64, 1) == -9223372036854775808,
+        "num: INT64_MIN accepted");
+    t_expect(max_i64 >= 0 && json_get(max_i64, 1) == 9223372036854775807,
+        "num: INT64_MAX accepted");
+    check_bad("9223372036854775808");
+    check_bad("-9223372036854775809");
+    check_bad("01");
+    check_bad("\"\\uD800\"");
+
+    // Excessive nesting must fail without exhausting the native call stack.
+    nested : string, mut = "0";
+    ni : ., mut = 0;
+    loop {
+        if ni >= 130 { break; }
+        nested = "[" + nested + "]";
+        ni = ni + 1;
+    }
+    check_bad(nested);
 
     // 7. json_array_get：下标访问 + 越界
     a := json_parse("[10, 20]");

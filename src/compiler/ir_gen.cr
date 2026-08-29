@@ -57,7 +57,21 @@ fn arr_len_lit_of(arr_var: int) -> int {
     if ti >= 0 && ti < g_type_count && get_type_kind(ti) == TYP_ARRAY {
         return get_type_extra(ti);
     }
+    if ti == TI_STR {
+        prod := r64(g_df_var_producer, arr_var * 8);
+        if prod >= 0 && r64(g_df_nodes, prod * ESZ_DFNODE + OFF_DF_OPCODE) == IR_CONST &&
+           r64(g_df_nodes, prod * ESZ_DFNODE + OFF_DF_TK) == TI_STR {
+            return istr_len(r64(g_df_nodes, prod * ESZ_DFNODE + OFF_DF_S1));
+        }
+    }
     return slice_len_get(arr_var);
+}
+
+fn emit_string_bounds(arr_var: int, idx_var: int) {
+    if arr_var < 0 || idx_var < 0 || irv_type(arr_var) != TI_STR { return; }
+    len_var := new_ir_var("str_len", TI_INT);
+    emit(IR_CALL, len_var, arr_var, 1, str_intern("str_len"), TI_INT);
+    emit(IR_BOUNDS_CHECK, -1, idx_var, len_var, 0, 1);
 }
 
 fn grow_sg_alloc(needed: int) {
@@ -753,12 +767,13 @@ emit(IR_STORE, -1, target, val_var, 0, 0);
                     if pass_before_array_access(arr_var, -1, ast_int_val(idx_node), arr_len_lit) == 0 {
                         emit(IR_STORE_INDEX, -1, arr_var, val_var, ast_int_val(idx_node), 0);
                     }
-                } else {
-                    idx_var := gen_expr(idx_node);
-                    idx_var = force_if_thunk(idx_var);
-                    if pass_before_array_access(arr_var, idx_var, -1, arr_len_lit) == 0 {
-                        emit(IR_STORE_INDEX_VAR, val_var, arr_var, idx_var, 0, 0);
-                    }
+        } else {
+            idx_var := gen_expr(idx_node);
+            idx_var = force_if_thunk(idx_var);
+            emit_string_bounds(arr_var, idx_var);
+            if pass_before_array_access(arr_var, idx_var, -1, arr_len_lit) == 0 {
+                emit(IR_STORE_INDEX_VAR, val_var, arr_var, idx_var, 0, 0);
+            }
                 }
                 return val_var;
             }
@@ -1942,6 +1957,7 @@ emit(IR_STORE, -1, lv, val_var, 0, 0);
         } else {
             idx_var := gen_expr(idx_node);
             idx_var = force_if_thunk(idx_var);
+            emit_string_bounds(arr_var, idx_var);
             if pass_before_array_access(arr_var, idx_var, -1, arr_len_lit) == 0 {
                 emit(IR_LOAD_INDEX_VAR, v, arr_var, idx_var, 0, 0);
             }

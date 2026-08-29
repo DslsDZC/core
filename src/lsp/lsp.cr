@@ -21,6 +21,19 @@
 // 注意（Python bootstrap 地雷）：字符串累加必须从字面量初始化的
 // `: string, mut` 累加器出发；本文件所有拼接均遵循该模式。
 
+g_lsp_snapshot_path : string, mut;
+
+fn lsp_request_matches_snapshot(root: int) -> int {
+    params := json_obj_get(root, "params");
+    if params < 0 { return 0; }
+    td := json_obj_get(params, "textDocument");
+    if td < 0 { return 0; }
+    un := json_obj_get(td, "uri");
+    if un < 0 || json_get(un, 0) != J_STR { return 0; }
+    uri := lsp_str_pool_copy(json_get(un, 1), json_get(un, 2));
+    return str_eq(lsp_uri_to_path(uri), g_lsp_snapshot_path);
+}
+
 // 从 JSON 字符串池复制字节段 → 稳定堆字符串。
 // 池在每次 json_parse 会被重置复用，直接存池内指针会在下一帧失效。
 fn lsp_str_pool_copy(off: int, len: int) -> string {
@@ -59,7 +72,7 @@ fn lsp_json_escape_str(s: string) -> string {
         else if c == 10 { out = out + "\\n"; }
         else if c == 13 { out = out + "\\r"; }
         else if c == 9 { out = out + "\\t"; }
-        else if c < 32 { out = out + "\\u" + _jhex4(c); }
+        else if c < 32 { out = out + _jhex4(c); }
         else { out = out + chr(c); }
         i = i + 1;
     }
@@ -153,6 +166,7 @@ fn lsp_publish_diags() {
 
 // 静默检查管线（禁止 run_frontend——进度 println 污染协议通道）
 fn lsp_check_file(path: string, src: string) {
+    g_lsp_snapshot_path = path;
     g_source = src;
     g_source_dir = dirname(path);
     reset_frontend_state();
@@ -236,6 +250,7 @@ fn lsp_did_close(root: int) {
     uri := lsp_str_pool_copy(json_get(uri_node, 1), json_get(uri_node, 2));
     path := lsp_uri_to_path(uri);
     module_open_doc_remove(path);
+    if str_eq(path, g_lsp_snapshot_path) != 0 { g_lsp_snapshot_path = ""; }
     // 清诊断：发布空数组
     lsp_send_file_diags("file://" + path, -1);
 }
@@ -276,6 +291,7 @@ fn lsp_send_def_resp(root: int, loc: string) {
 }
 
 fn lsp_hover(root: int) {
+    if lsp_request_matches_snapshot(root) == 0 { lsp_send_hover_resp(root, ""); return; }
     params := json_obj_get(root, "params");
     pos : ., mut = -1;
     if params >= 0 { pos = json_obj_get(params, "position"); }
@@ -291,6 +307,7 @@ fn lsp_hover(root: int) {
 }
 
 fn lsp_definition(root: int) {
+    if lsp_request_matches_snapshot(root) == 0 { lsp_send_def_resp(root, ""); return; }
     params := json_obj_get(root, "params");
     pos : ., mut = -1;
     if params >= 0 { pos = json_obj_get(params, "position"); }
@@ -312,6 +329,7 @@ fn lsp_definition(root: int) {
 // textDocument/completion：params.position（0-based）+ context（当前仅
 // 忽略——触发类型不影响候选）；result 为 {"items":[...]}，坏参数 → 空 items。
 fn lsp_completion(root: int) {
+    if lsp_request_matches_snapshot(root) == 0 { lsp_send_def_resp(root, "{\"items\":[]}"); return; }
     params := json_obj_get(root, "params");
     pos : ., mut = -1;
     if params >= 0 { pos = json_obj_get(params, "position"); }
@@ -332,6 +350,7 @@ fn lsp_completion(root: int) {
 // textDocument/documentSymbol：params.textDocument.uri 只需存在即可
 // （符号来自快照，与 uri 具体值无关）；result 为 JSON 数组。
 fn lsp_document_symbol(root: int) {
+    if lsp_request_matches_snapshot(root) == 0 { lsp_send_def_resp(root, "[]"); return; }
     params := json_obj_get(root, "params");
     td : ., mut = -1;
     if params >= 0 { td = json_obj_get(params, "textDocument"); }
@@ -349,6 +368,7 @@ fn lsp_document_symbol(root: int) {
 // （令牌来自快照，与 uri 具体值无关——与 documentSymbol 同模式）；result
 // 为 {"data":[...]}（差分编码见 analysis.cr）。坏参数 → 空 data。
 fn lsp_semantic_tokens(root: int) {
+    if lsp_request_matches_snapshot(root) == 0 { lsp_send_def_resp(root, "{\"data\":[]}"); return; }
     params := json_obj_get(root, "params");
     td : ., mut = -1;
     if params >= 0 { td = json_obj_get(params, "textDocument"); }

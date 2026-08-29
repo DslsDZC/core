@@ -13,6 +13,7 @@ class TypeChecker:
         self.borrow_state = {}       # borrowed_var -> {ref_count, mut_ref}
         self.borrow_holders = {}     # borrower_var -> [(borrowed_var, is_mut)]
         self.borrow_scope_stack = []  # stack of sets of borrower vars in each scope
+        self.module_functions = {}
 
     # --------------------------------------------------------------
     # Borrow checking helpers
@@ -100,6 +101,11 @@ class TypeChecker:
 
     def check(self, ast: CompilationUnit):
         self._declare_builtins()
+        self.module_functions = {}
+        for decl in ast.declarations:
+            alias = getattr(decl, '_module_alias', None)
+            if alias and isinstance(decl, FunctionDecl):
+                self.module_functions[(alias, decl.name)] = decl
         for decl in ast.declarations:
             if isinstance(decl, StructDecl):
                 self._declare_struct(decl)
@@ -300,6 +306,8 @@ class TypeChecker:
                 return GenericApplyType([enum_name], concrete_args)
             return func_decl.return_type
         elif isinstance(expr, FieldAccess):
+            if isinstance(expr.object, Ident) and (expr.object.name, expr.field) in self.module_functions:
+                return self.module_functions[(expr.object.name, expr.field)].return_type
             obj_t = self._infer_expr(expr.object)
             # Unwrap RefType for field access through references
             if isinstance(obj_t, RefType):
@@ -507,6 +515,16 @@ class TypeChecker:
         # Track which function we're checking (set by _check_function)
         self._current_checking_func = getattr(self, '_current_checking_func', '?')
         if isinstance(call.func, FieldAccess):
+            if isinstance(call.func.object, Ident):
+                module_fn = self.module_functions.get((call.func.object.name, call.func.field))
+                if module_fn is not None:
+                    if len(call.args) != len(module_fn.params):
+                        self.errors.append(f"Module function {call.func.field} argument count mismatch")
+                    else:
+                        for arg, (_, pt) in zip(call.args, module_fn.params):
+                            if not self._type_equal(self._infer_expr(arg), pt):
+                                self.errors.append("Module function argument type mismatch")
+                    return module_fn.return_type
             obj_t = self._infer_expr(call.func.object)
             if isinstance(obj_t, RefType):
                 obj_t = obj_t.inner

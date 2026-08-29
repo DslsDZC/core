@@ -184,28 +184,32 @@ fn ir_interpret() -> int {
         }
         if op == 13 {  // IR_LOAD_INDEX: s1=arr_var, s3=literal_idx
             if d >= 0 && s1 >= 0 {
-                arr_ptr := r64(g_ir_vals, s1 * 8);
-                w64(g_ir_vals, d * 8, r64(arr_ptr, s3 * 8));
+                arr_value := r64(g_ir_vals, s1 * 8);
+                if irv_type(s1) == TI_STR { w64(g_ir_vals, d * 8, str_load8(arr_value, s3)); }
+                else { w64(g_ir_vals, d * 8, r64(arr_value, s3 * 8)); }
             }
         }
         if op == 14 {  // IR_STORE_INDEX: s1=arr_var, s2=val_var, s3=literal_idx
             if s1 >= 0 && s2 >= 0 {
                 arr_ptr := r64(g_ir_vals, s1 * 8);
-                w64(arr_ptr, s3 * 8, r64(g_ir_vals, s2 * 8));
+                if irv_type(s1) == TI_STR { store8(arr_ptr, s3, r64(g_ir_vals, s2 * 8)); }
+                else { w64(arr_ptr, s3 * 8, r64(g_ir_vals, s2 * 8)); }
             }
         }
         if op == 15 {  // IR_LOAD_INDEX_VAR: s1=arr_var, s2=idx_var
             if d >= 0 && s1 >= 0 && s2 >= 0 {
-                arr_ptr := r64(g_ir_vals, s1 * 8);
+                arr_value := r64(g_ir_vals, s1 * 8);
                 idx := r64(g_ir_vals, s2 * 8);
-                w64(g_ir_vals, d * 8, r64(arr_ptr, idx * 8));
+                if irv_type(s1) == TI_STR { w64(g_ir_vals, d * 8, str_load8(arr_value, idx)); }
+                else { w64(g_ir_vals, d * 8, r64(arr_value, idx * 8)); }
             }
         }
         if op == 16 {  // IR_STORE_INDEX_VAR: d=val_var, s1=arr_var, s2=idx_var
             if d >= 0 && s1 >= 0 && s2 >= 0 {
                 arr_ptr := r64(g_ir_vals, s1 * 8);
                 idx := r64(g_ir_vals, s2 * 8);
-                w64(arr_ptr, idx * 8, r64(g_ir_vals, d * 8));
+                if irv_type(s1) == TI_STR { store8(arr_ptr, idx, r64(g_ir_vals, d * 8)); }
+                else { w64(arr_ptr, idx * 8, r64(g_ir_vals, d * 8)); }
             }
         }
         // IR_MAKE_ENUM (17)：d := alloc(8·(1+s2))；M[d+0] := s1（tag = 变体名索引）——
@@ -247,7 +251,9 @@ fn ir_interpret() -> int {
         // index < 0 或 index >= max → 陷阱（返回 -1 表示中止；BC11 补实现）
         if op == 30 && s2 >= 0 {
             iv := r64(g_ir_vals, s1 * 8);
-            if iv < 0 || iv >= s2 { return -1; }
+            limit : ., mut = s2;
+            if ti == 1 { limit = r64(g_ir_vals, s2 * 8); }
+            if iv < 0 || iv >= limit { return -1; }
         }
 
         // IR_LAZY_THUNK / IR_LAZY_FORCE. Calls are currently eager, so both
@@ -382,6 +388,9 @@ fn ir_interpret() -> int {
             // syscall3/syscall4 — interpreter returns 0
             if str_eq(fn_name, "syscall3") != 0 || str_eq(fn_name, "syscall4") != 0 {
                 if d >= 0 { w64(g_ir_vals, d * 8, 0); }
+            }
+            if str_eq(fn_name, "str_len") != 0 {
+                if d >= 0 && s2 >= 1 { w64(g_ir_vals, d * 8, istr_len(r64(g_ir_vals, s1 * 8))); }
             }
             if str_eq(fn_name, "load_str_ptr") != 0 {
                 if d >= 0 && s2 >= 2 {

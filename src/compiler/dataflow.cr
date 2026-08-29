@@ -125,7 +125,7 @@ fn df_create_node(opcode: int, dest: int, src1: int, src2: int, src3: int, type_
     }
 
     // Add edges for src fields that are IR variables (based on opcode)
-    df_connect_srcs(nid, opcode, src1, src2, src3);
+    df_connect_srcs(nid, opcode, src1, src2, src3, type_kind);
     // VSDG state chain: side-effecting nodes are ordered by state edges
     df_connect_state(nid, opcode, src3);
     return nid;
@@ -191,7 +191,7 @@ fn df_use_var(consumer_node: int, var_idx: int) {
 
 // Connect source operands based on opcode semantics.
 // Only fields that carry IR variable indices create dataflow edges.
-fn df_connect_srcs(node_id: int, opcode: int, s1: int, s2: int, s3: int) {
+fn df_connect_srcs(node_id: int, opcode: int, s1: int, s2: int, s3: int, type_kind: int) {
     if opcode == IR_CONST { return; }  // all srcs are scalar values/labels
 
     if opcode == IR_BINARY {
@@ -263,6 +263,11 @@ fn df_connect_srcs(node_id: int, opcode: int, s1: int, s2: int, s3: int) {
     }
     if opcode == IR_BRANCH {
         df_use_var(node_id, s1);  // condition var (labels s2, s3 are not vars)
+        return;
+    }
+    if opcode == IR_BOUNDS_CHECK {
+        df_use_var(node_id, s1);
+        if type_kind != 0 { df_use_var(node_id, s2); }
         return;
     }
     if opcode == IR_REF {

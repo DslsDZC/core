@@ -77,16 +77,28 @@ class Lexer:
     def read_number(self, first: str) -> Token:
         start_line, start_col = self.line, self.col
         n = first
-        is_hex = (first == '0' and (self.current() == 'x' or self.current() == 'X'))
+        base = 10
+        is_prefixed = False
+        if first == '0' and self.current() in 'xXoObB':
+            prefix = self.advance()
+            n += prefix
+            base = {'x': 16, 'X': 16, 'o': 8, 'O': 8,
+                    'b': 2, 'B': 2}[prefix]
+            is_prefixed = True
         is_float = False
-        if is_hex:
-            n += self.advance()  # consume 'x'
-            while self.current().isalnum() or self.current() == '_':
+        if is_prefixed:
+            digits = '0123456789abcdefABCDEF' if base == 16 else (
+                '01234567' if base == 8 else '01')
+            while self.current() in digits or self.current() == '_':
                 c = self.current()
-                if c.isdigit() or ('a' <= c <= 'f') or ('A' <= c <= 'F') or c == '_':
+                if c in digits or c == '_':
                     n += self.advance()
                 else:
                     break
+            if n[-1] in 'xXoObB' or not any(c != '_' for c in n[2:]):
+                self.error("invalid integer literal")
+            if self.current().isalnum() or self.current() == '_':
+                self.error("invalid digit in integer literal")
         else:
             while self.current().isdigit() or self.current() == '_':
                 n += self.advance()
@@ -101,8 +113,8 @@ class Lexer:
                     suffix += self.advance()
                 n += suffix
         n = n.replace('_', '')
-        if is_hex:
-            val = str(int(n, 16))
+        if is_prefixed:
+            val = str(int(n[2:].replace('_', ''), base))
             return Token(TokenType.INT_LIT, val, start_line, start_col)
         if is_float:
             return Token(TokenType.FLOAT_LIT, n, start_line, start_col)

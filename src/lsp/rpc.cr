@@ -70,6 +70,7 @@ fn rpc_read_header() -> int {
 // buf[pos..] 与 key 大小写不敏感比较（键后必须为 ':' 或空白）
 fn rpc_key_at(buf: string, pos: int, key: string) -> int {
     kl := str_len(key);
+    if pos < 0 { return 0; }
     i : ., mut = 0;
     loop {
         if i >= kl { break; }
@@ -88,32 +89,37 @@ fn rpc_key_at(buf: string, pos: int, key: string) -> int {
 // 从头缓冲解析 Content-Length；找不到/非法/超上限返回 -1
 fn rpc_find_len(buf: string, blen: int) -> int {
     i : ., mut = 0;
+    found : ., mut = 0;
+    found_len : ., mut = -1;
     loop {
-        if i + 15 > blen { return -1; }   // 至少 14 个键字节 + 1 个边界字节
+        if i >= blen { break; }
+        // Header fields are matched only at line starts. This prevents a
+        // body-like substring in another header from being accepted.
+        if i + 1 < blen && load8(buf, i) == 13 && load8(buf, i + 1) == 10 {
+            break;
+        }
+        line_end : ., mut = i;
+        loop {
+            if line_end + 1 >= blen { return -1; }
+            if load8(buf, line_end) == 13 && load8(buf, line_end + 1) == 10 { break; }
+            line_end = line_end + 1;
+        }
+        if line_end - i < 15 { i = line_end + 2; continue; }
         if rpc_key_at(buf, i, "content-length") != 0 {
             j : ., mut = i + 14;
-            loop {
-                if j >= blen { return -1; }
-                c := load8(buf, j);
-                if c == 32 || c == 9 { j = j + 1; }
-                else { break; }
-            }
-            if j >= blen { return -1; }
-            if load8(buf, j) != 58 { return -1; }   // ':'
+            if j >= line_end { return -1; }
+            // The key matcher permits whitespace before the colon.
+            loop { if j < line_end && (load8(buf, j) == 32 || load8(buf, j) == 9) { j = j + 1; } else { break; } }
+            if j >= line_end || load8(buf, j) != 58 { return -1; }
             j = j + 1;
-            // 跳过 ':' 后的空白（标准帧 "Content-Length: 58" 的冒号后有空格）
-            loop {
-                if j >= blen { return -1; }
-                c3 := load8(buf, j);
-                if c3 == 32 || c3 == 9 { j = j + 1; }
-                else { break; }
-            }
+            loop { if j < line_end && (load8(buf, j) == 32 || load8(buf, j) == 9) { j = j + 1; } else { break; } }
             v : ., mut = 0;
             got : ., mut = 0;
             loop {
-                if j >= blen { break; }
+                if j >= line_end { break; }
                 c2 := load8(buf, j);
                 if c2 >= 48 && c2 <= 57 {
+                    if v > RPC_BODY_MAX / 10 || (v == RPC_BODY_MAX / 10 && c2 - 48 > RPC_BODY_MAX % 10) { return -1; }
                     v = v * 10 + (c2 - 48);
                     got = 1;
                     j = j + 1;
@@ -121,12 +127,15 @@ fn rpc_find_len(buf: string, blen: int) -> int {
                 else { break; }
             }
             if got == 0 { return -1; }
-            if v > RPC_BODY_MAX { return -1; }
-            return v;
+            loop { if j < line_end && (load8(buf, j) == 32 || load8(buf, j) == 9) { j = j + 1; } else { break; } }
+            if j != line_end { return -1; }
+            if found != 0 { return -1; }
+            found = 1;
+            found_len = v;
         }
-        i = i + 1;
+        i = line_end + 2;
     }
-    return -1;   // 不可达（循环内必 return），满足检查器
+    return found_len;
 }
 
 // 读满 n 字节体；EOF 中断返回已读部分（调用方 json_parse 失败即忽略）

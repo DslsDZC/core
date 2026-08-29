@@ -139,11 +139,14 @@ fn analysis_type_node_name(node: int, depth: int) -> string {
 
 // ── 令牌定位 ──
 
-// 扫 g_tokens 找覆盖 (line, col)（0-based）的令牌，返回令牌索引；无则 -1。
-// 匹配：令牌所在行 == line，且 col ∈ [令牌起点, 起点 + lexeme 长度)。
+// 扫 g_tokens 找覆盖 (line, col)（0-based，col 为 UTF-16 code units）的令牌，
+// 返回令牌索引；无则 -1。源码 lexer 的列按字节记录，定位时先转换回字节。
 fn analysis_token_at(line: int, col: int) -> int {
+    if line < 0 || col < 0 { return -1; }
     tl : ., mut = line + 1;
-    tc : ., mut = col + 1;
+    line_start := analysis_line_start(line);
+    cursor := analysis_pos_of(line, col);
+    tc : ., mut = cursor - line_start + 1;
     i : ., mut = 0;
     loop {
         if i >= g_token_count { return -1; }
@@ -159,12 +162,80 @@ fn analysis_token_at(line: int, col: int) -> int {
     }
 }
 
+// Return the byte offset of a zero-based source line.
+fn analysis_line_start(line: int) -> int {
+    if line <= 0 { return 0; }
+    sl := str_len(g_source);
+    current : ., mut = 0;
+    i : ., mut = 0;
+    loop {
+        if i >= sl { return sl; }
+        if load8(g_source, i) == 10 {
+            current = current + 1;
+            i = i + 1;
+            if current >= line { return i; }
+        } else { i = i + 1; }
+    }
+    return sl;
+}
+
+// Decode one UTF-8 sequence from g_source. Invalid bytes occupy one unit.
+fn analysis_utf8_next(pos: int, sl: int) -> int {
+    if pos < 0 || pos >= sl { return 1; }
+    b0 := load8(g_source, pos);
+    if b0 < 128 { return 1; }
+    if b0 < 224 && pos + 1 < sl {
+        b1 := load8(g_source, pos + 1);
+        if b1 >= 128 && b1 < 192 { return 2; }
+    }
+    if b0 < 240 && pos + 2 < sl {
+        b1 := load8(g_source, pos + 1);
+        b2 := load8(g_source, pos + 2);
+        if b1 >= 128 && b1 < 192 && b2 >= 128 && b2 < 192 { return 3; }
+    }
+    if b0 >= 240 && b0 < 248 && pos + 3 < sl {
+        b1 := load8(g_source, pos + 1);
+        b2 := load8(g_source, pos + 2);
+        b3 := load8(g_source, pos + 3);
+        if b1 >= 128 && b1 < 192 && b2 >= 128 && b2 < 192 && b3 >= 128 && b3 < 192 { return 4; }
+    }
+    return 1;
+}
+
+fn analysis_utf8_cp(pos: int, adv: int) -> int {
+    b0 := load8(g_source, pos);
+    if adv == 1 { return b0; }
+    if adv == 2 { return (b0 - 192) * 64 + load8(g_source, pos + 1) - 128; }
+    if adv == 3 { return (b0 - 224) * 4096 + (load8(g_source, pos + 1) - 128) * 64 + load8(g_source, pos + 2) - 128; }
+    return (b0 - 240) * 262144 + (load8(g_source, pos + 1) - 128) * 4096 + (load8(g_source, pos + 2) - 128) * 64 + load8(g_source, pos + 3) - 128;
+}
+
+fn analysis_utf16_units(start: int, end: int) -> int {
+    sl := str_len(g_source);
+    p : ., mut = start;
+    units : ., mut = 0;
+    loop {
+        if p >= end || p >= sl { break; }
+        adv := analysis_utf8_next(p, sl);
+        if p + adv > end { adv = 1; }
+        cp := analysis_utf8_cp(p, adv);
+        if cp >= 65536 { units = units + 2; } else { units = units + 1; }
+        p = p + adv;
+    }
+    return units;
+}
+
+fn analysis_source_byte(pos: int, sl: int) -> int {
+    if pos < 0 || pos >= sl { return -1; }
+    return load8(g_source, pos);
+}
+
 // ── 函数 hover ──
 
 // EXPR_PARAM 节点 → 参数类型名
 fn analysis_param_type_name(pn: int) -> string {
     tn := ast_data(pn);
-    if tn > 0 && ast_kind(tn) != 0 { return analysis_type_node_name(tn, 0); }
+    if tn >= 0 && tn < g_ast_count && ast_kind(tn) != 0 { return analysis_type_node_name(tn, 0); }
     return analysis_tyname(ast_type_val(pn));
 }
 
@@ -173,7 +244,7 @@ fn analysis_fn_ret_name(fi: int) -> string {
     fn_node := fi_ast_node(fi);
     if fn_node >= 0 && fn_node < g_ast_count {
         tn := ast_type_val(fn_node);
-        if tn > 0 && tn < g_ast_count {
+        if tn >= 0 && tn < g_ast_count {
             if ast_kind(tn) != 0 { return analysis_type_node_name(tn, 0); }
             return analysis_tyname(ast_type_val(tn));
         }
@@ -226,7 +297,7 @@ fn analysis_hover_struct(si: int) -> string {
         out = out + istr_get(si_field_name(si, f));
         out = out + ": ";
         tn := si_field_type_node(si, f);
-        if tn > 0 && ast_kind(tn) != 0 { out = out + analysis_type_node_name(tn, 0); }
+        if tn >= 0 && tn < g_ast_count && ast_kind(tn) != 0 { out = out + analysis_type_node_name(tn, 0); }
         else { out = out + analysis_tyname(si_field_type(si, f)); }
         out = out + ",";
         f = f + 1;
@@ -259,7 +330,7 @@ fn analysis_hover_enum(ei: int) -> string {
 // 中最近的一个（近似作用域）。无则 -1。
 fn analysis_var_decl(name_ni: int, line: int, col: int) -> int {
     tl : ., mut = line + 1;
-    tc : ., mut = col + 1;
+    tc := analysis_pos_of(line, col) - analysis_line_start(line) + 1;
     best : ., mut = -1;
     bl : ., mut = -1;
     bc : ., mut = -1;
@@ -295,7 +366,7 @@ fn analysis_var_type(vd: int, depth: int) -> string {
     if k == EXPR_FOR { return "int"; }
     if k == EXPR_LET {
         tn := ast_b(vd);
-        if tn > 0 {
+        if tn >= 0 && tn < g_ast_count {
             if ast_kind(tn) != 0 { return analysis_type_node_name(tn, 0); }
             return analysis_tyname(ast_type_val(tn));
         }
@@ -424,7 +495,9 @@ fn analysis_line_offset(ln1: int) -> int {
 fn analysis_def_json(ln1: int, cl1: int) -> string {
     off := analysis_line_offset(ln1);
     line0 : ., mut = ln1 - 1 - off;
-    col0 : ., mut = cl1 - 1;
+    line_start := analysis_line_start(ln1 - 1);
+    decl_pos := line_start + cl1 - 1;
+    col0 := analysis_utf16_units(line_start, decl_pos);
     uri : string, mut = "file://";
     uri = uri + analysis_path_for_line(ln1);
     out : string, mut = "{\"uri\":";
@@ -436,7 +509,8 @@ fn analysis_def_json(ln1: int, cl1: int) -> string {
     out = out + "},\"end\":{\"line\":";
     out = out + int_str(line0);
     out = out + ",\"character\":";
-    out = out + int_str(col0 + 1);
+    adv := analysis_utf8_next(decl_pos, str_len(g_source));
+    out = out + int_str(analysis_utf16_units(line_start, decl_pos + adv));
     out = out + "}}}";
     return out;
 }
@@ -453,9 +527,10 @@ fn analysis_definition(line: int, col: int) -> string {
     // 函数
     fi := find_func(name_ni);
     if fi >= 0 {
-        fn_node := fi_ast_node(fi);
-        if fn_node >= 0 && fn_node < g_ast_count {
-            return analysis_def_json(ast_line(fn_node), ast_col(fn_node));
+        dfn := analysis_decl_tok(T_FN, name_ni);
+        if dfn >= 0 {
+            return analysis_def_json(r64(g_tokens, dfn * ESZ_TOKEN + OFF_TK_LINE),
+                                     r64(g_tokens, dfn * ESZ_TOKEN + OFF_TK_COL));
         }
         return "";
     }
@@ -489,20 +564,26 @@ fn analysis_definition(line: int, col: int) -> string {
 // 注意：前缀直接回扫快照 g_source（不依赖令牌——半截标识符不成令牌）；
 // 与 hover/definition 同为「最后一次成功检查的快照」语义。
 
-// (line, col)（0-based）→ g_source 字节偏移（跳过 line 个换行再前进 col；
-// 越界 col 截断到源末尾——回扫前缀时防越界读）
+// (line, col)（0-based，col 为 UTF-16 code units）→ g_source 字节偏移。
+// 光标落在 surrogate pair 中间时钳到该 code point 起点。
 fn analysis_pos_of(line: int, col: int) -> int {
     sl := str_len(g_source);
-    ln : ., mut = 0;
-    i : ., mut = 0;
+    if line < 0 { return 0; }
+    start := analysis_line_start(line);
+    p : ., mut = start;
+    units : ., mut = 0;
+    want : ., mut = col;
+    if want < 0 { want = 0; }
     loop {
-        if ln >= line { break; }
-        if i >= sl { break; }
-        if load8(g_source, i) == 10 { ln = ln + 1; }
-        i = i + 1;
+        if p >= sl || load8(g_source, p) == 10 || units >= want { break; }
+        adv := analysis_utf8_next(p, sl);
+        cp := analysis_utf8_cp(p, adv);
+        next_units : ., mut = 1;
+        if cp >= 65536 { next_units = 2; }
+        if units + next_units > want { break; }
+        p = p + adv;
+        units = units + next_units;
     }
-    p : ., mut = i + col;
-    if p > sl { p = sl; }
     return p;
 }
 
@@ -717,14 +798,19 @@ fn analysis_completion(line: int, col: int) -> string {
 
 // 1-based (line,col) → LSP range JSON（0-based 减 1，起点到名字后一字符）
 fn analysis_range_json(ln1: int, cl1: int) -> string {
+    line_start := analysis_line_start(ln1 - 1);
+    start_pos := line_start + cl1 - 1;
+    start_col := analysis_utf16_units(line_start, start_pos);
+    adv := analysis_utf8_next(start_pos, str_len(g_source));
+    end_col := analysis_utf16_units(line_start, start_pos + adv);
     out : string, mut = "{\"start\":{\"line\":";
     out = out + int_str(ln1 - 1);
     out = out + ",\"character\":";
-    out = out + int_str(cl1 - 1);
+    out = out + int_str(start_col);
     out = out + "},\"end\":{\"line\":";
     out = out + int_str(ln1 - 1);
     out = out + ",\"character\":";
-    out = out + int_str(cl1);
+    out = out + int_str(end_col);
     out = out + "}}";
     return out;
 }
@@ -930,19 +1016,19 @@ fn analysis_tok_span(ti: int, st: int, sl: int) -> int {
     // 字符串/字符：开引号 → 未转义闭合引号（镜像 lexer：\x 转义 4 字节、
     // 插值 ${...} 跳至 '}' 并多吃一字节、换行终止未闭合串）
     if k == T_STRING || k == T_CHAR {
-        q := load8(g_source, st);
+        q := analysis_source_byte(st, sl);
         p : ., mut = st + 1;
         loop {
             if p >= sl { break; }
-            c := load8(g_source, p);
+            c := analysis_source_byte(p, sl);
             if c == 92 { p = p + 2; }
             else if c == q { p = p + 1; break; }
             else if c == 10 { break; }
-            else if c == 36 && load8(g_source, p + 1) == 123 {
+            else if c == 36 && analysis_source_byte(p + 1, sl) == 123 {
                 p = p + 2;
                 loop {
                     if p >= sl { break; }
-                    if load8(g_source, p) == 125 { p = p + 1; break; }
+                    if analysis_source_byte(p, sl) == 125 { p = p + 1; break; }
                     p = p + 1;
                 }
                 if p < sl { p = p + 1; }   // 镜像 lexer 循环尾 _pos+1
@@ -954,26 +1040,26 @@ fn analysis_tok_span(ti: int, st: int, sl: int) -> int {
     // 数字：镜像 lexer 数字分支（'.' 起始、hex/oct/bin 前缀、小数、字母后缀）
     if k == T_INT || k == T_DEX {
         p : ., mut = st;
-        if load8(g_source, p) == 46 && is_digit(load8(g_source, p + 1)) != 0 { p = p + 1; }
-        loop { if is_digit(load8(g_source, p)) != 0 { p = p + 1; } else { break; } }
+        if analysis_source_byte(p, sl) == 46 && is_digit(analysis_source_byte(p + 1, sl)) != 0 { p = p + 1; }
+        loop { if is_digit(analysis_source_byte(p, sl)) != 0 { p = p + 1; } else { break; } }
         if p - st == 1 && load8(g_source, st) == 48 {
-            nx := load8(g_source, p);
+            nx := analysis_source_byte(p, sl);
             if nx == 120 || nx == 88 {
                 p = p + 1;
-                loop { hc := load8(g_source, p); if is_digit(hc) != 0 || (hc >= 65 && hc <= 70) || (hc >= 97 && hc <= 102) { p = p + 1; } else { break; } }
+                loop { hc := analysis_source_byte(p, sl); if is_digit(hc) != 0 || (hc >= 65 && hc <= 70) || (hc >= 97 && hc <= 102) { p = p + 1; } else { break; } }
             } else if nx == 111 || nx == 79 {
                 p = p + 1;
-                loop { oc := load8(g_source, p); if oc >= 48 && oc <= 55 { p = p + 1; } else { break; } }
+                loop { oc := analysis_source_byte(p, sl); if oc >= 48 && oc <= 55 { p = p + 1; } else { break; } }
             } else if nx == 98 || nx == 66 {
                 p = p + 1;
-                loop { bc := load8(g_source, p); if bc == 48 || bc == 49 { p = p + 1; } else { break; } }
+                loop { bc := analysis_source_byte(p, sl); if bc == 48 || bc == 49 { p = p + 1; } else { break; } }
             }
         }
-        if load8(g_source, p) == 46 && load8(g_source, p + 1) != 46 {
+        if analysis_source_byte(p, sl) == 46 && analysis_source_byte(p + 1, sl) != 46 {
             p = p + 1;
-            loop { if is_digit(load8(g_source, p)) != 0 { p = p + 1; } else { break; } }
+            loop { if is_digit(analysis_source_byte(p, sl)) != 0 { p = p + 1; } else { break; } }
         }
-        loop { if is_alpha(load8(g_source, p)) != 0 { p = p + 1; } else { break; } }
+        loop { if is_alpha(analysis_source_byte(p, sl)) != 0 { p = p + 1; } else { break; } }
         return p - st;
     }
     // 标识符/关键字/类型关键字：lexeme 即源文本（add_tok_str）
@@ -1039,7 +1125,8 @@ fn analysis_semantic_tokens() -> string {
         st := r64(offs, j * 8);
         if st < main_limit {
             line0 : ., mut = r64(g_tokens, j * ESZ_TOKEN + OFF_TK_LINE) - 1;
-            col0 : ., mut = r64(g_tokens, j * ESZ_TOKEN + OFF_TK_COL) - 1;
+            token_line_start := analysis_line_start(line0);
+            col0 := analysis_utf16_units(token_line_start, st);
             if first == 0 { out = out + ","; }
             if line0 > prev_line {
                 // 跨行令牌：deltaStartChar 为绝对列（LSP 差分编码规范——
@@ -1056,7 +1143,7 @@ fn analysis_semantic_tokens() -> string {
                 out = out + int_str(col0 - prev_col);
             }
             out = out + ",";
-            out = out + int_str(analysis_tok_span(j, st, sl));
+            out = out + int_str(analysis_utf16_units(st, st + analysis_tok_span(j, st, sl)));
             out = out + ",";
             out = out + int_str(analysis_token_type(j));
             out = out + ",0";

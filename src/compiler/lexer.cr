@@ -123,17 +123,28 @@ fn str_to_f64_bits(s: string) -> int {
     i : ., mut = 0;
     neg : int = 0;
     if i < sl && load8(s, i) == 45 { neg = 1; i = i + 1; }
-    ip : int = 0; fp : int = 0; den : int = 1; sd : int = 0; dg : ., mut = 0;
+    ip : int = 0; fp : int = 0; den : int = 1; sd : int = 0;
+    ip_digits : ., mut = 0; fp_digits : ., mut = 0;
+    too_wide : ., mut = 0;
     loop { if i >= sl { break; }
         c := load8(s, i);
         if c == 46 { sd = 1; i = i + 1; continue; }
         if c < 48 || c > 57 { break; }
-        dg = dg + 1;
-        if dg <= 18 {
-            if sd != 0 { fp = fp * 10 + (c - 48); den = den * 10; }
-            else { ip = ip * 10 + (c - 48); }
+        if sd != 0 {
+            fp_digits = fp_digits + 1;
+            if fp_digits <= 18 { fp = fp * 10 + (c - 48); den = den * 10; }
+        } else {
+            ip_digits = ip_digits + 1;
+            if ip_digits <= 19 {
+                digit_ip := c - 48;
+                if ip > 922337203685477580 ||
+                   (ip == 922337203685477580 && digit_ip > 7 + neg) {
+                    too_wide = 1;
+                } else { ip = ip * 10 + digit_ip; }
+            } else { too_wide = 1; }
         }
         i = i + 1; }
+    if too_wide != 0 { add_error("decimal literal integer part is too wide"); return 0; }
     if ip == 0 && fp == 0 {
         if neg != 0 { return -9223372036854775808; }
         return 0;
@@ -155,7 +166,13 @@ fn str_to_f64_bits(s: string) -> int {
     exp : int = 0;
     if bi > 0 {
         sh := 53 - bi;
-        mant = (ip * pow2i(sh)) + (frac64 / pow2i(64 - sh));
+        if sh >= 0 {
+            mant = (ip * pow2i(sh)) + (frac64 / pow2i(64 - sh));
+        } else {
+            // Avoid pow2i of a negative value for integer parts wider than
+            // the binary64 significand.
+            mant = ip / pow2i(0 - sh);
+        }
         exp = 1023 + (bi - 1);
     } else {
         // 纯小数：frac64 的最高位
@@ -177,6 +194,42 @@ fn str_to_f64_bits(s: string) -> int {
     }
     if neg != 0 { bits64 = bits64 + -9223372036854775808; }
     return bits64;
+}
+
+// Parse an integer literal after tokenization. Supports decimal separators
+// and 0x/0o/0b prefixes; overflow is reported as a lexer error.
+fn str_int_literal(s: string) -> int {
+    sl := str_len(s);
+    base : ., mut = 10;
+    start : ., mut = 0;
+    if sl >= 2 && load8(s, 0) == 48 {
+        pfx := load8(s, 1);
+        if pfx == 120 || pfx == 88 { base = 16; start = 2; }
+        else if pfx == 111 || pfx == 79 { base = 8; start = 2; }
+        else if pfx == 98 || pfx == 66 { base = 2; start = 2; }
+    }
+    value : ., mut = 0;
+    digits : ., mut = 0;
+    i : ., mut = start;
+    loop {
+        if i >= sl { break; }
+        c := load8(s, i);
+        if c == 95 { i = i + 1; continue; }
+        d : ., mut = -1;
+        if c >= 48 && c <= 57 { d = c - 48; }
+        else if c >= 65 && c <= 70 { d = c - 55; }
+        else if c >= 97 && c <= 102 { d = c - 87; }
+        if d < 0 || d >= base { add_error("invalid integer literal"); return 0; }
+        if value > 922337203685477580 ||
+           (value == 922337203685477580 && d > 7) {
+            add_error("integer literal overflow"); return 0;
+        }
+        value = value * base + d;
+        digits = digits + 1;
+        i = i + 1;
+    }
+    if digits == 0 { add_error("integer literal requires digits"); return 0; }
+    return value;
 }
 
 // decimal string → 定点缩放整数（数值迁移 Task 4：dex 精确字面量解析）
@@ -355,9 +408,13 @@ fn tokenize(_src: string) {
             // Hex/octal/binary prefix
             if c == 48 && _pos - start == 1 {
                 nx := cur_char_at(_src, _pos, _slen);
-                if nx == 120 || nx == 88 { _pos = _pos + 1; loop { hc := cur_char_at(_src, _pos, _slen); if is_digit(hc) != 0 || (hc >= 65 && hc <= 70) || (hc >= 97 && hc <= 102) { _pos = _pos + 1; } else { break; } } }
-                else if nx == 111 || nx == 79 { _pos = _pos + 1; loop { oc := cur_char_at(_src, _pos, _slen); if oc >= 48 && oc <= 55 { _pos = _pos + 1; } else { break; } } }
-                else if nx == 98 || nx == 66 { _pos = _pos + 1; loop { bc := cur_char_at(_src, _pos, _slen); if bc == 48 || bc == 49 { _pos = _pos + 1; } else { break; } } }
+                if nx == 120 || nx == 88 { _pos = _pos + 1; loop { hc := cur_char_at(_src, _pos, _slen); if is_digit(hc) != 0 || (hc >= 65 && hc <= 70) || (hc >= 97 && hc <= 102) || hc == 95 { _pos = _pos + 1; } else { break; } } }
+                else if nx == 111 || nx == 79 { _pos = _pos + 1; loop { oc := cur_char_at(_src, _pos, _slen); if (oc >= 48 && oc <= 55) || oc == 95 { _pos = _pos + 1; } else { break; } } }
+                else if nx == 98 || nx == 66 { _pos = _pos + 1; loop { bc := cur_char_at(_src, _pos, _slen); if bc == 48 || bc == 49 || bc == 95 { _pos = _pos + 1; } else { break; } } }
+                bad_prefix_digit : ., mut = 0;
+                badc := cur_char_at(_src, _pos, _slen);
+                if is_ident_char(badc) != 0 { bad_prefix_digit = 1; }
+                if bad_prefix_digit != 0 { add_error("invalid digit in integer literal"); }
             }
             // Float: only consume the '.' when it does not start a '..'
             // range operator (otherwise `0..4` lexes as `0.` `.4` and the
@@ -386,7 +443,7 @@ fn tokenize(_src: string) {
             if has_dot != 0 || suffix == "f32" || suffix == "f64" {
                 add_tok_int_lex(T_DEX, str_to_scaled(num_str), str_intern(num_str), start_line, start_col);
             } else {
-                ival : ., mut = str_int(num_str);
+                ival : ., mut = str_int_literal(num_str);
                 if suffix == "u8" || suffix == "u16" || suffix == "u32" || suffix == "u64" { }
                 else if suffix == "i8" || suffix == "i16" || suffix == "i32" || suffix == "i64" { }
                 else if str_len(suffix) > 0 { }

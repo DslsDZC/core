@@ -199,7 +199,7 @@ class Parser:
             project = self.expect(TokenType.IDENT).lexeme
         file_id = self.expect(TokenType.IDENT).lexeme
         alias = None
-        if self.check(TokenType.AS):
+        if self.check(TokenType.AS) or self.check(TokenType.COLON):
             self.advance()
             alias = self.expect(TokenType.IDENT).lexeme
         self.expect(TokenType.SEMI)

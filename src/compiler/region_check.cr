@@ -59,6 +59,8 @@ fn rc_pts_has_escaped(pts: int, ni: int, nstart: int) -> int {
 fn rc_return_escape(ni: int, s1: int, nstart: int) {
     // Siebert: check if a returned pointer escapes its region
     if s1 < 0 { return; }
+    ptr_ti := irv_type(s1);
+    if ptr_ti < 0 || get_type_kind(ptr_ti) != TYP_PTR { return; }
     pts := r64(g_pts, s1 * 8);
     if pts == 0 { return; }
     cur_sg := subgraph_containing(ni);
@@ -93,6 +95,8 @@ fn rc_store_escape(ni: int, ptr_var: int, val_var: int) {
     // Siebert: check if storing a pointer creates a dangling reference
     // *ptr = val — val's target allocations must have lifetime >= ptr's
     if val_var < 0 { return; }
+    val_ti := irv_type(val_var);
+    if val_ti < 0 || get_type_kind(val_ti) != TYP_PTR { return; }
     val_pts := r64(g_pts, val_var * 8);
     if val_pts == 0 { return; }
     rc_pts_has_escaped(val_pts, ni, 0);  // simplified check
@@ -109,6 +113,12 @@ fn region_check_func(nstart: int, ncount: int) {
         if is_in_unsafe(ni) != 0 { ni = ni + 1; continue; }
 
         if op == IR_DEREF && d >= 0 && s1 >= 0 {
+            // Only pointer-typed values carry provenance. An integer loaded
+            // through a pointer is ordinary data, not another pointer.
+            ptr_ti := irv_type(s1);
+            if ptr_ti < 0 || get_type_kind(ptr_ti) != TYP_PTR {
+                ni = ni + 1; continue;
+            }
             pts := r64(g_pts, s1 * 8);
             if pts != 0 {
                 mask : int, mut = 1;

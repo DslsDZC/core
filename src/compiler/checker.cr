@@ -2086,6 +2086,18 @@ fn infer_expr(node: int) -> int {
             return get_type_data(arr_ti);  // slice[i] → element type
         }
         if arr_ti == TI_STR {
+            // A string is a byte sequence. Reject a statically known invalid
+            // index instead of allowing a silent read past its terminator.
+            if ast_kind(ast_a(node)) == EXPR_STRING && ast_kind(ast_b(node)) == EXPR_INT {
+                string_len := istr_len(ast_int_val(ast_a(node)));
+                string_idx := ast_int_val(ast_b(node));
+                if string_idx < 0 || string_idx >= string_len {
+                    check_error(EC_R_OOB,
+                        "string index out of bounds: " + int_str(string_idx) +
+                        " (length " + int_str(string_len) + ")",
+                        ast_line(node), ast_col(node));
+                }
+            }
             return TI_INT;  // string[i] → byte value
         }
         check_error(EC_TK_INDEX, "Cannot index non-array type", ast_line(node), ast_col(node));
