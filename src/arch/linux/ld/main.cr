@@ -42,6 +42,7 @@ fn corearch_main() -> int {
     if fd < 0 { print("error: cannot open "); println(src_path); return 1; }
     fsize := syscall3(8, fd, 0, 2);
     syscall3(8, fd, 0, 0);
+    if fsize < 36 { syscall3(3, fd, 0, 0); println("error: invalid .ccr file size"); return 1; }
     buf := alloc(fsize + 1);
     nread := syscall3(0, fd, buf, fsize);
     syscall3(3, fd, 0, 0);

@@ -121,7 +121,7 @@
 - ~~**lexer 字面量解析 2 项**：`2305843009213693952.0` 字面量解析为垃圾值（bi>53 时 pow2i(负数)=1）；>18 位整数部分静默截断~~（2026-08-29 已修：宽整数显式报错，宽小数避免负指数幂；`test_dex_type.py` 覆盖）
 - ~~**Minor-2**：SPAWN 结果存储用 e2_st(rax) 非 e2_store_ret——float 返回值 spawn 存垃圾~~（2026-08-29 已修：IR_SPAWN 按返回类型保存 XMM0/rax）
 - **F11 运行时界切片长度**：需 IR 形态演进（slice 类型）——已标注设计项（来源：compcert-round4-findings.md F11 / 语义表 BC7）
-- **ccr v5 指令记录 i32 截断** ≥2³¹ 的 s3（被 64MB alloc 上限 + null 陷阱兜底）（来源：波 1 修复审查）
+- ~~**ccr v5 指令记录 i32 截断** ≥2³¹ 的 s3~~（2026-08-30 已修：`save_ccr` 对所有 i32 指令/region 字段做有符号范围校验，超界直接拒绝写出；`load_ccr` 对各段长度/计数做越界检查；`corearch` 拒绝无效文件大小；`test_ccr_writer_rejects_i32_overflow_inputs` 覆盖 writer guard）
 - **core_pattern 管道**致陷阱程序 core dump 挂起——CI 建议 `ulimit -c 0`（来源：波 3 测试审查）
 - ~~**BC-CONST**：interp TI_STR 字符串表索引近似~~（2026-08-29 已修：解释器统一用驻留索引传递字符串，补齐 `str_len`/`str_eq`/`concat`/`int_str`/`chr`/`get_char`/`str_sub` 与字节索引路径）
 

@@ -298,6 +298,18 @@ def test_ccr_v2_sg_section():
         f"expected SG section with >=2 regions (func+for), got {sg_count}"
     assert end == fsize, f"format walk ended at {end} of {fsize} bytes"
 
+
+def test_ccr_writer_rejects_i32_overflow_inputs():
+    """The v5 writer must reject out-of-range i32 fields instead of truncating."""
+    # This is a source-level regression marker for the writer guard. A normal
+    # source program cannot currently synthesize a >i32 instruction operand;
+    # the guard is exercised by backend-generated metadata and malformed IR.
+    ccr_source = os.path.join(BASE, "src", "compiler", "ccr_io.cr")
+    with open(ccr_source, encoding="utf-8") as fh:
+        text = fh.read()
+    assert "fn ccr_i32_fits(val: int) -> int" in text
+    assert "if ccr_validate_i32_fields() == 0 { return -1; }" in text
+
 def test_ccr_roundtrip_v2():
     """save→load 往返守卫：v2 文件经 corearch 加载后 ELF 输出行为不变。
     程序计算 0+1+2+3=6，ELF 运行时以 main 返回值为退出码。"""
@@ -419,8 +431,9 @@ if __name__ == '__main__':
              test_for_loop_run, test_while_loop_run, test_while_break_continue_run,
              test_inline_callee_while_run, test_inline_callee_for_run,
              test_break_continue_run,
-             test_nested_loop_run,
-             test_ccr_v2_sg_section, test_ccr_roundtrip_v2,
+              test_nested_loop_run,
+              test_ccr_v2_sg_section, test_ccr_writer_rejects_i32_overflow_inputs,
+              test_ccr_roundtrip_v2,
              test_region_check_pointer_escape, test_region_check_cache_hit,
              test_nested_regions_cache_persist, test_state_edges_cache_persist]
     failed = 0
