@@ -123,7 +123,7 @@
 - **F11 运行时界切片长度**：需 IR 形态演进（slice 类型）——已标注设计项（来源：compcert-round4-findings.md F11 / 语义表 BC7）
 - **ccr v5 指令记录 i32 截断** ≥2³¹ 的 s3（被 64MB alloc 上限 + null 陷阱兜底）（来源：波 1 修复审查）
 - **core_pattern 管道**致陷阱程序 core dump 挂起——CI 建议 `ulimit -c 0`（来源：波 3 测试审查）
-- **BC-CONST**：interp TI_STR 字符串表索引近似——未核实，后续轮次（来源：compcert-round4-findings.md §2 注）
+- ~~**BC-CONST**：interp TI_STR 字符串表索引近似~~（2026-08-29 已修：解释器统一用驻留索引传递字符串，补齐 `str_len`/`str_eq`/`concat`/`int_str`/`chr`/`get_char`/`str_sub` 与字节索引路径）
 
 ## 架构规划
 

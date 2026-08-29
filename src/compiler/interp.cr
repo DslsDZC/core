@@ -46,6 +46,24 @@ fn ir_interp_deref_write(ptr: int, val: int) {
     else { w64(ptr, 0, val); }
 }
 
+// Interpreter string values are intern-table indices (IR_CONST stores the
+// index, while native ELF stores a pointer). Keep string builtins in that same
+// representation instead of passing the index to pointer-based helpers.
+fn ir_interp_str_concat(a: int, b: int) -> int {
+    out : string, mut = "";
+    out = out + istr_get(a);
+    out = out + istr_get(b);
+    return str_intern(out);
+}
+
+fn ir_interp_str_char(a: int, i: int) -> int {
+    return str_intern(get_char(istr_get(a), i));
+}
+
+fn ir_interp_str_sub(a: int, start: int, len: int) -> int {
+    return str_intern(str_sub(istr_get(a), start, len));
+}
+
 fn ir_interpret() -> int {
     // Find main function in the dataflow graph
     main_idx : ., mut = -1;
@@ -191,9 +209,9 @@ fn ir_interpret() -> int {
         }
         if op == 14 {  // IR_STORE_INDEX: s1=arr_var, s2=val_var, s3=literal_idx
             if s1 >= 0 && s2 >= 0 {
-                arr_ptr := r64(g_ir_vals, s1 * 8);
-                if irv_type(s1) == TI_STR { store8(arr_ptr, s3, r64(g_ir_vals, s2 * 8)); }
-                else { w64(arr_ptr, s3 * 8, r64(g_ir_vals, s2 * 8)); }
+                arr_value := r64(g_ir_vals, s1 * 8);
+                if irv_type(s1) == TI_STR { store8(istr_get(arr_value), s3, r64(g_ir_vals, s2 * 8)); }
+                else { w64(arr_value, s3 * 8, r64(g_ir_vals, s2 * 8)); }
             }
         }
         if op == 15 {  // IR_LOAD_INDEX_VAR: s1=arr_var, s2=idx_var
@@ -206,10 +224,10 @@ fn ir_interpret() -> int {
         }
         if op == 16 {  // IR_STORE_INDEX_VAR: d=val_var, s1=arr_var, s2=idx_var
             if d >= 0 && s1 >= 0 && s2 >= 0 {
-                arr_ptr := r64(g_ir_vals, s1 * 8);
+                arr_value := r64(g_ir_vals, s1 * 8);
                 idx := r64(g_ir_vals, s2 * 8);
-                if irv_type(s1) == TI_STR { store8(arr_ptr, idx, r64(g_ir_vals, d * 8)); }
-                else { w64(arr_ptr, idx * 8, r64(g_ir_vals, d * 8)); }
+                if irv_type(s1) == TI_STR { store8(istr_get(arr_value), idx, r64(g_ir_vals, d * 8)); }
+                else { w64(arr_value, idx * 8, r64(g_ir_vals, d * 8)); }
             }
         }
         // IR_MAKE_ENUM (17)：d := alloc(8·(1+s2))；M[d+0] := s1（tag = 变体名索引）——
@@ -392,6 +410,31 @@ fn ir_interpret() -> int {
             if str_eq(fn_name, "str_len") != 0 {
                 if d >= 0 && s2 >= 1 { w64(g_ir_vals, d * 8, istr_len(r64(g_ir_vals, s1 * 8))); }
             }
+            if str_eq(fn_name, "str_eq") != 0 {
+                if d >= 0 && s2 >= 2 {
+                    left_s := istr_get(r64(g_ir_vals, s1 * 8));
+                    right_s := istr_get(r64(g_ir_vals, (s1 + 1) * 8));
+                    w64(g_ir_vals, d * 8, str_eq(left_s, right_s));
+                }
+            }
+            if str_eq(fn_name, "concat") != 0 {
+                if d >= 0 && s2 >= 2 {
+                    w64(g_ir_vals, d * 8, ir_interp_str_concat(
+                        r64(g_ir_vals, s1 * 8), r64(g_ir_vals, (s1 + 1) * 8)));
+                }
+            }
+            if str_eq(fn_name, "int_str") != 0 {
+                if d >= 0 && s2 >= 1 { w64(g_ir_vals, d * 8, str_intern(int_str(r64(g_ir_vals, s1 * 8)))); }
+            }
+            if str_eq(fn_name, "chr") != 0 {
+                if d >= 0 && s2 >= 1 { w64(g_ir_vals, d * 8, str_intern(chr(r64(g_ir_vals, s1 * 8)))); }
+            }
+            if str_eq(fn_name, "get_char") != 0 {
+                if d >= 0 && s2 >= 2 { w64(g_ir_vals, d * 8, ir_interp_str_char(r64(g_ir_vals, s1 * 8), r64(g_ir_vals, (s1 + 1) * 8))); }
+            }
+            if str_eq(fn_name, "str_sub") != 0 {
+                if d >= 0 && s2 >= 3 { w64(g_ir_vals, d * 8, ir_interp_str_sub(r64(g_ir_vals, s1 * 8), r64(g_ir_vals, (s1 + 1) * 8), r64(g_ir_vals, (s1 + 2) * 8))); }
+            }
             if str_eq(fn_name, "load_str_ptr") != 0 {
                 if d >= 0 && s2 >= 2 {
                     b := r64(g_ir_vals, s1 * 8); p := r64(g_ir_vals, s1 + 1 * 8);
@@ -415,6 +458,10 @@ fn ir_interpret() -> int {
                 }
                 if d >= 0 { w64(g_ir_vals, d * 8, 0); }
             }
+            if str_eq(fn_name, "str_len") != 0 || str_eq(fn_name, "str_eq") != 0 ||
+               str_eq(fn_name, "concat") != 0 || str_eq(fn_name, "int_str") != 0 ||
+               str_eq(fn_name, "chr") != 0 || str_eq(fn_name, "get_char") != 0 ||
+               str_eq(fn_name, "str_sub") != 0 { ip = ip + 1; continue; }
             // Regular function call (single level — no recursive/nested call support)
             if d >= 0 {
                 cfi : ., mut = 0;
