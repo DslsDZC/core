@@ -172,6 +172,18 @@ def test_alloc_buffer_cast_remains_tracked():
     )
 
 
+def test_deref_loaded_int_is_not_pointer_escape():
+    """A dereference result with integer type must not trigger pointer escape checks."""
+    assert_accepted(
+        "fn main() -> int {\n"
+        "    value := 42;\n"
+        "    pointer := &value;\n"
+        "    loaded := *pointer;\n"
+        "    return loaded;\n"
+        "}\n"
+    )
+
+
 def test_external_pointer_is_accepted_inside_unsafe():
     assert_accepted(
         "fn main() -> int {\n"
@@ -265,6 +277,7 @@ if __name__ == "__main__":
         test_indirect_external_pointer_requires_unsafe,
         test_external_pointer_arithmetic_preserves_address_space,
         test_alloc_buffer_cast_remains_tracked,
+        test_deref_loaded_int_is_not_pointer_escape,
         test_external_pointer_is_accepted_inside_unsafe,
         test_dynamic_in_bounds_load_runs,
         test_dynamic_in_bounds_store_runs,

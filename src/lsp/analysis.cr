@@ -947,7 +947,7 @@ fn analysis_document_symbol() -> string {
 //                 T_IMPORT T_AS T_GO T_AWAIT T_FLOW T_YIELD T_UNSAFE
 //                 T_INTERFACE T_AUTO T_FILEID T_NONE T_SOME T_EXTERN
 //   type     (1): T_UNIT（unit 关键字令牌——parser 产 TY_UNIT）
-//                 T_INT_I8..T_FLOAT_F64 T_INT_TYPE..T_AUTO_TYPE
+//                 T_INT_TYPE..T_AUTO_TYPE
 //                 T_REF T_DYN；以及 T_IDENT 且（内置类型名 int/float/
 //                 bool/string/char/never/dyn——parser.cr parse_type
 //                 T_IDENT 分支字面量清单，唯一真源——或 find_struct_by_
@@ -978,8 +978,8 @@ fn analysis_kind_type(k: int) -> int {
        k == T_FLOW || k == T_YIELD || k == T_UNSAFE || k == T_INTERFACE ||
        k == T_AUTO || k == T_FILEID || k == T_NONE || k == T_SOME ||
        k == T_EXTERN { return 0; }
-    if k == T_UNIT || (k >= T_INT_I8 && k <= T_FLOAT_F64) ||
-       (k >= T_INT_TYPE && k <= T_AUTO_TYPE) || k == T_REF || k == T_DYN {
+    if k == T_UNIT || (k >= T_INT_TYPE && k <= T_AUTO_TYPE) ||
+        k == T_REF || k == T_DYN {
         return 1;
     }
     if k == T_STRING || k == T_CHAR { return 5; }
@@ -1014,14 +1014,18 @@ fn analysis_token_type(ti: int) -> int {
 fn analysis_tok_span(ti: int, st: int, sl: int) -> int {
     k := r64(g_tokens, ti * ESZ_TOKEN + OFF_TK_KIND);
     // 字符串/字符：开引号 → 未转义闭合引号（镜像 lexer：\x 转义 4 字节、
-    // 插值 ${...} 跳至 '}' 并多吃一字节、换行终止未闭合串）
+    // 插值 ${...} 跳至 '}' 并多吃一字节、换行终止未闭合串）。未闭合
+    // 字符串末尾的反斜杠只能覆盖到源末，不能把 span 推出源缓冲区。
     if k == T_STRING || k == T_CHAR {
         q := analysis_source_byte(st, sl);
         p : ., mut = st + 1;
         loop {
             if p >= sl { break; }
             c := analysis_source_byte(p, sl);
-            if c == 92 { p = p + 2; }
+            if c == 92 {
+                if p + 1 >= sl { p = sl; break; }
+                p = p + 2;
+            }
             else if c == q { p = p + 1; break; }
             else if c == 10 { break; }
             else if c == 36 && analysis_source_byte(p + 1, sl) == 123 {

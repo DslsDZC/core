@@ -231,7 +231,7 @@ fn _jstr_byte(b: int) {
     g_json_strs_len = g_json_strs_len + 1;
 }
 
-// 码点 → UTF-8 编码写入池（\uXXXX 只解析为码点，代理对不做合并——TODO）
+// 码点 → UTF-8 编码写入池
 fn _jstr_cp(cp: int) {
     if cp < 128 {
         _jstr_byte(cp);
