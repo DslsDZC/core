@@ -66,6 +66,20 @@ fn main() -> int {
 else:
     failed += 1
 
+# Generic function with a recursive call and generic arithmetic/comparison.
+# This exercises PathType handling in the type checker; scalar-only code must
+# not assume every type has BaseType.name.
+if run_test('Generic Recursive Function', '''
+fn fact[T](n: T) -> T {
+    if n <= 1 { return 1; }
+    return n * fact(n - 1);
+}
+fn main() -> int { return fact(5); }
+''', 120):
+    passed += 1
+else:
+    failed += 1
+
 print(f"\n{passed}/{passed + failed} passed", end="")
 if failed > 0:
     print(f", {failed} failed")

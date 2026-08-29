@@ -85,6 +85,15 @@ class TypeChecker:
         for borrower in self.borrow_scope_stack.pop():
             self._release_holder_borrows(borrower)
 
+    def _type_name(self, typ):
+        """Return a scalar type name without assuming every Type is BaseType."""
+        return typ.name if isinstance(typ, BaseType) else None
+
+    def _is_generic_type(self, typ):
+        """Whether typ is a generic parameter in the active function scope."""
+        return (isinstance(typ, PathType) and len(typ.path) == 1 and
+                any(typ.path[0] in scope for scope in self.generic_scopes))
+
     # --------------------------------------------------------------
     # Built-in types
     # --------------------------------------------------------------
@@ -222,27 +231,36 @@ class TypeChecker:
                 return left_t
             left_t = self._infer_expr(expr.left)
             right_t = self._infer_expr(expr.right)
+            left_name = self._type_name(left_t)
+            right_name = self._type_name(right_t)
             if expr.op in ('+','-','*','/','%'):
-                if left_t.name in ('int','dex') and right_t.name in ('int','dex'):
-                    if left_t.name == 'dex' or right_t.name == 'dex':
+                if left_name in ('int','dex') and right_name in ('int','dex'):
+                    if left_name == 'dex' or right_name == 'dex':
                         return BaseType('dex')
                     return BaseType('int')
-                elif expr.op == '+' and left_t.name == 'string' and right_t.name == 'string':
+                elif expr.op == '+' and left_name == 'string' and right_name == 'string':
                     return BaseType('string')
+                elif self._is_generic_type(left_t) or self._is_generic_type(right_t):
+                    # Generic parameters are dynamically represented by the
+                    # bootstrap interpreter. Preserve the parameter type here
+                    # instead of dereferencing .name on PathType.
+                    return left_t if self._is_generic_type(left_t) else right_t
                 else:
-                    self.errors.append(f"Arithmetic type error between {left_t.name} and {right_t.name}")
+                    self.errors.append(f"Arithmetic type error between {left_t} and {right_t}")
                     return BaseType('never')
             elif expr.op in ('==','!=','<','>','<=','>='):
-                if left_t.name not in ('int','dex','string') or right_t.name not in ('int','dex','string'):
+                if ((left_name not in ('int','dex','string') and not self._is_generic_type(left_t)) or
+                    (right_name not in ('int','dex','string') and not self._is_generic_type(right_t))):
                     self.errors.append(f"Comparison not allowed")
                 return BaseType('bool')
             elif expr.op in ('|', '&'):
-                if left_t.name == 'int' and right_t.name == 'int':
+                if ((left_name == 'int' and right_name == 'int') or
+                    (self._is_generic_type(left_t) and self._is_generic_type(right_t))):
                     return BaseType('int')
                 self.errors.append(f"Bitwise ops require int")
                 return BaseType('never')
             elif expr.op in ('&&','||'):
-                if left_t.name == 'bool' and right_t.name == 'bool':
+                if left_name == 'bool' and right_name == 'bool':
                     return BaseType('bool')
                 self.errors.append("Logical ops require bool")
                 return BaseType('never')
@@ -270,7 +288,7 @@ class TypeChecker:
                 self.errors.append("Cannot dereference non-reference type")
                 return BaseType('never')
             if expr.op == '!':
-                if operand_type.name != 'bool':
+                if self._type_name(operand_type) != 'bool':
                     self.errors.append("Unary ! requires bool")
                     return BaseType('never')
                 return BaseType('bool')
@@ -387,7 +405,7 @@ class TypeChecker:
             return last_type
         elif isinstance(expr, If):
             cond_t = self._infer_expr(expr.cond)
-            if cond_t.name != 'bool':
+            if self._type_name(cond_t) != 'bool':
                 self.errors.append("If condition must be bool")
             self.symtab.push_scope()
             self._push_borrow_scope()

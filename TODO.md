@@ -106,7 +106,7 @@
 ### 2. 解释器局限
 - **for 循环**: label/branch 与 dataflow 顺序执行不兼容
 - **递归/跨函数调用**: inline 执行不支持 IR_CALL
-- **泛型函数**: 类型检查通过但解释器返回 255
+- **泛型函数**: bootstrap 解释器已支持（并补充递归/泛型算术回归）；self-hosted 解释器的泛型实例化运行仍待 native 工具链验证
 
 ### 3. 标准库补全
 - math.cr / collections.cr 均为 stub
