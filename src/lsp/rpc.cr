@@ -28,15 +28,30 @@ g_rpc_shutdown : int, mut;       // 是否已收到 shutdown
 g_rpc_exit_code : int, mut;      // 帧循环结束时的进程退出码
 g_rpc_hdr_buf : string, mut;     // 头缓冲（惰性 alloc 一次）
 g_rpc_hdr_ok : int, mut;
+g_rpc_in_buf : string, mut;      // stdin 分块缓冲，避免 read(1) 系统调用风暴
+g_rpc_in_pos : int, mut;
+g_rpc_in_len : int, mut;
+g_rpc_in_ok : int, mut;
 
 // ── 帧读 ──
 
-// 从 stdin（fd 0）逐字节读；EOF/错误返回 -1
+// 从 stdin（fd 0）取一个字节；底层按 4KB 分块读取，EOF/错误返回 -1。
 fn rpc_read_byte() -> int {
-    b := alloc(1);
-    n := syscall3(0, 0, b, 1);
-    if n <= 0 { return -1; }
-    return load8(b, 0);
+    if g_rpc_in_ok == 0 {
+        g_rpc_in_buf = alloc(4096);
+        g_rpc_in_pos = 0;
+        g_rpc_in_len = 0;
+        g_rpc_in_ok = 1;
+    }
+    if g_rpc_in_pos >= g_rpc_in_len {
+        n := syscall3(0, 0, g_rpc_in_buf, 4096);
+        if n <= 0 { return -1; }
+        g_rpc_in_pos = 0;
+        g_rpc_in_len = n;
+    }
+    c := load8(g_rpc_in_buf, g_rpc_in_pos);
+    g_rpc_in_pos = g_rpc_in_pos + 1;
+    return c;
 }
 
 // 读头直到 "\r\n\r\n"，解析 Content-Length；EOF/坏头返回 -1

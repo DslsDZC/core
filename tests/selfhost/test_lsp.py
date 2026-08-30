@@ -355,6 +355,33 @@ def test_stdout_pollution_guard():
     print(f"  POLLUTION CHECK: {len(frames)} frames, 0 dirty bytes, "
           f"{len(data)} bytes")
 
+
+def test_large_frame_body():
+    """A body larger than the input buffer must still be framed exactly."""
+    proc = subprocess.Popen([BIN], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    initialize = {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                  "params": {"capabilities": {}}}
+    body = json.dumps(initialize).encode()
+    proc.stdin.write(f"Content-Length: {len(body)}\r\n\r\n".encode() + body)
+    proc.stdin.flush()
+    response = read_frame(proc)
+    assert response["id"] == 1, response
+
+    # Keep the request valid while forcing several 4KB stdin refills.
+    uri = "file:///tmp/large_frame.cr"
+    text = "fn main() -> int { return 0; }\n" + ("// padding\n" * 600)
+    request = {"jsonrpc": "2.0", "method": "textDocument/didOpen",
+               "params": {"textDocument": {"uri": uri, "version": 1,
+                                              "text": text}}}
+    body = json.dumps(request).encode()
+    assert len(body) > 4096, len(body)
+    proc.stdin.write(f"Content-Length: {len(body)}\r\n\r\n".encode() + body)
+    proc.stdin.flush()
+    diagnostics = read_frame(proc)
+    assert diagnostics["method"] == "textDocument/publishDiagnostics", diagnostics
+    assert diagnostics["params"]["diagnostics"] == [], diagnostics
+    shutdown_and_wait(proc)
+
 # ── 统一驱动（Task 7）───────────────────────────────────────────────────────
 # 按序执行全部测试组（每组独立 spawn，隔离全局状态）；失败即非零退出。
 
@@ -367,6 +394,7 @@ TESTS = [
     test_semantic_tokens,
     test_semantic_tokens_multiline,
     test_stdout_pollution_guard,
+    test_large_frame_body,
 ]
 
 def main() -> int:
