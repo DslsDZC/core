@@ -257,9 +257,9 @@
 
 ### 数值类型（dex/apx）迁移遗留 TODO（2026-08-16 终审分流）
 
-- **corearch `--link <so>` 静态路径崩溃**（so_parse_text SIGILL/SIGSEGV，ld.cr:400 附近）：阻塞 extern dex 运行时 FFI 实测（M2 的 IR 层修复已合入并有 cir 断言，运行时验证待此修复）；仓库无 .so 产物、--link 路径零测试覆盖；复现记录 + 备好的 C shim 在 /tmp/dex_ffi_shim.c。**执行注意**：shim 用精确位判等，字面量快路径（str_to_f64_bits 截断 ~2ulp）与计算路径（I2F/1e6）有 1-ulp 差（3.14 → 字面量 4614253070214989086 vs canonical 4614253070214989087）——判等须用 lexer 一致常量或容差
+- ~~**corearch `--link <so>` 静态路径崩溃**（so_parse_text SIGILL/SIGSEGV，ld.cr:400 附近）~~（2026-08-30 已修：静态链接 relocation 使用 user-code 相对偏移，避免把 `.so` 嵌入偏移重复叠加；`.text` 优先按 section 名精确选择；修复 Intel 语法下 `call r16` 的保留寄存器名冲突；静态输出补 writable BSS `PT_LOAD`；`tests/selfhost/test_dex_arith.py::test_extern_dex_static_link` + `tests/fixtures/dex_ffi_shim.c` 覆盖实际 `.so` 构建、`corearch --link` 和 ELF 运行）
 - ~~sizes.cr: IR_APPROX 无显式条目~~（2026-08-29 已补显式 0 字节条目，与其他注解指令对齐）
-- 泛型+dex 返回类型：pre-existing（实例化调用点按 int 处理返回类型，与 float 时代逐位一致；bootstrap 侧正确）
-- str_to_f64_bits ~2ulp 截断（保留站点文档化限制）：binary64 判别子用 1/3（0.1b+0.2b==0.3 仅 −1ulp 组合恰好落位模式，不可作断言）
+- ~~泛型+dex 返回类型~~（2026-08-30 已修复/验证：局部 dex 槽位按 `apx` 标签正确区分 binary64 与缩放整数；普通 Core 函数边界统一缩放形式；bootstrap 泛型与 native dex/APX 回归通过）
+- str_to_f64_bits ~2ulp 截断（保留站点文档化限制）：binary64 判别子用 1/3（0.1b+0.2b==0.3 仅 −1ulp 组合恰好落位模式，不可作断言）；native APX/FFI/格式化回归已在 WSL 通过
 - ~~INT_LIT 缺 hex/octal/binary 前缀分支（0x1F 等）；`1_000` 下划线产生 T_INT(-1) 静默值 0~~（2026-08-29 已修：bootstrap 与自举 lexer 支持 `0x`/`0o`/`0b` 及下划线，并拒绝非法数字）
 - interp 裸 opcode 数字风格（与既有 op == 26 风格一致，非缺陷）；`_f32/_f64` 宽度透传死路径（EBNF/inventory 争议点 7 已标注，apx 位宽标注需新发射路径）

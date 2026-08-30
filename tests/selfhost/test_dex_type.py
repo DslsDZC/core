@@ -131,11 +131,11 @@ def test_static_string_bounds():
     src = 'fn main() -> int { return "abc"[3]; }\n'
     r = run_corec(["check"], src)
     out = r.stdout + r.stderr
-    if r.returncode != 1 or "R002" not in out:
+    if r.returncode != 1 or "R02" not in out:
         print(f"[FAIL] static string bounds: exit={r.returncode}")
         print(out)
         return False
-    print("[PASS] literal string index at length is rejected with R002")
+    print("[PASS] literal string index at length is rejected with R02")
     return True
 
 

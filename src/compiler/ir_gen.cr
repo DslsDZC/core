@@ -1815,6 +1815,16 @@ emit(IR_STORE, -1, lv, val_var, 0, 0);
             is_dyn_var = 1;
         }
         var := new_ir_var(istr_get(var_ni), TI_UNIT);
+        declared_ti : ., mut = TI_UNIT;
+        if type_node >= 0 { declared_ti = res_type_node(type_node); }
+        // `dex` is the source-level type; its IR slot has two forms. Only an
+        // explicitly tagged `apx` declaration uses binary64 bits.
+        target_ti : ., mut = declared_ti;
+        if declared_ti == TI_DEX {
+            if is_apx != 0 { target_ti = TI_DEX; }
+            else { target_ti = TI_DEX_S; }
+            irv_set_type(var, target_ti);
+        }
         is_arr : ., mut = 0;
         if type_node >= 0 && val_node < 0 {
             if ast_kind(type_node) == 19 {
@@ -1834,6 +1844,16 @@ emit(IR_STORE, -1, lv, val_var, 0, 0);
         if val_node >= 0 {
             val_var := gen_expr(val_node);
             val_var = force_if_thunk(val_var);
+            // An `apx` dex local stores binary64 bits, unlike the default
+            // scaled-integer dex form. The annotation alone is not enough:
+            // switch the slot type and convert the initializer before later
+            // binary operations inspect its type.
+            if declared_ti == TI_DEX {
+                val_var = dex_store_adjust(var, val_var, val_node);
+            } else if declared_ti == TI_UNIT {
+                target_ti = irv_type(val_var);
+                irv_set_type(var, target_ti);
+            }
             if is_dyn_var != 0 {
                 // Dyn variable: pack value with its type tag
                 dyn_var := new_ir_var("_dyn", TI_DYN);
@@ -1846,7 +1866,9 @@ emit(IR_STORE, -1, lv, val_var, 0, 0);
             }
              // Preserve the initializer type so later operations can select
              // type-specific lowering (notably string + -> concat()).
-             irv_set_type(var, irv_type(val_var));
+              if declared_ti != TI_DEX {
+                  irv_set_type(var, irv_type(val_var));
+              }
             // F11：切片长度沿 LET 初始化传播（s := arr[0..2] → s 带长度 2）
             if slice_len_get(var) >= 0 || slice_len_get(val_var) >= 0 {
                 slice_len_set(var, slice_len_get(val_var));

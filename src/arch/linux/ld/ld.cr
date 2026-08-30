@@ -107,8 +107,8 @@ fn cby(k: int) -> int {
 
 fn so_find(buf: string, name: string) -> int {
     if str_len(buf) < 64 { return -1; }
-    if r16(buf, 16) != 3 { return -1; }
-    e_shoff := r64(buf, 40); e_shnum := r16(buf, 60);
+    if read_u16(buf, 16) != 3 { return -1; }
+    e_shoff := r64(buf, 40); e_shnum := read_u16(buf, 60);
     do : ., mut = 0; ds : ., mut = 0; so : ., mut = 0; ss : ., mut = 0;
     i : ., mut = 0; loop { if i >= e_shnum { break; }
         t := r32(buf, e_shoff+i*64+4); a := r64(buf, e_shoff+i*64+16);
@@ -120,7 +120,7 @@ fn so_find(buf: string, name: string) -> int {
     sc := ds / 24;
     i = 0; loop { if i >= sc { break; }
         sn := r32(buf, do+i*24); sv := r64(buf, do+i*24+8);
-        si := bu8(buf, do+i*24+4); sx := r16(buf, do+i*24+6);
+        si := bu8(buf, do+i*24+4); sx := read_u16(buf, do+i*24+6);
         if si/16 == 1 && si%16 == 2 && sx != 0 {
             nm : ., mut = ""; k : ., mut = sn;
             loop { if k >= ss { break; }
@@ -400,16 +400,44 @@ g_so_addr : int, mut; // .so .text base address
 fn so_parse_text(buf: string) -> int {
     // Find the executable PROGBITS section (.text) in the .so
     if str_len(buf) < 64 { return -1; }
-    e_shoff := r64(buf, 40); e_shnum := r16(buf, 60);
+    e_shoff := r64(buf, 40); e_shnum := read_u16(buf, 60);
+    // A normal linker may place .init/.plt before .text. The old first-match
+    // scan copied one of those stubs and then resolved symbols against the
+    // wrong address range. Prefer the exact .text name from shstrtab.
+    e_shstrndx := read_u16(buf, 62);
+    shstr_off : ., mut = 0;
+    shstr_sz : ., mut = 0;
+    if e_shstrndx < e_shnum {
+        sh := e_shoff + e_shstrndx * 64;
+        shstr_off = r64(buf, sh + 24);
+        shstr_sz = r64(buf, sh + 32);
+    }
     i : ., mut = 0;
+    fallback_off : ., mut = -1;
+    fallback_sz : ., mut = 0;
+    fallback_addr : ., mut = 0;
     loop { if i >= e_shnum { break; }
         t := r32(buf, e_shoff+i*64+4); fl := r64(buf, e_shoff+i*64+8);
         a := r64(buf, e_shoff+i*64+16); o := r64(buf, e_shoff+i*64+24); s := r64(buf, e_shoff+i*64+32);
         // SHT_PROGBITS(1) + SHF_ALLOC|SHF_EXECINSTR(6) = .text
         if t == 1 && fl == 6 && s > 0 {
-            g_so_off = o; g_so_sz = s; g_so_addr = a;
-            return 0; }
+            if fallback_off < 0 { fallback_off = o; fallback_sz = s; fallback_addr = a; }
+            if shstr_off > 0 && shstr_sz > 0 {
+                nm : ., mut = ""; p := e_shoff + i * 64;
+                no := r32(buf, p);
+                if no < shstr_sz {
+                    k : ., mut = no;
+                    loop { if k >= shstr_sz { break; }
+                        c := bu8(buf, shstr_off + k); if c == 0 { break; }
+                        one := get_char(" ", 0); store8(one, 0, c); nm = nm + one; k = k + 1; }
+                    if str_eq(nm, ".text") != 0 {
+                        g_so_off = o; g_so_sz = s; g_so_addr = a; return 0;
+                    }
+                }
+            }
+        }
         i = i + 1; }
+    if fallback_off >= 0 { g_so_off = fallback_off; g_so_sz = fallback_sz; g_so_addr = fallback_addr; return 0; }
     return -1; }
 
 fn ctx_emit_static(buf: string, path: string) -> int {
@@ -453,9 +481,20 @@ fn ctx_emit_static(buf: string, path: string) -> int {
             sym_addr := so_find(so_buf, fn_name);
             if sym_addr >= g_so_addr && sym_addr < g_so_addr + g_so_sz {
                 func_off := sym_addr - g_so_addr;
-                call_pos := user_out + abs_pos;
-                target_va := 0x400000 + so_out + func_off;
-                rel := target_va - (call_pos + 5);
+                 // Relocations are recorded against the full ELF buffer
+                 // (the user code starts at offset 176), but ctx_emit_static
+                 // copies that code to user_out after the embedded .so text.
+                 // Convert the absolute emission position to a user-code
+                 // relative offset before applying the new placement.
+                 code_off := abs_pos - 176;
+                 if code_off < 0 || code_off >= g_user_size { unresolved = unresolved + 1; rpi = rpi + 1; continue; }
+                 // IR_CALL_EXTERN records the call opcode, while the regular
+                 // unknown-call path records its displacement byte. Normalize
+                 // both forms to the opcode before writing rel32.
+                 call_pos : ., mut = user_out + code_off;
+                 if bu8(g_user_code, code_off) != 232 { call_pos = call_pos - 1; }
+                 target_va := 0x400000 + so_out + func_off;
+                 rel := target_va - (0x400000 + call_pos + 5);
                 w32(buf, call_pos + 1, rel);
             } else {
                 println("error: 无法解析外部符号（静态链接）：" + fn_name);
@@ -471,11 +510,17 @@ fn ctx_emit_static(buf: string, path: string) -> int {
     w16(buf,16,2);w16(buf,18,62);w32(buf,20,1);
     w64(buf,24,0x400000 + user_out);  // entry = user code's _start
     w64(buf,32,64);w64(buf,40,0);
-    w16(buf,52,64);w16(buf,54,56);w16(buf,56,1);w16(buf,58,64);
+    w16(buf,52,64);w16(buf,54,56);w16(buf,56,2);w16(buf,58,64);
     w32(buf,64,1);w32(buf,68,5);w64(buf,72,0);
     w64(buf,80,0x400000);w64(buf,88,0x400000);
     w64(buf,96,total);w64(buf,104,total);
     w64(buf,112,4096);
+    // The embedded user code still contains RIP-relative references to the
+    // original frontend BSS page, shifted by the copied .so text. Map a
+    // writable anonymous load at the next page so allocator/global slots do
+    // not fault when the linked executable starts.
+    bss_page := 0x400000 + ((total + 4095) / 4096) * 4096 + 4096;
+    write_phdr(buf, 1, 1, 6, 0, bss_page, bss_page, 0, 1073741824, 4096);
 
     fd := syscall3(2, path, 577, 493);  // 0755：ELF 输出必须可执行（Task 6 修复 0644 怪癖）
     if fd < 0 { return -1; }

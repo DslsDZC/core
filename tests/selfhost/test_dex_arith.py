@@ -11,7 +11,7 @@
 - ELF 端到端：精确断言全过（dex_test.cr 思路的主函数内联版）
 - apx 分流：同程序带 apx → binary64 行为（1.0b/3.0b != 0.3333333）；不带 apx → 精确（为真）
 - apx 打印（Task 6 定稿）：6 位定点舍入（半进）——0.1 → "0.1"、1/3 → "0.333333"、1.0000006 → "1.000001"
-- `corec run` 解释器：精确运算结果正确；apx dex 显式报错（无 binary64 语义，Task 6）
+- `corec run` 解释器：精确运算结果正确；apx dex 需要 binary64 语义时显式报错
 - cir dump：`const dex = 3140000`（精确字面量 = 缩放整数，非二进制位模式）
 
 文档化限制（Task 6 发现）：经典 binary64 演示「0.1b+0.2b != 0.3」在本实现不成立——
@@ -292,8 +292,8 @@ def test_apx_print_rounding():
 
 
 def test_interp_rejects_apx_dex():
-    # Task 6：解释器无 binary64 语义——apx dex 运算（必经 I2F/F2I 转换）显式报错，
-    # 替代静默跳过/脏值（SIGFPE 防护）。exit != 0 且消息含 "binary64"。
+    # The interpreter has no binary64 conversion instructions. Reject the
+    # path explicitly instead of returning a stale or silently truncated value.
     src = "fn main() -> int { x : dex, apx = 0.1; return @raw_int(x); }"
     r = subprocess.run(
         [str(COREC), "run", src],
@@ -317,8 +317,8 @@ def test_extern_dex_arg_cir():
     字面量 3.14（缩放整数 3140000）被当 bits 直传。修复：extern 分支 TI_DEX_S 实参
     → dex_scaled_to_bits（字面量重发射位模式常量）。断言（cir dump）：
     main 内 extern 调用点前必须出现"缩放常量 + 位模式常量"序列（bits != 3140000）。
-    注：运行时 C 侧实测被既有 corearch --link 静态路径崩溃阻塞（终审 Fix F 记录），
-    故以 IR 层断言为准——转换是否在调用点发生正是本次修复的全部内容。
+    运行时路径由 `test_extern_dex_static_link` 覆盖；本测试同时保留 IR
+    断言，确认转换发生在调用点。
     """
     src = (
         "extern fn dex_ffi_bits_check(d: dex) -> int;\n"
@@ -350,6 +350,57 @@ def test_extern_dex_arg_cir():
     return True
 
 
+def test_extern_dex_static_link():
+    """Static --link must relocate an extern call after embedding .so text."""
+    src = (
+        "extern fn dex_ffi_bits_check(d: dex) -> int;\n"
+        "fn main() -> int { return dex_ffi_bits_check(3.14); }\n"
+    )
+    ccr = BASE / "build" / "dex_ffi_runtime.ccr"
+    binary = BASE / "build" / "dex_ffi_runtime"
+    shim = BASE / "build" / "core_dex_ffi.so"
+    try:
+        compile_shim = subprocess.run(
+            ["gcc", "-shared", "-fPIC", "-O2",
+             str(BASE / "tests" / "fixtures" / "dex_ffi_shim.c"),
+             "-o", str(shim)],
+            cwd=BASE, capture_output=True, text=True, timeout=60,
+        )
+        if compile_shim.returncode != 0:
+            print(f"[FAIL] extern dex shim build: exit={compile_shim.returncode}")
+            print(compile_shim.stdout + compile_shim.stderr)
+            return False
+        r = run_corec(["ccr", "-o", str(ccr)], src)
+        if r.returncode != 0:
+            print(f"[FAIL] extern dex ccr generation: exit={r.returncode}")
+            print(r.stdout + r.stderr)
+            return False
+        r = subprocess.run(
+            [str(BASE / "build" / "corearch"), str(ccr), "--elf",
+             "--link", str(shim), "--static", "-o", str(binary)],
+            cwd=BASE, capture_output=True, text=True, timeout=180,
+        )
+        if r.returncode != 0 or not binary.exists():
+            print(f"[FAIL] extern dex static link: exit={r.returncode}")
+            print(r.stdout + r.stderr)
+            return False
+        os.chmod(binary, 0o755)
+        run = subprocess.run([str(binary)], cwd=BASE, capture_output=True,
+                             text=True, timeout=30)
+        if run.returncode != 0:
+            print(f"[FAIL] extern dex static runtime: exit={run.returncode}")
+            print(run.stdout + run.stderr)
+            return False
+        print("[PASS] extern dex static --link relocates and runs")
+        return True
+    finally:
+        for path in (ccr, binary):
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+
+
 def main():
     if not COREC.exists():
         print(f"[FAIL] missing native compiler: {COREC}")
@@ -365,6 +416,7 @@ def main():
         test_apx_print_rounding(),
         test_interp_rejects_apx_dex(),
         test_extern_dex_arg_cir(),
+        test_extern_dex_static_link(),
     ]
     passed = sum(results)
     print(f"{passed}/{len(results)} passed")
