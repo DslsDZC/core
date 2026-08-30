@@ -21,7 +21,8 @@ subtype <ctx> <exp> <exp>          # yes | no
 ```
 
 每行一条查询。**`corpus_exhaustive.txt` 含 `#` 开头的分层注释行（标明来源层），
-harness 与 term_io（Task 5）必须跳过 `#` 行**（随机层与案卷文件无注释行）。
+harness 与 kernel CLI（`kernel_main.cr`）必须跳过 `#` 行**（随机层与案卷文件无注释行；
+2026-08-28 修正：行级处理是 kernel_main.cr 的职责，term_io 只解析单个 `<exp>`）。
 
 ## 固定种子与统计
 
