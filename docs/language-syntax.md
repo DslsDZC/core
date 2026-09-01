@@ -73,7 +73,7 @@ auto fileid move self in None Some unit
 | 字符 | `'x'` `'\n'` `'\x41'` | Unicode 标量值 |
 | 布尔 | `true` `false` | |
 | 单元 | `()` | `unit` 类型的唯一值 |
-| 可选 | `None` `Some(expr)` | 可选类型构造器（见 4.3） |
+| 可选 | `None` `Some(expr)` | 可选类型构造器（见 4.1） |
 
 转义序列：`\n` `\t` `\r` `\0` `\\` `\"` `\'` `\xHH`（两位十六进制）。
 
@@ -231,7 +231,7 @@ z : ., mut = 20;
 a, b, c : auto, mut = 0;
 ```
 
-`auto` 更显式、`:` 更简洁——注意 `: ., mut` 模式中 `.` 是类型占位。
+`auto` 更显式、`.` 更简洁——注意 `: ., mut` 模式中 `.` 是类型占位。
 
 ---
 
@@ -414,6 +414,9 @@ unsafe {
 ```
 
 `unsafe` 块隔离不安全操作（见第 12 章）。
+
+---
+
 ## 八、函数与方法
 
 ### 8.1 函数定义
@@ -532,4 +535,107 @@ fn sqrt(x: dex) -> dex where x >= 0 {
 | 动态约束 | 运行时检查——「证明不了也不静默」 |
 
 与 `.corespec` 前置条件互相映射。
-<!-- TODO task4: 第 11-13 章 -->
+
+---
+
+## 十一、并发
+
+### 11.1 异步启动 `go`
+
+```core
+handle := go some_work(arg1, arg2);   // handle: Flow<T>
+```
+
+### 11.2 等待 `await`
+
+```core
+result := await handle;   // 阻塞直到完成
+```
+
+按需自动等待——当值被需要时自动等待：
+
+```core
+val := go fetch(url) + go fetch(other);   // 两个 flow 自动等待
+```
+
+### 11.3 长期执行流 `flow` / `yield` / `recv`
+
+```core
+flow counter(start: int) -> int {
+    n : ., mut = start;
+    loop {
+        yield n;          // 产出数据
+        n += 1;
+    }
+}
+
+f := go counter(0);
+for i in 0..5 {
+    v := f.recv();        // 接收一个值
+    println(v);
+}
+```
+
+---
+
+## 十二、指针与 unsafe
+
+### 12.1 指针
+
+指针是裸地址，与 C 同级自由，编译器通过格/图自动验证安全（详见 `docs/pointer-model.md`）：
+
+```core
+p := &arr[0];     // 取地址，编译器记下 provenance
+p = p + n;        // 偏移，随便算
+x := *p;          // 解引用，编译器验证 offset ∈ [0, len)
+ptr := addr as RawRef<int>;   // 显式转换
+```
+
+### 12.2 unsafe 块
+
+`unsafe { }` 块内允许：
+
+- 使用 `RawRef<T>`
+- 调用外部 C 函数
+- 编译器固有
+
+```core
+unsafe {
+    ptr : RawRef<int> = addr as RawRef<int>;
+    ptr.write(42);
+}
+```
+
+`RawRef<T>` 无法逃逸到安全代码。
+
+---
+
+## 十三、@ 内建原语
+
+`@` 开头的标识符是编译器内建的能力入口，不通过标准库实现。分三类（详见 `docs/at-intrinsics.md`）。
+
+**元数据查询**——编译期查询类型信息，零运行时开销：
+
+```core
+@sizeOf(T)            // 类型大小
+@alignOf(T)           // 类型对齐
+@fields(T)            // 字段名列表
+@field(T, name)       // 字段偏移和类型
+@hasField(T, name)    // 字段是否存在
+@typeInfo(T)          // 完整类型结构
+```
+
+**编译控制**——不改变语义，只改变编译方式：
+
+```core
+@inline(fn)           // 提示内联
+@unroll(n)            // 展开循环
+@section(name)        // 指定代码段
+@comptime(expr)       // 强制编译期执行
+```
+
+**安全检查**——unsafe 范畴，调用方自己保证：
+
+```core
+@no_bounds_check      // 跳过边界检查
+```
