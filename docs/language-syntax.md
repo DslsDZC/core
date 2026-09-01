@@ -165,6 +165,254 @@ fn main() {
 
 `_import.cr` 本身不生成代码，只起导入声明作用。
 
-<!-- TODO task2: 第 4-7 章 -->
+## 四、类型标注
+
+Core 没有独立的类型系统：类型是图上的**标注**（`x : int` 标注 x 的节点），接口是图上的**契约**。本节描写类型标注的语法形式。
+
+### 4.1 类型表达式
+
+```
+Type = BaseType | PathType | RefType | OptionalType | TupleType | ArrayType | SliceType
+```
+
+**基础类型**：
+
+| 类型 | 说明 |
+|------|------|
+| `int` | 整数（精确） |
+| `dex` | 精确小数（默认实数语义，缩放整数/定点实现） |
+| `bool` | `true` / `false` |
+| `string` | 不可变 UTF-8 字符串 |
+| `char` | Unicode 标量值 |
+| `unit` | 空值 `()` |
+| `never` | 发散类型 |
+| `dyn` | 动态类型——图全量已知所有分支，边界自动插转换（详见 `docs/dynamic-typing.md`） |
+| `Self` | 上下文类型名，仅在接口/方法签名内有效（实现类型本身） |
+
+**复合类型**：
+
+```core
+pair  : (int, bool);        // 元组
+zeros : [int; 16];          // 数组（长度是常量）
+slice : [int];              // 切片
+maybe : int?;               // 可选
+ref   : &Point;             // 引用
+mutr  : &mut Point;         // 可变引用
+```
+
+**接口作类型**：任何接口名可作为类型标注（`PathType`），见第 9 章。
+
+**机器形状不在语言内**：整数位宽、浮点格式等机器形状由编码层按目标自动决定，不进入类型/标签体系；未来显式控制走 hw-map。
+
+### 4.2 标注位置
+
+类型标注出现在：变量声明（`x : int = 42`）、函数参数（`fn f(a: int)`）、返回类型（`-> int`）、泛型参数（`[T: Eq]`，见第 9 章）。
+
+### 4.3 标签
+
+变量与字段可带标签，`mut`（可变）/ `pub`（公开）/ `apx`（近似授权）：
+
+```core
+count   : int, mut = 0;     // 可变
+pub_val : int, pub = 42;    // 公开字段
+speed   : ., apx = 3.14;    // apx：授权后端把 dex 运算降级为 binary64 快路径
+```
+
+`apx` 与 `mut` / `pub` 同族。不带 `apx` 时 `dex` 恒精确。
+
+### 4.4 推断占位：`auto` 与 `.`
+
+类型推断占位，两者完全等价，可用于变量声明与返回类型：
+
+```core
+x : auto = 42;              // 推断为 int
+y : . = 3.14;               // 推断为 dex
+z : ., mut = 20;
+a, b, c : auto, mut = 0;
+```
+
+`auto` 更显式、`:` 更简洁——注意 `: ., mut` 模式中 `.` 是类型占位。
+
+---
+
+## 五、变量声明
+
+无 `let` 关键字。声明即语句，`:=` 推断类型（不可变），`: Type =` 显式类型：
+
+```core
+x := 42;                    // 推断为 int，不可变
+name : string = "Core";     // 显式类型
+count : int, mut = 0;       // 显式 + 可变
+shared : auto, pub, mut = 42;   // 全局公开可变
+a, b : int = 1, 2;          // 批量声明
+```
+
+`move` 显式移动所有权（默认借用语义，见第 1 章设计要点——无生命周期标注，引用有效性编译器全权推断）：
+
+```core
+b := move a;                // a 的所有权转移到 b，a 失效
+consume(move b);            // 参数移动传入
+```
+
+复制类型（`int`、`dex`、`bool` 等实现 Copy 接口的类型）赋值时自动复制，不需 `move`。
+
+---
+
+## 六、表达式与运算符
+
+### 6.1 优先级
+
+从低到高（`grammar/core.ebnf` 的推导链）：
+
+```
+Assignment → LogicalOr → LogicalAnd → Equality → Comparison
+→ Addition → Multiplication → Unary → CallOrField → Primary
+```
+
+| 优先级 | 运算符 | 结合性 |
+|--------|--------|--------|
+| 最低 | `=`（赋值）`:=`（声明） | 右 |
+| | `\|\|` | 左 |
+| | `&&` | 左 |
+| | `==` `!=` | 左 |
+| | `<` `>` `<=` `>=` | 左 |
+| | `+` `-` | 左 |
+| | `*` `/` `%` | 左 |
+| | 一元 `-` `!` `&` `&mut` | — |
+| 最高 | 调用 `f(...)`、字段 `.x`、下标 `[i]`、`?` | 左 |
+
+### 6.2 基本表达式
+
+```core
+// 字面量与标识符
+42; 3.14; "Core"; 'x'; true; (); None; Some(5);
+
+// 括号
+(1 + 2) * 3;
+
+// 块表达式——块的值 = 最后一条语句的值
+x := { a := 1; a + 2 };
+
+// if 表达式
+category := if x > 0 { "positive"; } else { "not positive"; };
+
+// match / loop / for / go / await / unsafe 也是表达式（见第 7、11、12 章）
+```
+
+### 6.3 调用、字段与下标
+
+```core
+result := m.add(3, 5);      // 函数调用
+p.x;                        // 字段访问
+arr[0];                     // 下标
+```
+
+### 6.4 转换 `as`
+
+```core
+x : int = 3;
+d : dex = x as dex;         // 显式转换
+ptr : RawRef<int> = addr as RawRef<int>;
+```
+
+### 6.5 错误传播 `?`
+
+`?` 后缀：表达式失败时立即从当前函数返回错误，只能用于返回可传播错误类型（如 `Result`）的函数中：
+
+```core
+fn fetch() -> Result<string, IoError> {
+    data := read_file("config.txt")?;   // 出错则立刻返回 Err
+    Ok(data)
+}
+```
+
+### 6.6 @ 内建调用
+
+`@` 开头是编译器内建原语（见第 13 章）：
+
+```core
+n := @sizeOf(Point);
+```
+
+---
+
+## 七、语句与控制流
+
+语句以 `;` 结束（可省略）。`Statement = Expr ';' | LetStmt | ReturnStmt | YieldStmt | BreakStmt | ContinueStmt`。
+
+### 7.1 条件
+
+```core
+if x > 0 {
+    println("positive");
+} else if x < 0 {
+    println("negative");
+} else {
+    println("zero");
+}
+```
+
+### 7.2 循环
+
+```core
+for i in 0..10 {            // 范围 0..10（含 0 不含 10）
+    println(i);
+}
+
+for item in items {
+    println(item);
+}
+
+loop {                      // 无限循环
+    if done { break; }
+}
+
+while condition {
+    // ...
+}
+```
+
+`break` / `continue` 用于 `loop` / `while` / `for`。
+
+### 7.3 匹配
+
+```core
+match opt {
+    Some(x) => println("got {x}"),
+    None    => println("nothing"),
+}
+```
+
+匹配必须穷尽所有情况。模式（Pattern）可以是字面量、标识符、元组/结构体/枚举模式、`_` 通配。
+
+当 scrutinee 是字符串表达式且所有分支是字符串常量时，编译器自动生成基于哈希的跳转表——计算一次哈希，与各分支预计算哈希比较，冲突时再检查相等：
+
+```core
+match cmd {
+    "start"   => start_server(),
+    "stop"    => stop_server(),
+    "restart" => restart_server(),
+    _         => println("unknown command"),
+}
+```
+
+### 7.4 返回
+
+```core
+fn add(a: int, b: int) -> int {
+    return a + b;           // 显式返回
+}
+```
+
+### 7.5 不安全块
+
+```core
+unsafe {
+    ptr : RawRef<int> = addr as RawRef<int>;
+    ptr.write(42);
+}
+```
+
+`unsafe` 块隔离不安全操作（见第 12 章）。
 <!-- TODO task3: 第 8-10 章 -->
 <!-- TODO task4: 第 11-13 章 -->
