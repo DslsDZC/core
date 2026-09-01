@@ -414,5 +414,122 @@ unsafe {
 ```
 
 `unsafe` 块隔离不安全操作（见第 12 章）。
-<!-- TODO task3: 第 8-10 章 -->
+## 八、函数与方法
+
+### 8.1 函数定义
+
+```core
+fn add(a: int, b: int) -> int {
+    return a + b;
+}
+
+fn pi() -> auto = 3.14159;  // 单行形式；返回类型推断
+```
+
+`FunctionDecl = [ 'pub' ] 'fn' IDENT [ GenericParams ] '(' [ ParamList ] ')' '->' Type ( FunctionBody | '=' Expr ';' )`。参数 `Param = IDENT ':' Type`。返回类型可以是 `auto`（或 `.`），由函数体推导。
+
+### 8.2 方法
+
+`impl` 为类型挂接方法，接收者 `self` 是第一个参数：
+
+```core
+impl Point {
+    fn norm(&self) -> dex {
+        (self.x * self.x + self.y * self.y).sqrt()
+    }
+
+    fn move_by(&mut self, dx: dex, dy: dex) {
+        self.x += dx;
+        self.y += dy;
+    }
+}
+```
+
+接收者形式：`self`（按值）/ `&self`（借用）/ `&mut self`（可变借用）。
+
+---
+
+## 九、接口与泛型
+
+接口是图上的**契约**（见类型方向定案 `docs/superpowers/specs/2026-08-30-type-system-direction-design.md`）：声明一组方法签名，实现类型必须满足。
+
+### 9.1 接口声明与实现
+
+```core
+interface Eq {
+    fn eq(&self, other: &Self) -> bool;
+}
+
+impl Eq for Point {
+    fn eq(&self, other: &Self) -> bool {
+        self.x == other.x && self.y == other.y
+    }
+}
+```
+
+接口签名中的 `Self` 指实现类型本身。基础类型（`int` / `dex` / `string` 等）对标准接口（`Eq`、`Copy`、`Hash` 等）内建实现。
+
+### 9.2 泛型 = 编译期接口具体化
+
+泛型参数 `[T]` 声明，接口绑定 `[T: Eq]` 约束 T 必须实现该接口：
+
+```core
+fn first[T: Eq](list: &[T]) -> T? {
+    if list.len() > 0 {
+        return Some(list[0]);
+    }
+    None
+}
+```
+
+实例化时检查类型参数满足接口绑定，**编译期具体化**——无运行期字典。
+
+### 9.3 类型别名
+
+```core
+type Point3 = (dex, dex, dex);
+```
+
+---
+
+## 十、规约
+
+规约（requires / ensures）与函数体并列，可选编写，参与静态检查，不影响运行时性能。规约语法详见 `docs/spec-design.md` 与 `grammar/corespec.ebnf`。
+
+### 10.1 requires / ensures
+
+```core
+fn divide(a: int, b: int) -> int?
+    requires b != 0
+    ensures result.is_some() implies (a / b) == result.unwrap()
+{
+    if b == 0 {
+        return None;
+    }
+    return Some(a / b);
+}
+```
+
+- `requires` —— 调用方必须满足的前提条件
+- `ensures` —— 保证的后置条件；`result` 指返回值，`old(expr)` 指函数入口时表达式的值
+
+### 10.2 where 值约束
+
+`where` 实现内联轻量前置条件，与 `requires` 同层：
+
+```core
+fn sqrt(x: dex) -> dex where x >= 0 {
+    // ...
+}
+```
+
+值约束按表达式形态分三档语义（一条语法，两层消费：checker + 验证管线）：
+
+| 约束形态 | 语义 |
+|----------|------|
+| 常量约束 | 编译期求值——不满足 → 编译错误；满足 → 通过 |
+| 符号约束 | 生成 VC（验证义务），由验证管线消费 |
+| 动态约束 | 运行时检查——「证明不了也不静默」 |
+
+与 `.corespec` 前置条件互相映射。
 <!-- TODO task4: 第 11-13 章 -->
