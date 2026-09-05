@@ -196,6 +196,7 @@ fn corec_main() -> int {
     cli_flag("output", "o", "Output path");
     cli_flag_bool("static", "", "Static linking (embed runtime)");
     cli_flag("opt-level", "O", "Optimization level (0,1,2,3; default=1)");
+    cli_flag_bool("dump-entries", "", "Hidden debug: versioned entries summary (v6 Task 2 test channel)");
 
     if cli_parse() != 0 { return 1; }
     // Parse -O flag (default O1)
@@ -488,6 +489,16 @@ fn corec_main() -> int {
 
     // === cir: output dataflow graph ===
     if cli_eq(cmd, "cir") {
+        // Hidden debug (--dump-entries): versioned entries summary. Runs before
+        // any opt-gated pass — compute_live_ranges (whose tail computes
+        // per-function version entries) is unconditional here, so the dump is
+        // visible at every -O level (entries describe the pre-CSE IR, i.e. the
+        // exact stream this command dumps).
+        if cli_has("dump-entries") != 0 {
+            compute_live_ranges();
+            dump_entries_summary();
+            return 0;
+        }
         dot := df_graph_to_dot();
         out := cli_get("output");
         if str_len(out) == 0 {

@@ -61,12 +61,32 @@ g_ir_func_param_count : string, mut; g_ir_func_param_count_cap : int, mut;
 g_ir_func_count : int, mut;
 
 // v6 数据基础：存在区间表（compute_live_ranges 填充，alloc_registers 改读本表）。
-// 布局：每函数一段，段内每「函数内 var」两条 i64（first_ref/last_ref，指令序）；
+// 布局：每函数一段，段内每「函数内 var」两条 i64（first_ref/last_ref，函数内指令序
+// ——坐标限定：0..instr_count-1 的函数内下标，见 opt.cr live_range_slot）；
 // func_i 段起始 = Σ var_count[0..func_i)，不乘固定稠密系数。未使用 var 为 -1。
 // 与 g_ir_slice_lens 同风格：16B 记录 + grow 函数（grow_live_ranges 在 opt.cr）。
 g_ir_live_ranges : string, mut;
 g_live_range_count : int, mut;
 g_live_range_cap : int, mut;
+
+// v6 条目表（条目版本化，compute_entries 填充——compute_live_ranges 尾部对全部
+// 函数运行；.ccr v6 entries 段直写本表，Task 4）。24B/条（六字段各 4B，
+// LE 存取：写 w32、读 buf_read_i32——r32 读在 bootstrap 产物中丢符号扩展，
+// 见 opt.cr ent_* 注记；与 v6 格式记录逐字节一致），字段偏移见 dyn_arr.cr：
+//   var_idx(0)   u32 = 全局 IR 变量索引（g_ir_vars 序）
+//   def_instr(4) i32 = 定值指令全局索引——IR_ALLOC(dest=var) 或 IR_STORE(s1=var)
+//                      （IR_STORE 定值形态 = ρ(s1):=ρ(s2)，目标在 s1、dest 恒 -1，
+//                       见 docs/ir-op-semantics.md §2.1）；-1 = 无定值条目
+//   live_start(8)/live_end(12) i32 = 版本存在区间：全局指令序闭区间
+//                      [def_j, min(def_{j+1}−1, last_ref)]（与 Task 1 区间表同
+//                      闭区间语义，坐标转全局）；无定值条目 = [first_ref, last_ref]
+//   home(16) i32 = 分配器回填的槽位（-1 = 未分配，Task 5 回填）
+//   flags(20) u32 = 0（位 0 预留：无配方，条款 4b）
+// 布局：每函数一段（func_i 升序追加），段界在 g_ir_func_entry_start/count（8B/条）。
+// 版本号不落盘：同 var 条目按 def_instr 升序（扫描序即升序），版本序 = 组内 1-based 序号。
+g_ir_entries : string, mut;    g_entry_count : int, mut;    g_entry_cap : int, mut;
+g_ir_func_entry_start : string, mut;  g_ir_func_entry_count : string, mut;
+g_ir_func_entry_cap : int, mut;
 
 // Module system arrays (dynamic byte buffers)
 DIAG_REC_SIZE : int = 40;   // g_diags 记录字节数：[ec(8) msg(8) line(8) col(8) file_id(8)]

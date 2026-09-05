@@ -278,6 +278,206 @@ fn compute_live_ranges() {
         seg = seg + vc;
         fi = fi + 1;
     }
+    // v6 Task 2：条目版本化——对全部函数切分版本条目（逐函数升序，
+    // compute_entries 的 func_i==0 分支负责整表重建；本函数幂等可重跑）。
+    // 与 opt 门控解耦：compute_live_ranges 自身在 cir --dump-entries 与
+    // alloc_registers（O2）两处被调，条目表随算随新。
+    ef : ., mut = 0;
+    loop {
+        if ef >= g_ir_func_count { break; }
+        compute_entries(ef);
+        ef = ef + 1;
+    }
+}
+
+// ------------------------------------------------------------------
+// v6 条目版本化：变量 × 定值点切分版本条目
+// ------------------------------------------------------------------
+// Core IR 非 SSA——变量可多次定值。定值指令 = IR_ALLOC（局部槽初定值，interp
+// 置零）与该变量为目标的每次 IR_STORE（IR_STORE 形态 ρ(s1):=ρ(s2)——目标在 s1
+// 不在 dest，见 docs/ir-op-semantics.md §2.1）。每个定值切分一个新版本条目。
+// 版本存在区间（全局指令序闭区间，与 Task 1 区间表同语义、坐标 +instr_start）：
+//   版本 j = [def_j, min(def_{j+1}−1, last_ref)]（末版 = [def_k, last_ref]；
+//   last_ref 恒 ≥ 末定值——定值写自身计入引用）。
+// 无定值但有引用的变量（函数参数、单次写临时值等）→ 单条目 def_instr=−1、
+// 区间 = [first_ref, last_ref]；从未引用（first_ref=−1）跳过。
+// 版本号不落盘：同 var 条目按 def_instr 升序（单遍扫描即升序），版本序 = 组内序号。
+// 调用前置：compute_live_ranges() 已先行（截断用 last_ref），func_i 升序调用
+// （func_i==0 重置全局计数——整表重建，重复调用幂等）。
+
+fn grow_entries(needed: int) {
+    if needed < g_entry_cap { return; }
+    nc : ., mut = g_entry_cap * 2; if nc < 64 { nc = 64; } if nc < needed { nc = needed + 64; }
+    nb := alloc(nc * ESZ_ENTRY); _dyncpy(g_ir_entries, g_entry_cap * ESZ_ENTRY, nb);
+    g_ir_entries = nb; g_entry_cap = nc;
+}
+
+fn grow_func_entry_meta(needed: int) {
+    if needed < g_ir_func_entry_cap { return; }
+    nc : ., mut = g_ir_func_entry_cap * 2; if nc < 64 { nc = 64; } if nc < needed { nc = needed + 64; }
+    sz := nc * 8;
+    n1 := alloc(sz); _dyncpy(g_ir_func_entry_start, g_ir_func_entry_cap * 8, n1); g_ir_func_entry_start = n1;
+    n2 := alloc(sz); _dyncpy(g_ir_func_entry_count, g_ir_func_entry_cap * 8, n2); g_ir_func_entry_count = n2;
+    g_ir_func_entry_cap = nc;
+}
+
+// 条目表字段访问器（24B/条、4B 字段 LE；字段布局注释见 globals.cr）。
+// 读统一走 buf_read_i32（ccr_io.cr，真实函数体带符号扩展）——不能调 r32：
+// Python bootstrap 的 StackAsmGen 把名为 r32 的调用内联成 `mov eax,[rdi+rsi]`
+// （零扩展 32 位读），bootstrap 产物里负值（-1 home/def）会读成 4294967295
+// （x86_64_stack_asm.py:242；r32 源码里的符号修正逻辑只在自举产物中生效）。
+// 写侧 w32 内联为 `mov [rdi+rsi],edx`（低 32 位存储）——补码语义正确，可用。
+fn ent_off(e: int) -> int { return e * ESZ_ENTRY; }
+fn ent_var(e: int) -> int { return buf_read_i32(g_ir_entries, ent_off(e) + OFF_ENTRY_VAR); }
+fn ent_def(e: int) -> int { return buf_read_i32(g_ir_entries, ent_off(e) + OFF_ENTRY_DEF); }
+fn ent_live_start(e: int) -> int { return buf_read_i32(g_ir_entries, ent_off(e) + OFF_ENTRY_LS); }
+fn ent_live_end(e: int) -> int { return buf_read_i32(g_ir_entries, ent_off(e) + OFF_ENTRY_LE); }
+fn ent_home(e: int) -> int { return buf_read_i32(g_ir_entries, ent_off(e) + OFF_ENTRY_HOME); }
+fn ent_flags(e: int) -> int { return buf_read_i32(g_ir_entries, ent_off(e) + OFF_ENTRY_FLAGS); }
+
+// 函数条目段界（全局条目下标；compute_entries 已跑过才有效）
+fn entry_start(func_i: int) -> int {
+    if func_i < 0 || func_i >= g_ir_func_count { return 0; }
+    return r64(g_ir_func_entry_start, func_i * 8);
+}
+
+fn entry_count(func_i: int) -> int {
+    if func_i < 0 || func_i >= g_ir_func_count { return 0; }
+    return r64(g_ir_func_entry_count, func_i * 8);
+}
+
+fn compute_entries(func_i: int) -> int {
+    if func_i == 0 { g_entry_count = 0; }
+    ic := r64(g_ir_func_instr_count, func_i * 8);
+    ist := r64(g_ir_func_instr_start, func_i * 8);
+    vc := r64(g_ir_func_var_count, func_i * 8);
+    vs := r64(g_ir_func_var_start, func_i * 8);
+    cnt : ., mut = 0;
+    if ic > 0 && vc > 0 {
+        // 每「函数内 var」一条最近打开条目（-1 = 未打开）：定值序列切割 O(1) 收口
+        prev : string, mut = alloc(vc * 8);
+        pz : ., mut = 0;
+        loop {
+            if pz >= vc { break; }
+            w64(prev, pz * 8, -1);
+            pz = pz + 1;
+        }
+        // 单遍扫描：ALLOC(dest=var) / STORE(s1=var) 命中函数段 → 定值 → 切版本
+        ii : ., mut = 0;
+        loop {
+            if ii >= ic { break; }
+            inst := ist + ii;
+            op := iri_op(inst);
+            dv : ., mut = -1;
+            if op == IR_ALLOC {
+                d := iri_dest(inst);
+                if d >= vs && d < vs + vc { dv = d; }
+            } else if op == IR_STORE {
+                s1 := iri_s1(inst);
+                if s1 >= vs && s1 < vs + vc { dv = s1; }
+            }
+            if dv >= 0 {
+                lv := dv - vs;
+                last_global : ., mut = -1;
+                ll := live_last(func_i, dv);
+                if ll >= 0 { last_global = ist + ll; }
+                // 收口上一版本：end = min(def−1, last_ref)（last_ref ≥ 次定值，恒取 def−1）
+                pe := r64(prev, lv * 8);
+                if pe >= 0 {
+                    pend : ., mut = inst - 1;
+                    if last_global >= 0 && last_global < pend { pend = last_global; }
+                    w32(g_ir_entries, pe * ESZ_ENTRY + OFF_ENTRY_LE, pend);
+                }
+                // 开新版本：区间端点暂定 = 定值点..last_ref，末版直接成立
+                grow_entries(g_entry_count + 1);
+                eo := g_entry_count * ESZ_ENTRY;
+                w32(g_ir_entries, eo + OFF_ENTRY_VAR, dv);
+                w32(g_ir_entries, eo + OFF_ENTRY_DEF, inst);
+                w32(g_ir_entries, eo + OFF_ENTRY_LS, inst);
+                w32(g_ir_entries, eo + OFF_ENTRY_LE, last_global);
+                w32(g_ir_entries, eo + OFF_ENTRY_HOME, -1);
+                w32(g_ir_entries, eo + OFF_ENTRY_FLAGS, 0);
+                w64(prev, lv * 8, g_entry_count);
+                g_entry_count = g_entry_count + 1;
+                cnt = cnt + 1;
+            }
+            ii = ii + 1;
+        }
+        // 无定值但有引用的 var（参数/单写临时值等）：单条目 def=-1
+        lv2 : ., mut = 0;
+        loop {
+            if lv2 >= vc { break; }
+            if r64(prev, lv2 * 8) < 0 {
+                gv := vs + lv2;
+                ff := live_first(func_i, gv);
+                ll := live_last(func_i, gv);
+                if ff >= 0 && ll >= 0 {
+                    grow_entries(g_entry_count + 1);
+                    eo := g_entry_count * ESZ_ENTRY;
+                    w32(g_ir_entries, eo + OFF_ENTRY_VAR, gv);
+                    w32(g_ir_entries, eo + OFF_ENTRY_DEF, -1);
+                    w32(g_ir_entries, eo + OFF_ENTRY_LS, ist + ff);
+                    w32(g_ir_entries, eo + OFF_ENTRY_LE, ist + ll);
+                    w32(g_ir_entries, eo + OFF_ENTRY_HOME, -1);
+                    w32(g_ir_entries, eo + OFF_ENTRY_FLAGS, 0);
+                    g_entry_count = g_entry_count + 1;
+                    cnt = cnt + 1;
+                }
+            }
+            lv2 = lv2 + 1;
+        }
+    }
+    grow_func_entry_meta(func_i + 1);
+    w64(g_ir_func_entry_start, func_i * 8, g_entry_count - cnt);
+    w64(g_ir_func_entry_count, func_i * 8, cnt);
+    return cnt;
+}
+
+// --dump-entries 调试通道输出（cir 命令调用，Task 2 测试载体）：
+// 每函数一段、一行一条目；坐标 = 全局指令序/全局变量索引（与表内一致），
+// v = 组内版本序（1-based），kind = 定值指令种类（ALLOC/STORE/-）。
+fn dump_entries_summary() {
+    fi : ., mut = 0;
+    loop {
+        if fi >= g_ir_func_count { break; }
+        es := entry_start(fi);
+        ec := entry_count(fi);
+        print("== entries func "); print(int_str(fi)); print(" (");
+        print(istr_get(r64(g_ir_func_name_idx, fi * 8))); print("): ");
+        println(int_str(ec));
+        ei : ., mut = 0;
+        loop {
+            if ei >= ec { break; }
+            e := es + ei;
+            gv := ent_var(e);
+            ord : ., mut = 1;
+            ej : ., mut = es;
+            loop {
+                if ej >= e { break; }
+                if ent_var(ej) == gv { ord = ord + 1; }
+                ej = ej + 1;
+            }
+            print(" e "); print(int_str(e));
+            print(" var "); print(int_str(gv));
+            vn := get_ir_var_name(gv);
+            if str_len(vn) > 0 { print(" name="); print(vn); }
+            print(" v "); print(int_str(ord));
+            print(" def "); print(int_str(ent_def(e)));
+            d := ent_def(e);
+            if d >= 0 {
+                if iri_op(d) == IR_ALLOC { print(" kind=ALLOC"); }
+                else { print(" kind=STORE"); }
+            } else {
+                print(" kind=-");
+            }
+            print(" live "); print(int_str(ent_live_start(e))); print("..");
+            print(int_str(ent_live_end(e)));
+            print(" home "); print(int_str(ent_home(e)));
+            print(" flags "); println(int_str(ent_flags(e)));
+            ei = ei + 1;
+        }
+        fi = fi + 1;
+    }
 }
 
 // ------------------------------------------------------------------
@@ -324,7 +524,8 @@ fn alloc_registers() {
         loop {
             if ii >= ic { break; }
             inst := ist + ii;
-            op := iri_op(inst); d := iri_dest(inst); s1 := iri_s1(inst); s2 := iri_s2(inst);
+            // 只读 dest——op/s1/s2 在本循环未用（评审 Minor：已清除的死赋值）
+            d := iri_dest(inst);
 
             // Free regs for vars that end before this instruction
             vi = 0;
