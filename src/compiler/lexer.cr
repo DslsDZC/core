@@ -146,7 +146,7 @@ fn str_to_f64_bits(s: string) -> int {
         i = i + 1; }
     if too_wide != 0 { add_error("decimal literal integer part is too wide"); return 0; }
     if ip == 0 && fp == 0 {
-        if neg != 0 { return -9223372036854775808; }
+        if neg != 0 { return (-9223372036854775807 - 1); }
         return 0;
     }
     // 小数 64 位（长除：r=fp，每轮 r×2 vs den）
@@ -179,7 +179,7 @@ fn str_to_f64_bits(s: string) -> int {
         bf : ., mut = 0; t2 = frac64;
         loop { if t2 == 0 { break; } t2 = t2 / 2; bf = bf + 1; }
         if bf == 0 {
-            if neg != 0 { return -9223372036854775808; }
+            if neg != 0 { return (-9223372036854775807 - 1); }
             return 0;
         }
         sh := 53 - bf;
@@ -192,7 +192,7 @@ fn str_to_f64_bits(s: string) -> int {
     if exp > 0 && exp < 2047 {
         bits64 = (mant % 4503599627370496) + exp * 4503599627370496;
     }
-    if neg != 0 { bits64 = bits64 + -9223372036854775808; }
+    if neg != 0 { bits64 = bits64 + (-9223372036854775807 - 1); }
     return bits64;
 }
 
