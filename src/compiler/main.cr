@@ -198,6 +198,10 @@ fn corec_main() -> int {
     cli_flag("opt-level", "O", "Optimization level (0,1,2,3; default=1)");
     cli_flag_bool("dump-entries", "", "Hidden debug: versioned entries summary (v6 Task 2 test channel)");
     cli_flag_bool("dump-coexist", "", "Hidden debug: coexistence summary (v6 Task 3 test channel)");
+    cli_flag_bool("check-regalloc", "", "Hidden debug: O2-forced alloc + regalloc consistency self-check (v6 Task 5 test channel)");
+    cli_flag_bool("inject-home-conflict", "", "Hidden debug: inject coexisting entries onto same home slot, then verify (Task 5 test hook)");
+    cli_flag_bool("inject-reg-conflict", "", "Hidden debug: inject fake var->reg pair colliding with a real one, then verify (Task 5 test hook)");
+    cli_flag_bool("inject-read-gap", "", "Hidden debug: truncate last version interval to def point, then verify (Task 5 test hook)");
 
     if cli_parse() != 0 { return 1; }
     // Parse -O flag (default O1)
@@ -507,6 +511,25 @@ fn corec_main() -> int {
             dump_coexist_summary();
             return 0;
         }
+        // Hidden debug (--check-regalloc): v6 Task 5 判定消费测试载体。O2 强制
+        // 分配（alloc_registers 内含 compute_live_ranges → 条目表随算随新）后跑
+        // 一致性自检；测试钩子注入（--inject-*）在分配后、判定前改写条目表/
+        // g_opt_meta——真实构建路径永不注入（见 opt.cr 注入函数注释）。
+        // 校验对象 = 与 dump-entries 同源的前 CSE 线性流（cir 分支不跑 CSE）。
+        if cli_has("check-regalloc") != 0 {
+            saved_opt := g_opt_level;
+            g_opt_level = 2;
+            alloc_registers();
+            if cli_has("inject-home-conflict") != 0 { inject_home_conflict(); }
+            if cli_has("inject-reg-conflict") != 0 { inject_reg_conflict(); }
+            if cli_has("inject-read-gap") != 0 { inject_read_gap(); }
+            nv := regalloc_verify_all();
+            g_opt_level = saved_opt;
+            print("regalloc-consistency: funcs "); print(int_str(g_ir_func_count));
+            print(" violations "); println(int_str(nv));
+            if nv != 0 { return 1; }
+            return 0;
+        }
         dot := df_graph_to_dot();
         out := cli_get("output");
         if str_len(out) == 0 {
@@ -544,6 +567,10 @@ fn corec_main() -> int {
     }
     if g_opt_level >= 2 {
         alloc_registers();
+        // v6 Task 5：寄存器分配一致性自检（消费条目表 + 分配结果；规约
+        // spec/regalloc-consistency.corespec——规则 ① 共存互斥全量 + ② 读点
+        // 覆盖框架）。违反 = 编译错误（诊断已打印，此处拦截）；成功静默。
+        if regalloc_verify_all() != 0 { return 1; }
         pass_stack_share();
     }
     println("lower to ccr...");

@@ -1,0 +1,113 @@
+(*** spec/regalloc-consistency.corespec — 寄存器分配一致性判定规约（格形态 v6 Task 5） ***)
+
+(* 文档家族定位
+   本文件是「寄存器映射实例合法性」判定的规约（docs/regalloc-cache-mapping.md §四 一致性四条），
+   供两层消费同一规约：
+     1. 编译器内 checker 自检（实现期，本文件落 spec/ 后代码按此实现——opt.cr
+        verify_regalloc_consistency 消费条目表 + 分配结果）
+     2. 外部验证器（远期：翻译桥 → CIC 内核，docs/spec-design.md §2.7 体系）
+   语言形态依 grammar/corespec.ebnf（fn 契约声明 + 量词 + result/old）。目前仓库其余
+   .corespec 为空壳，本文件为第一份实义规约——契约声明的可执行消费在编译器内自检
+   （verify_* 实现），句法消费（.csr/验证器）随规约体系里程碑落地。
+   语义出处：存在区间/共存/条目版本 = 格形态 v6（docs/superpowers/specs/
+   2026-09-05-lattice-ir-v6-format.md §3.4/§4）；判定四条 = docs/regalloc-cache-mapping.md §四。
+*)
+
+(* 术语（对象层，v6 格式定稿 §3.4 同源）
+   条目 entry   = IR 变量 × 版本（每次定值 = 新版本 = 新条目；def=-1 = 参数/无定值单条）
+   存在区间     = 条目在指令序上的存活闭区间 [live_start, live_end]（全局指令序坐标）
+   共存 coexist = 两条目存在区间相交（对称关系，无传递性——无格承诺）
+   位置 location= 条目材料的物理承载：寄存器（分配结果，当前 = g_opt_meta var→reg）
+                 或 home 槽（条目表 home 字段，分配器回填 seam）
+*)
+
+(*** 判定原语（访问器契约；实现 = opt.cr 访问器 + 分配结果镜像解析） ***)
+
+fn entry_var(e: int) -> int
+    requires 0 <= e;
+    ensures result >= -1;
+
+fn entry_live_start(e: int) -> int
+    requires 0 <= e;
+    ensures result >= 0;
+
+fn entry_live_end(e: int) -> int
+    requires 0 <= e;
+    ensures result >= entry_live_start(e);
+
+fn entry_location(e: int) -> int
+    requires 0 <= e;
+    ensures result >= -1;      (* -1 = 该条目未承载于任何位置（未分配/未回填） *)
+
+(* 条目表良构不变量：版本按定值点切割——同变量相邻版本区间不交（相邻 = 版本序相邻）。
+   数据自检 coexist_version_conflicts == 0（opt.cr）*)
+type entry_table invariant forall (e1: int) => forall (e2: int) =>
+    entry_var(e1) == entry_var(e2) && e1 != e2 ==> !coexist(e1, e2);
+
+(*** 判定四条（docs/regalloc-cache-mapping.md §四） ***)
+
+(* ── R1 共存互斥（本任务核心，已实现）────────────────────────────
+   每时刻每位置至多一个条目的材料：共享同一位置的条目对必不共存。
+   消费端门禁（Task 3 评审落 ledger）：同位置组内存在性检查按 v6 格式定稿 §4.2
+   per-group sweep O(k log k)（排序 + 单遍），不得逐对枚举 O(E²)。 *)
+fn r1_mutex(e1: int, e2: int) -> bool
+    requires e1 != e2 && entry_location(e1) >= 0;
+    ensures result == !(entry_location(e1) == entry_location(e2) && coexist(e1, e2));
+
+fn verify_rule1(func_i: int) -> int
+    requires func_i >= 0;
+    ensures result == 0 ==> forall (e1: int) => forall (e2: int) => r1_mutex(e1, e2);
+    ensures result == 1 ==> exists (e1: int) => exists (e2: int) => !r1_mutex(e1, e2);
+
+(* ── R2 读点无陈旧（本任务：版本区间覆盖读点断言雏形，已实现）──────
+   读到的材料须与条目的当前版本对齐。寄存器驻留变量 v 的每个读点指令 i 必须落在
+   v 的某版本条目存在区间内（读点有活跃版本——材料 = 该版本定值产物）。
+   覆盖义务边界：版本化定值（IR_STORE/IR_ALLOC）之后的读点。首个版本化定值之前、
+   由 ALLOC_ARRAY/ALLOC_STRUCT 等非版本化定值供给的读窗口，待定值建模按格式定稿
+   §4.1「dest >= 0 = 定值点」升级后自动纳入（compute_entries 扩展，代码零改动）。 *)
+fn is_read_point(i: int, v: int) -> bool
+    requires i >= 0 && v >= 0;
+    (* 指令 i 以 v 为源操作数（IR_STORE 的目标在 s1——写点非读点） *)
+
+fn active_version(v: int, i: int) -> bool
+    requires i >= 0 && v >= 0;
+    ensures result == (exists (e: int) => entry_var(e) == v &&
+        entry_live_start(e) <= i && i <= entry_live_end(e));
+
+fn verify_rule2(func_i: int) -> int
+    requires func_i >= 0;
+    ensures result == 0 ==> forall (i: int) => forall (v: int) =>
+        is_read_point(i, v) ==> active_version(v, i);
+    ensures result == 1 ==> exists (i: int) => exists (v: int) =>
+        is_read_point(i, v) && !active_version(v, i);
+
+(* ── R3 驱逐配对（规约落定；代码 TODO——随 CAG 分配器同批落地）─────
+   寄存器回收（驱逐）时材料不丢：写回 home，或配方可再生（remat，条款 3）；
+   无配方条目（图内不可重算，memory-model-capability-lattice v4 §5.3）必写回。
+   现分配器无驱逐（无 spill/无寄存器复用）——R3 无观测对象，验证器留 TODO 注记。
+   标注 seam：条目表 flags bit3 驱逐候选（v6 格式 §3.4），精确驱逐语义 = 驱逐点表。 *)
+fn r3_eviction_paired(e: int) -> int
+    requires 0 <= e;
+    (* 契约注记（未实现）：e 被驱逐 ⟹ e 已写回 home ∨ 配方可再生（无配方条目 → 必写回） *)
+    ensures result == 1;
+
+(* ── R4 调用点失效契约（规约落定；代码 TODO——随 CAG 分配器同批落地）─
+   调用点 = 缓存失效边界：caller-saved 失效（材料归 home）、callee-saved 保留
+   （ABI = 缓存保留契约）。现分配器只用 5 个 callee-saved（rbx/r12-r15）且无调用
+   点装载/卸载——R4 平凡成立；分配器升级时在调用点指令处校验活跃 caller-saved
+   条目材料已归 home。 *)
+fn r4_call_site_preserved(e: int) -> int
+    requires 0 <= e;
+    (* 契约注记（未实现）：调用点处 e 活跃且 e 落在 caller-saved ⟹ 违反 *)
+    ensures result == 1;
+
+(*** 总判定（消费端入口） ***)
+
+fn verify_regalloc_consistency(func_i: int) -> int
+    requires func_i >= 0;
+    ensures result == 0 || result == 1;       (* 0 = 一致 1 = 违反 *)
+    ensures result == 0 ==> verify_rule1(func_i) == 0 && verify_rule2(func_i) == 0;
+    ensures result == 1 ==> verify_rule1(func_i) == 1 || verify_rule2(func_i) == 1;
+    (* R3/R4 代码 TODO 注记：随上下文贪心（CAG, docs/regalloc-cache-mapping.md §五）
+       分配器升级落地后并入总判定（本任务范围控制：四条规约先行落文档，代码验证
+       主路径 R1 + R2 框架——YAGNI，计划 Task 5 Step 3 注记同源） *)

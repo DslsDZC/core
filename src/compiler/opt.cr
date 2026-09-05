@@ -572,6 +572,472 @@ fn dump_coexist_summary() {
     }
 }
 
+// ===== v6 Task 5：判定消费最小闭环（一致性自检——共 specs/
+// regalloc-consistency.corespec 规约）=====
+// 分配结果真相源 = g_opt_meta 的 OPT_KEY_REG_ASSIGN 对（var_idx → x86 寄存器号）：
+// 后端 instr.cr 的 g2_slot/get_reg_for_var 在发射时按此把 var 落寄存器（corec 与
+// corearch 共享同一 .ccr 传输这份 meta）——判定消费它就是消费「实际编码的分配」。
+// （注：opt.cr:575 区头注释「IR 操作数改写为负编码」是过时设计残留——实现已改为
+// 元数据表 + 后端 g2_slot 查询，判定按实现走。）
+// 版本级 vs 变量级对齐（衔接决策 b）：alloc_registers 是变量级单区间分配，条目是
+// 版本级。判定把分配结果按「条目所属 var」投影到版本条目上——同 var 多版本 = 同
+// 位置组内多条（版本按定值切割互不共存，sweep 自然校验）；两条目同位置且共存 =
+// 违反。变量级表述（同寄存器两 var 的 [first_ref,last_ref] 相交）与条目级表述在
+// 变量级分配下等价（一 var 的版本区间并 = 其整活跃窗口），但条目级表述在分配器
+// 升级为条目级（CAG，docs/regalloc-cache-mapping.md §五）后无需改动——版本条目
+// 各自落位置，判定原样消费。③④（驱逐配对/调用点失效）按 brief 范围控制留 TODO：
+// 现分配器无驱逐、只用 callee-saved（调用点平凡满足）——随 CAG 同批落地，判定
+// 规约先行落文档（spec/regalloc-consistency.corespec R3/R4）。
+
+LOC_HOME_BASE : int = 1000000;  // 位置编码：寄存器号直用（0..15）；home 槽偏移本常量
+RPT_MAX : int = 8;              // 规则违反诊断每函数每规则打印上限（计数不封顶）
+
+// 分配结果镜像解析（mirror instr.cr get_reg_for_var——corec 不含后端文件；
+// 两处解析同一 g_opt_meta 布局，分配器升级统一 seam 时收敛）。
+fn meta_reg_for_var(var_idx: int) -> int {
+    mi : ., mut = 0;
+    loop {
+        if mi >= g_opt_meta_count { break; }
+        mo := mi * OPT_META_STRIDE;
+        mk := r32(g_opt_meta, mo);
+        if mk == OPT_KEY_REG_ASSIGN {
+            data_len := r32(g_opt_meta, mo + 4);
+            di : ., mut = 4;  // skip count u32, pairs start at +4
+            loop {
+                if di >= data_len { break; }
+                vi := r32(g_opt_meta, mo + 8 + di);
+                if vi == var_idx {
+                    return r32(g_opt_meta, mo + 8 + di + 4);
+                }
+                di = di + 8;
+            }
+        }
+        mi = mi + 1;
+    }
+    return -1;
+}
+
+// 16B 记录比较（归并用）：key = (loc, entry 的 live_start)，均升序
+fn rl_rec_lt(buf: string, a: int, b: int) -> int {
+    la := r64(buf, a * 16); lb := r64(buf, b * 16);
+    if la != lb { if la < lb { return 1; } return 0; }
+    ea := r64(buf, a * 16 + 8); eb := r64(buf, b * 16 + 8);
+    if ent_live_start(ea) < ent_live_start(eb) { return 1; }
+    return 0;
+}
+
+// 自底向上归并排序（16B 记录 {loc:8, entry:8}）——O(k log k)，
+// v6 格式定稿 §4.2 sweep 门禁（同位置组内检查不得逐对 O(E²)）。
+fn rl_merge_sort(buf: string, n: int) {
+    if n <= 1 { return; }
+    tmp := alloc(n * 16);
+    width : ., mut = 1;
+    loop {
+        if width >= n { break; }
+        left : ., mut = 0;
+        loop {
+            if left >= n { break; }
+            mid : ., mut = left + width; if mid > n { mid = n; }
+            right : ., mut = left + width * 2; if right > n { right = n; }
+            i : ., mut = left; j : ., mut = mid; k : ., mut = left;
+            loop {
+                if i >= mid || j >= right { break; }
+                if rl_rec_lt(buf, i, j) != 0 {
+                    w64(tmp, k * 16, r64(buf, i * 16));
+                    w64(tmp, k * 16 + 8, r64(buf, i * 16 + 8));
+                    i = i + 1;
+                } else {
+                    w64(tmp, k * 16, r64(buf, j * 16));
+                    w64(tmp, k * 16 + 8, r64(buf, j * 16 + 8));
+                    j = j + 1;
+                }
+                k = k + 1;
+            }
+            loop {
+                if i >= mid { break; }
+                w64(tmp, k * 16, r64(buf, i * 16));
+                w64(tmp, k * 16 + 8, r64(buf, i * 16 + 8));
+                i = i + 1; k = k + 1;
+            }
+            loop {
+                if j >= right { break; }
+                w64(tmp, k * 16, r64(buf, j * 16));
+                w64(tmp, k * 16 + 8, r64(buf, j * 16 + 8));
+                j = j + 1; k = k + 1;
+            }
+            left = right;
+        }
+        zi : ., mut = 0;
+        loop {
+            if zi >= n { break; }
+            w64(buf, zi * 16, r64(tmp, zi * 16));
+            w64(buf, zi * 16 + 8, r64(tmp, zi * 16 + 8));
+            zi = zi + 1;
+        }
+        width = width * 2;
+    }
+}
+
+// 打印位置描述（loc < LOC_HOME_BASE = 寄存器号；否则 home 槽）
+fn rl_print_loc(loc: int) {
+    if loc >= LOC_HOME_BASE {
+        print("home slot "); print(int_str(loc - LOC_HOME_BASE));
+    } else {
+        print("reg "); print(int_str(loc));  // x86 寄存器枚举号（3=rbx, 12-15=r12-r15）
+    }
+}
+
+fn rl_func_name(fi: int) {
+    print("func "); print(int_str(fi)); print(" (");
+    print(istr_get(r64(g_ir_func_name_idx, fi * 8))); print(")");
+}
+
+// 规则 ① 违反诊断（打印上限 RPT_MAX 防病理刷屏，计数不封顶）
+fn rl_report_rule1(func_i: int, loc: int, e1: int, e2: int) {
+    print("regalloc-consistency: "); rl_func_name(func_i);
+    print(": rule 1 violation: entries "); print(int_str(e1));
+    print(" (var "); print(int_str(ent_var(e1))); print(") and "); print(int_str(e2));
+    print(" (var "); print(int_str(ent_var(e2))); print(") both at ");
+    rl_print_loc(loc);
+    print(", coexist ["); print(int_str(ent_live_start(e1))); print("..");
+    print(int_str(ent_live_end(e1))); print("] x ["); print(int_str(ent_live_start(e2)));
+    print(".."); print(int_str(ent_live_end(e2))); println("]");
+}
+
+// 规则 ② 违反诊断
+fn rl_report_rule2(func_i: int, gv: int, inst: int) {
+    print("regalloc-consistency: "); rl_func_name(func_i);
+    print(": rule 2 violation: read of var "); print(int_str(gv));
+    vn := get_ir_var_name(gv);
+    if str_len(vn) > 0 { print(" name="); print(vn); }
+    print(" at instr "); print(int_str(inst));
+    println(" not covered by any active version entry");
+}
+
+// 规则 ②（框架）：寄存器驻留变量的读点必须有活跃版本覆盖。
+// 读点 = 指令 i 以 v 为源操作数（IR_STORE 的 s1 是写目标，排除；dest 从不读）。
+// 覆盖义务边界 = 首个版本化定值（IR_ALLOC/IR_STORE）之后——版本区间自定值点起
+// 连续覆盖至 last_ref，义务内读点恒有版本（构造不变量）；义务前读窗口（ALLOC_
+// ARRAY/ALLOC_STRUCT 等非版本化定值供给）待 compute_entries 按格式定稿 §4.1
+// 「dest ≥ 0 = 定值点」升级后自动纳入——本检查零改动（TODO 注记同 plan Task 2）。
+fn rl_rule2_func(func_i: int, vs: int, vc: int, ist: int, ic: int, es: int, ec: int) -> int {
+    violations : ., mut = 0;
+    lv : ., mut = 0;
+    loop {
+        if lv >= vc { break; }
+        gv := vs + lv;
+        if meta_reg_for_var(gv) < 0 { lv = lv + 1; continue; }
+        // 收集该 var 的版本条目（def ≥ 0；表内按定值点升序）——先数再收集
+        m : ., mut = 0;
+        ei : ., mut = 0;
+        loop {
+            if ei >= ec { break; }
+            e := es + ei;
+            if ent_var(e) == gv && ent_def(e) >= 0 { m = m + 1; }
+            ei = ei + 1;
+        }
+        if m <= 0 { lv = lv + 1; continue; }  // 无版本化定值：义务范围为空
+        vers : string, mut = alloc(m * 8);
+        vj : ., mut = 0;
+        ei = 0;
+        loop {
+            if ei >= ec { break; }
+            e := es + ei;
+            if ent_var(e) == gv && ent_def(e) >= 0 {
+                w64(vers, vj * 8, e);
+                vj = vj + 1;
+            }
+            ei = ei + 1;
+        }
+        // 逐指令升序扫读点；版本游标单调推进（版本区间自 def 起无缝相接）
+        cursor : ., mut = 0;
+        first_def := r64(vers, 0 * 8);
+        ii : ., mut = 0;
+        loop {
+            if ii >= ic { break; }
+            inst := ist + ii;
+            op := iri_op(inst);
+            rd : ., mut = 0;
+            s1 := iri_s1(inst);
+            s2 := iri_s2(inst);
+            if s1 == gv && op != IR_STORE { rd = 1; }
+            if s2 == gv { rd = 1; }
+            if rd != 0 && ii >= ent_def(first_def) {
+                // 推进游标至最后一个 def ≤ ii 的版本
+                loop {
+                    if cursor + 1 >= m { break; }
+                    nx := r64(vers, (cursor + 1) * 8);
+                    if ent_def(nx) > ii { break; }
+                    cursor = cursor + 1;
+                }
+                cv := r64(vers, cursor * 8);
+                if ent_live_end(cv) < ii {
+                    if violations < RPT_MAX { rl_report_rule2(func_i, gv, inst); }
+                    violations = violations + 1;
+                }
+            }
+            ii = ii + 1;
+        }
+        lv = lv + 1;
+    }
+    return violations;
+}
+
+// 判定实现（0 = 一致 1 = 违反）——消费条目表（存在区间/home）+ 分配结果
+// （g_opt_meta 投影）。precondition：alloc_registers() 已跑（条目表随算随新）。
+fn verify_regalloc_consistency(func_i: int) -> int {
+    if func_i < 0 || func_i >= g_ir_func_count { return 0; }
+    es := entry_start(func_i);
+    ec := entry_count(func_i);
+    if ec <= 0 { return 0; }
+    ic := r64(g_ir_func_instr_count, func_i * 8);
+    ist := r64(g_ir_func_instr_start, func_i * 8);
+    vc := r64(g_ir_func_var_count, func_i * 8);
+    vs := r64(g_ir_func_var_start, func_i * 8);
+
+    // 规则 ①：位置组 = 寄存器（meta 投影，loc = 寄存器号）∪ home（回填 seam，
+    // loc = LOC_HOME_BASE + home）。收集有位置条目 → 按 (loc, live_start) 归并
+    // 排序 → 同 loc 段内 ls 升序单遍维持最大 live_end：max_end ≥ 当前 ls ⟹ 相交。
+    cnt : ., mut = 0;
+    ei : ., mut = 0;
+    loop {
+        if ei >= ec { break; }
+        e := es + ei;
+        if ent_live_start(e) >= 0 && ent_live_end(e) >= 0 {
+            v := ent_var(e);
+            if meta_reg_for_var(v) >= 0 { cnt = cnt + 1; }
+            else if ent_home(e) >= 0 { cnt = cnt + 1; }
+        }
+        ei = ei + 1;
+    }
+    rule1_viol : ., mut = 0;
+    if cnt > 1 {
+        rec : string, mut = alloc(cnt * 16);
+        ci : ., mut = 0;
+        ei = 0;
+        loop {
+            if ei >= ec { break; }
+            e := es + ei;
+            if ent_live_start(e) >= 0 && ent_live_end(e) >= 0 {
+                v := ent_var(e);
+                loc : ., mut = -1;
+                rn := meta_reg_for_var(v);
+                if rn >= 0 { loc = rn; }
+                else if ent_home(e) >= 0 { loc = LOC_HOME_BASE + ent_home(e); }
+                if loc >= 0 {
+                    w64(rec, ci * 16, loc);
+                    w64(rec, ci * 16 + 8, e);
+                    ci = ci + 1;
+                }
+            }
+            ei = ei + 1;
+        }
+        rl_merge_sort(rec, cnt);
+        run_start : ., mut = 0;
+        loop {
+            if run_start >= cnt { break; }
+            run_end : ., mut = run_start + 1;
+            loop {
+                if run_end >= cnt { break; }
+                if r64(rec, run_end * 16) != r64(rec, run_start * 16) { break; }
+                run_end = run_end + 1;
+            }
+            maxj : ., mut = -1;
+            zi : ., mut = run_start;
+            loop {
+                if zi >= run_end { break; }
+                e := r64(rec, zi * 16 + 8);
+                if maxj >= 0 {
+                    mej := r64(rec, maxj * 16 + 8);
+                    if ent_live_end(mej) >= ent_live_start(e) {
+                        if rule1_viol < RPT_MAX {
+                            rl_report_rule1(func_i, r64(rec, zi * 16), mej, e);
+                        }
+                        rule1_viol = rule1_viol + 1;
+                    }
+                }
+                if maxj < 0 || ent_live_end(e) > ent_live_end(r64(rec, maxj * 16 + 8)) {
+                    maxj = zi;
+                }
+                zi = zi + 1;
+            }
+            run_start = run_end;
+        }
+    }
+
+    // 规则 ②（框架）：寄存器驻留变量的读点活跃版本覆盖
+    rule2_viol : ., mut = 0;
+    if vc > 0 && ic > 0 {
+        rule2_viol = rl_rule2_func(func_i, vs, vc, ist, ic, es, ec);
+    }
+
+    if rule1_viol > 0 || rule2_viol > 0 { return 1; }
+    return 0;
+}
+
+// 全函数自检（O2 构建路径调用点）：0 = 全部一致；违反时打印诊断并返回违反
+// 函数数。成功静默（自检通过 = 不打扰构建输出）。
+fn regalloc_verify_all() -> int {
+    bad : ., mut = 0;
+    fi : ., mut = 0;
+    loop {
+        if fi >= g_ir_func_count { break; }
+        bad = bad + verify_regalloc_consistency(fi);
+        fi = fi + 1;
+    }
+    return bad;
+}
+
+// ===== Task 5 测试钩子（cir --check-regalloc 载体专用注入；真实构建路径
+// 永不调用——注入只存在于 cir debug 分支，不触碰生产分配器行为）=====
+// 各注入在全部函数范围找目标（不假设 func 0 = 被测 main——按 cwd 解析差异，
+// 标准库函数可能并入 IR 使 func 序移位；找「首个满足形状的函数」保证确定性）。
+
+// 注入 ①-home 组冲突：取两条不同 var 的共存条目，home 置同一槽 7。
+// 约束：两 var 均须 meta 未分配（寄存器驻留条目的位置 = 寄存器，位置判定优先；
+// home 组是栈/驱逐槽 seam——与真实分配器行为同构：寄存器驻留条目不落 home）。
+fn try_inject_home_conflict(func_i: int) -> int {
+    es := entry_start(func_i);
+    ec := entry_count(func_i);
+    if ec < 2 { return 0; }
+    e1i : ., mut = 0;
+    loop {
+        if e1i >= ec { break; }
+        e1 := es + e1i;
+        v1 := ent_var(e1);
+        if meta_reg_for_var(v1) >= 0 { e1i = e1i + 1; continue; }
+        e2i : ., mut = e1i + 1;
+        loop {
+            if e2i >= ec { break; }
+            e2 := es + e2i;
+            v2 := ent_var(e2);
+            if v1 != v2 && meta_reg_for_var(v2) < 0 &&
+               entries_coexist(func_i, e1, e2) != 0 {
+                w32(g_ir_entries, e1 * ESZ_ENTRY + OFF_ENTRY_HOME, 7);
+                w32(g_ir_entries, e2 * ESZ_ENTRY + OFF_ENTRY_HOME, 7);
+                return 1;
+            }
+            e2i = e2i + 1;
+        }
+        e1i = e1i + 1;
+    }
+    return 0;
+}
+
+fn inject_home_conflict() -> int {
+    fi : ., mut = 0;
+    loop {
+        if fi >= g_ir_func_count { break; }
+        if try_inject_home_conflict(fi) != 0 { return 1; }
+        fi = fi + 1;
+    }
+    return 0;
+}
+
+// 追加一条 OPT_KEY_REG_ASSIGN 记录（格式同 alloc_registers 写侧；首个匹配即
+// 生效——故伪造目标须是真实分配未覆盖的 var，后端 get_reg_for_var 同语义）
+fn meta_append_reg_assign(var_idx: int, reg: int) {
+    grow_opt_meta(g_opt_meta_count + 1);
+    eo := g_opt_meta_count * OPT_META_STRIDE;
+    store8(g_opt_meta, eo, 0); store8(g_opt_meta, eo + 1, 0);
+    store8(g_opt_meta, eo + 2, 0); store8(g_opt_meta, eo + 3, 0);  // OPT_KEY_REG_ASSIGN=0
+    dl : ., mut = 4 + 8;
+    store8(g_opt_meta, eo + 4, dl % 256); store8(g_opt_meta, eo + 5, (dl / 256) % 256);
+    store8(g_opt_meta, eo + 6, (dl / 65536) % 256); store8(g_opt_meta, eo + 7, (dl / 16777216) % 256);
+    store8(g_opt_meta, eo + 8, 1); store8(g_opt_meta, eo + 9, 0);
+    store8(g_opt_meta, eo + 10, 0); store8(g_opt_meta, eo + 11, 0);  // count = 1
+    store8(g_opt_meta, eo + 12, var_idx % 256); store8(g_opt_meta, eo + 13, (var_idx / 256) % 256);
+    store8(g_opt_meta, eo + 14, (var_idx / 65536) % 256); store8(g_opt_meta, eo + 15, (var_idx / 16777216) % 256);
+    store8(g_opt_meta, eo + 16, reg % 256); store8(g_opt_meta, eo + 17, (reg / 256) % 256);
+    store8(g_opt_meta, eo + 18, (reg / 65536) % 256); store8(g_opt_meta, eo + 19, (reg / 16777216) % 256);
+    g_opt_meta_count = g_opt_meta_count + 1;
+}
+
+// 注入 ①-寄存器组冲突：找一对不同 var 的共存条目 (e1, e2)，向 g_opt_meta 追加
+// 两个伪造 REG_ASSIGN 对：var(e1)→reg 3、var(e2)→reg 3 → 两 var 版本条目同组
+// 同寄存器且共存 → 规则 ① 寄存器组违反。
+// 注：不依赖真实分配器输出（2026-09-06 实测 alloc_registers 现分配结果恒为空——
+// 见 opt.cr alloc 注记），自造 meta 保证注入确定；首个匹配语义 = 无冲突（新块
+// 对未出现过对 var 生效）。注入仅存在于 cir debug 分支。
+fn try_inject_reg_conflict(func_i: int) -> int {
+    es := entry_start(func_i);
+    ec := entry_count(func_i);
+    if ec < 2 { return 0; }
+    e1i : ., mut = 0;
+    loop {
+        if e1i >= ec { break; }
+        e1 := es + e1i;
+        v1 := ent_var(e1);
+        e2i : ., mut = e1i + 1;
+        loop {
+            if e2i >= ec { break; }
+            e2 := es + e2i;
+            v2 := ent_var(e2);
+            if v1 != v2 && entries_coexist(func_i, e1, e2) != 0 {
+                meta_append_reg_assign(v1, 3);
+                meta_append_reg_assign(v2, 3);
+                return 1;
+            }
+            e2i = e2i + 1;
+        }
+        e1i = e1i + 1;
+    }
+    return 0;
+}
+
+fn inject_reg_conflict() -> int {
+    fi : ., mut = 0;
+    loop {
+        if fi >= g_ir_func_count { break; }
+        if try_inject_reg_conflict(fi) != 0 { return 1; }
+        fi = fi + 1;
+    }
+    return 0;
+}
+
+// 注入 ②-读点空洞：找 var——其最后一个版本条目（def ≥ 0 中 def 最大）
+// live_end > def（定值后仍有读）——把该 var 置为寄存器驻留（伪造 meta 对
+// var→reg 3，独立于真实分配输出）并把该版本 live_end 截断为 def → 其后的
+// 读点无活跃版本覆盖 → 规则 ② 违反（规则 ① 不受扰：该 reg 组内只有此 var
+// 自己的版本条目，版本间不共存）。
+fn try_inject_read_gap(func_i: int) -> int {
+    vc := r64(g_ir_func_var_count, func_i * 8);
+    vs := r64(g_ir_func_var_start, func_i * 8);
+    es := entry_start(func_i);
+    ec := entry_count(func_i);
+    lv : ., mut = 0;
+    loop {
+        if lv >= vc { break; }
+        gv := vs + lv;
+        // 该 var 最后一条 def ≥ 0 条目（表内定值点升序 → 末条即 def 最大）
+        last : ., mut = -1;
+        ei : ., mut = 0;
+        loop {
+            if ei >= ec { break; }
+            e := es + ei;
+            if ent_var(e) == gv && ent_def(e) >= 0 { last = e; }
+            ei = ei + 1;
+        }
+        if last >= 0 && ent_live_end(last) > ent_def(last) {
+            meta_append_reg_assign(gv, 3);
+            w32(g_ir_entries, last * ESZ_ENTRY + OFF_ENTRY_LE, ent_def(last));
+            return 1;
+        }
+        lv = lv + 1;
+    }
+    return 0;
+}
+
+fn inject_read_gap() -> int {
+    fi : ., mut = 0;
+    loop {
+        if fi >= g_ir_func_count { break; }
+        if try_inject_read_gap(fi) != 0 { return 1; }
+        fi = fi + 1;
+    }
+    return 0;
+}
+
 // ------------------------------------------------------------------
 // Register allocation: rewrite IR operands to encode physical regs
 // ------------------------------------------------------------------
@@ -650,6 +1116,12 @@ fn alloc_registers() {
 
         // Write register assignments to g_opt_meta (flat array of var_idx+reg_num pairs)
         // Store register assignments in g_opt_meta (simple format: var_idx,reg pairs)
+        // ⚠️ 已知（2026-09-06 实测注记）：rc 恒为 0——instr 循环每步对 last_ref < ii
+        // 的已分配 var 复位 var_reg（「归还」），循环末只保留末指令仍活跃的 var，实际
+        // 无 var 存活 → g_opt_meta 无 REG_ASSIGN 对 → 后端全栈发射（正确但无寄存器
+        // 加速）。本函数语义本轮不动（v6 Task 5 范围控制）；寄存器复用/回池修复随
+        // CAG 分配器升级（docs/regalloc-cache-mapping.md §五）同批——判定消费 seam
+        // 已就绪（meta_reg_for_var/verify 按分配输出消费，届时自动接管）。
         rc : ., mut = 0;
         vi = 0;
         loop { if vi >= vc { break; }

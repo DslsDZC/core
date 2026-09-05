@@ -234,12 +234,80 @@ def check_coexistence() -> tuple:
     return True, "coexistence OK"
 
 
+def check_regalloc(source: str, extra_flags) -> tuple:
+    """cir --check-regalloc 通道：O2 强制分配 + 判定自检，返回 (rc, stdout)。"""
+    with tempfile.NamedTemporaryFile("w", suffix=".cr", delete=False) as f:
+        f.write(source)
+        src = f.name
+    try:
+        r = subprocess.run([str(COREC), "cir", src, "--check-regalloc"] + extra_flags,
+                           capture_output=True, text=True, cwd=BASE, timeout=120)
+        return r.returncode, r.stdout + r.stderr
+    finally:
+        try:
+            os.unlink(src)
+        except FileNotFoundError:
+            pass
+
+
+SUMMARY_LINE = re.compile(r"^regalloc-consistency: funcs (\d+) violations (\d+)$", re.MULTILINE)
+VIOLATION_LINE = re.compile(r"^regalloc-consistency: func \d+ \(.+\): rule (\d+) violation", re.MULTILINE)
+
+
+def check_regalloc_consistency() -> tuple:
+    """Task 5：(a) O2 分配的正确程序自检静默通过（rc=0、无 violation 行）。
+    覆盖路径真实消费分配结果（g_opt_meta var→reg 对投影到条目，规则 ① 逐寄存器组
+    sweep）+ 版本区间覆盖读点断言（规则 ② 框架）。fib 递归密集 + 6 变量程序使
+    a-e 占 5 个 callee-saved（f 落栈）——寄存器组/读点覆盖均实际触发。"""
+    for name, src in (
+        ("fib", "fn fib(n:int)->int{if n<2{return n;}return fib(n-1)+fib(n-2);}\n"
+                "fn main()->int{return fib(10);}\n"),
+        ("multi-var", "fn main()->int{a:=1;b:=2;c:=3;d:=4;e:=5;f:=6;"
+                      "return a+b+c+d+e+f;}\n"),
+    ):
+        rc, out = check_regalloc(src, [])
+        if rc != 0:
+            return False, f"check-regalloc({name}) rc={rc}:\n{out[-500:]}"
+        m = SUMMARY_LINE.search(out)
+        if not m:
+            return False, f"check-regalloc({name}): no summary line:\n{out[-500:]}"
+        if int(m.group(2)) != 0:
+            return False, f"check-regalloc({name}): violations != 0:\n{out[-500:]}"
+        if VIOLATION_LINE.search(out):
+            return False, f"check-regalloc({name}): violation lines on correct program:\n{out[-500:]}"
+    return True, "regalloc consistency self-check OK"
+
+
+def check_regalloc_violations() -> tuple:
+    """Task 5 红路径：注入冲突条目 → verify 返回违反（rc=1 + rule N 诊断行）。
+    注入经测试钩子（cir 隐藏 debug 标志——真实构建路径永不注入）：
+    - --inject-home-conflict: 两条共存不同 var 条目 home 置同槽 → 规则 1（home 组）
+    - --inject-reg-conflict : 未分配 var f 伪造 meta 对 (f, e 的寄存器) → 规则 1（寄存器组）
+    - --inject-read-gap     : 寄存器驻留 var 末版区间截断到定值点 → 规则 2（读点无版本）
+    O2 正确程序（无注入）rc=0 已在 check_regalloc_consistency 断言——同一二进制
+    注入后 rc=1 即证明 verify 真消费了分配/条目数据而非恒真。"""
+    src = "fn main()->int{a:=1;b:=2;c:=3;d:=4;e:=5;f:=6;return a+b+c+d+e+f;}\n"
+    for flag, rule in (("--inject-home-conflict", "1"),
+                       ("--inject-reg-conflict", "1"),
+                       ("--inject-read-gap", "2")):
+        rc, out = check_regalloc(src, [flag])
+        if rc != 1:
+            return False, f"check-regalloc +{flag}: rc={rc}, expected 1:\n{out[-500:]}"
+        m = SUMMARY_LINE.search(out)
+        if not m or int(m.group(2)) == 0:
+            return False, f"check-regalloc +{flag}: summary missing or 0 violations:\n{out[-500:]}"
+        v = VIOLATION_LINE.search(out)
+        if not v or v.group(1) != rule:
+            return False, f"check-regalloc +{flag}: no rule {rule} violation line:\n{out[-500:]}"
+    return True, "regalloc violations detected (rules 1/1/2)"
+
+
 def main() -> int:
     if not COREC.exists():
         print("[FAIL] missing build/corec")
         return 1
     passed = 0
-    total = 3
+    total = 5
     ok, msg = run_smoke()
     if ok:
         passed += 1
@@ -252,6 +320,14 @@ def main() -> int:
     if ok:
         passed += 1
     print(f"[{'PASS' if ok else 'FAIL'}] coexistence: {msg}")
+    ok, msg = check_regalloc_consistency()
+    if ok:
+        passed += 1
+    print(f"[{'PASS' if ok else 'FAIL'}] regalloc consistency: {msg}")
+    ok, msg = check_regalloc_violations()
+    if ok:
+        passed += 1
+    print(f"[{'PASS' if ok else 'FAIL'}] regalloc violations: {msg}")
     print(f"{passed}/{total} passed")
     return 0 if passed == total else 1
 
