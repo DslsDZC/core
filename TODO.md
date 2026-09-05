@@ -172,20 +172,19 @@
   - 寄存器分配实现规划：共存关系落定（图活性）→ 判定规约 → 贪心放置（opt.cr 升级）→ checker 自检
   - 实现规划（远期）：能力流分析（PointerAnalysis 推广）+ 三 pass 能力化重写——内存模型层面大改
 
-### 格形态 IR 升级（C 路线，2026-08-27 记）
-- 设计：`docs/superpowers/specs/2026-08-27-lattice-form-ir-design.md`——`.ccr` 升级为格形态（v6）；三层形态：图 = `.cir` / 格 = `.ccr`（格形态）/ 编码 = ELF
-- 命名已定案（2026-08-27）：方案 A——扩展名 `.ccr` 保留，缩写展开 = Core Region Representation；扩展名 / magic / CLI 不动
-- 执行人：第二维护者（TODO 横向扩展）；验证闭环：DslsDZC
-- 事项：
-  - 命名落地（方案 A 已定案：扩展名 / magic / CLI 不动；展开 = Core Region Representation，文档已先行更新，执行阶段复核）
-  - 格式 v6 序列化/反序列化（ccr_io.cr）+ v5 → v6 一次性转换工具（数学结构大改：线性程序 → 存在结构，不承诺后向兼容）
-  - v6 存在结构段：条目版本 + 存在区间（图活性）+ 共存 + home + 无配方标记（memory-model 条款 4b）
-  - ELF 后端适配（src/arch/linux/ld/）
-  - CLI / corearch 参数迁移（若走方案 B）
-  - 自举管线（build_selfhost_native.py、bootstrap/corec/ir/ccr.py）
-  - 测试迁移（tests/selfhost/、tests/bootstrap/）
-  - 文档复核（coreir-schema / CLAUDE.md / project-book / compcert-reference——描述已先行更新）
-  - 寄存器分配判定接入格形态（存在区间/共存消费 + 贪心放置，docs/regalloc-cache-mapping.md §4）
+### 格形态 IR 升级（C 路线）——**v6 主线 Task 1-6 完成（2026-09-06）**
+- 设计：`docs/superpowers/specs/2026-08-27-lattice-form-ir-design.md` + 格式定稿 `specs/2026-09-05-lattice-ir-v6-format.md`（B 方向：存在结构主体；格层语义范式无关承诺/编码层字节 = hw-map 域，层定位补定）
+- 命名已定案：方案 A（扩展名/magic/CLI 不动；.ccr = Core Region Representation）
+- 事项完成核对：
+  - ~~格式 v6 序列化/反序列化~~（2026-09 Task 4：段表架构 + ENT 28B 落盘，v6-only——v5→v6 转换工具按定稿取消：.ccr 中间产物零生态）
+  - ~~存在结构段：条目版本/存在区间/共存/home/无配方标记~~（Task 1-3 数据面 + Task 4 落盘；无配方标记 = ENT flags bit0 字段就位）
+  - ~~ELF 后端适配~~（v6 段表内 NOD 重建内存态，发射语义零改动；自举闭环 byte-identical 实证）
+  - ~~CLI~~（方案 A：不动；corearch 加 --table/--dump-events 属 HIT 线）
+  - ~~自举管线~~（v6 全程接管 build；bootstrap/corec/ir/ccr.py 不存在——.ccr 仅 self-hosted 读写）
+  - ~~测试迁移~~（test_ccr_v6/region_cfg walker v6/全链回归）
+  - ~~文档复核~~（coreir-schema/CLAUDE.md/project-book/compcert-reference 已按实现形状同步——Task 6）
+  - ~~寄存器分配判定接入格形态~~（Task 5：regalloc-consistency.corespec 规约 + sweep 自检；**贪心放置 = 后续**——上下文贪心升级挂账）
+- 后续挂账：SYM 归并/REG 坐标化（v6.0 保守路径，Task 4 评审 I-1）、ENT flags 无配方完整语义（条款 4b）、判定 R3/R4（驱逐配对/调用失效）
 
 ### 寄存器分配 = 缓存语义映射实例（落地，2026-08-27 记）
 - 设计：`docs/regalloc-cache-mapping.md`（正式参考）+ `docs/superpowers/specs/2026-08-27-regalloc-cache-mapping-design.md`（设计记录）——分配 = 格 → 编码的映射实例（条款 7）；驱逐不变量 = order-free 语义保持；判定单层、分配算法定案 = 上下文贪心（零证明）

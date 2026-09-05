@@ -250,9 +250,29 @@ struct 类型关联布局描述符。**默认由编译器推导自然布局**（
 
 `lower_to_ccr()` 将HDFG线性化为线性 IR 指令数组供后端消费。规约约束节点（opcode ≥ 30）照常线性化，但 `corearch` 后端在代码生成时跳过它们。
 
-### `.ccr` 二进制序列化（v5，2026-08）
+### `.ccr` 二进制序列化（v6，2026-09；v6-only）
 
-`.ccr` 文件头 magic 为 `0x31524343`（ASCII `CCR1`）。序列化 v2（版本号 5）：文件尾部追加 SG region 段（`sg_count × 24B`：kind/enter/exit/parent/nstart/ncount 六个 i32，即 `ESZ_SG_DISK`），v4 文件兼容加载。**DFEdge 不落盘 `.ccr`**——CCR1 writer（`save_ccr`，ccr_io.cr）只序列化指令/变量/字符串等数组；边仅在内存与 `.cir` 缓存中（v5 按 4×8B：from/to/next/kind，0=data, 1=state）。
+`.ccr` 文件头 magic 为 `0x31524343`（ASCII `CCR1`）。v6 = 段表架构 + 存在结构段（字节真相 = `ccr_io.cr` 头注释 + `docs/superpowers/specs/2026-09-05-lattice-ir-v6-format.md` 设计定稿；v6.0 保守实施，SYM/REG 归并坐标化 = 后续任务）：
+
+```
+[header 16B]: magic u32="CCR1" | version u32=6 | seg_count u32=5 | reserved u32=0
+[seg table 5×12B]: {tag u32, offset u32, size u32}——规范序（tag=行号 1..5）
+[seg bodies]:
+  STR(1) 字符串表：   [str_count] [× {len u32, data}]（同 v5）
+  SYM(2) 符号面：      v5 func_meta(28B/函数)/vars(12B)/str_consts/structs/
+                      enums/globals(16B)/opt_meta 自描述拼接（v6.0 未归并）
+  NOD(3) 节点表：      [nod_count] [×28B {op i32,dest i32,src1 i64,src2 i32,
+                      src3 i32,tk i32}]——v5 instrs 内容不变；NOD id = 文件序
+                      （图坐标 D1）
+  ENT(4) 条目表：      [ent_count] [×28B {var_id i32,version u32,def_nod i32,
+                      live_start u32,live_end u32(半开:最后使用点+1),home i32,
+                      flags u32}]——存在结构核心（内存表 24B 闭区间 →
+                      version=同 var 定值升序序数、live_end+1）
+  REG(5) region 表：   [sg_count] [×24B kind/enter/exit/parent/nstart/ncount]
+                      （v5 sgs 内容，坐标与 NOD 文件序同一）
+```
+
+v6-only：load 校验 version==6（无 v5 兼容/转换——.ccr 为管线中间产物现生成）。**DFEdge 不落盘 `.ccr`**——边仅在内存与 `.cir` 缓存中（v5 按 4×8B：from/to/next/kind，0=data, 1=state）。
 
 ---
 
