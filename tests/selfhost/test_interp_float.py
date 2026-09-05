@@ -38,6 +38,8 @@ CASES = [
     ("addr_index", "fn main() -> int { a := [10, 20, 30]; p := &a[1]; if p == 0 { return 1; } return 0; }", 0),
     # ── 纯 int 回归 ──
     ("int_arith", "fn main() -> int { a := -7; b := 3; c := a / b; d := a % b; if c == -2 && d == -1 { return 1; } return 0; }", 1),
+    # ── BC-CONST: interpreter string values remain intern indices ──
+    ("interp_strings", "fn main() -> int { s := \"abc\"; t := \"ab\" + \"c\"; if str_len(s) != 3 { return 1; } if str_eq(s, t) == 0 { return 2; } i := 1; if s[i] != 98 { return 3; } return 0; }", 0),
 ]
 
 

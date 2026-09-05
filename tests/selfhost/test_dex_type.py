@@ -114,11 +114,48 @@ def test_dex_literal_type():
     return True
 
 
+def test_wide_decimal_literal():
+    # A value whose integer part is wider than the 53-bit significand must
+    # not call the integer power helper with a negative exponent.
+    src = "fn main() -> int { x : dex = 2305843009213693952.0; return 1; }\n"
+    r = run_corec(["check"], src)
+    if r.returncode != 0:
+        print(f"[FAIL] wide decimal literal: exit={r.returncode}")
+        print(r.stdout + r.stderr)
+        return False
+    print("[PASS] wide decimal literal does not overflow lexer conversion")
+    return True
+
+
+def test_static_string_bounds():
+    src = 'fn main() -> int { return "abc"[3]; }\n'
+    r = run_corec(["check"], src)
+    out = r.stdout + r.stderr
+    if r.returncode != 1 or "R02" not in out:
+        print(f"[FAIL] static string bounds: exit={r.returncode}")
+        print(out)
+        return False
+    print("[PASS] literal string index at length is rejected with R02")
+    return True
+
+
+def test_decimal_literal_overflow_is_reported():
+    src = "fn main() -> int { x : dex = 123456789012345678901.0; return 1; }\n"
+    r = run_corec(["check"], src)
+    out = r.stdout + r.stderr
+    if r.returncode == 0 or "too wide" not in out:
+        print(f"[FAIL] wide decimal literal should be rejected: exit={r.returncode}")
+        print(out)
+        return False
+    print("[PASS] over-wide decimal literal is rejected explicitly")
+    return True
+
+
 def main():
     if not COREC.exists():
         print(f"[FAIL] missing native compiler: {COREC}")
         return 1
-    results = [test_dex_type_declares(), test_dex_literal_type()]
+    results = [test_dex_type_declares(), test_dex_literal_type(), test_wide_decimal_literal(), test_static_string_bounds(), test_decimal_literal_overflow_is_reported()]
     passed = sum(results)
     print(f"{passed}/{len(results)} passed")
     return 0 if all(results) else 1

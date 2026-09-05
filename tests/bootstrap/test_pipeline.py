@@ -322,6 +322,30 @@ test('Mod sign follows dividend (7%-3)', '''
 fn main() -> int { return 7 % -3; }
 ''', 1)
 
+# ── Lexer integer literal forms and wide apx literals ──
+from corec.syntax.tokens import TokenType
+
+def check_integer_literals():
+    tokens = Lexer('0x1f 0o17 0b1010 1_000').tokenize()
+    values = [int(t.lexeme) for t in tokens[:-1]]
+    if values != [31, 15, 10, 1000]:
+        print(f'[FAIL] integer literal forms: got {values}')
+        return False
+    try:
+        Lexer('0x').tokenize()
+    except SyntaxError:
+        pass
+    else:
+        print('[FAIL] empty prefixed integer was accepted')
+        return False
+    print('[PASS] integer literal forms: hex/octal/binary/separators')
+    return True
+
+if not check_integer_literals():
+    failed += 1
+else:
+    passed += 1
+
 # ── Summary ──
 print(f"\n{passed}/{passed + failed} passed", end="")
 if failed > 0:

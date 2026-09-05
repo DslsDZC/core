@@ -10,7 +10,8 @@ PT_LOAD : int = 1;
 PF_RX : int = 5;
 PF_RW : int = 6;
 
-fn r16(buf: string, pos: int) -> int { return bu8(buf,pos) + bu8(buf,pos+1)*256; }
+// Avoid the name r16: Intel syntax parses `call r16` as a register operand.
+fn read_u16(buf: string, pos: int) -> int { return bu8(buf,pos) + bu8(buf,pos+1)*256; }
 
 TEXT_BASE : int = 4194304;  // 0x400000 - base address of code segment
 
