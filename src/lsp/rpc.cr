@@ -197,7 +197,10 @@ fn rpc_send_initialize(id: int) {
     // analysis_kind_type 的下标严格一致（keyword/type/function/variable/
     // comment/string/operator/number）；comment 类无令牌（lexer 跳过注释），
     // 保留仅为客户端主题对齐。
-    out = out + ",\"result\":{\"capabilities\":{\"textDocumentSync\":1,\"completionProvider\":{\"triggerCharacters\":[\"@\"]},\"documentSymbolProvider\":true,\"semanticTokensProvider\":{\"legend\":{\"tokenTypes\":[\"keyword\",\"type\",\"function\",\"variable\",\"comment\",\"string\",\"operator\",\"number\"],\"tokenModifiers\":[]},\"full\":true}}}}";
+    // Task 4 能力通告（2026-08-28）：hover/definition 处理器已接线
+    // （rpc_dispatch L292-293），此前缺通告——客户端（Zed 等）只在通告后
+    // 才发送对应请求。
+    out = out + ",\"result\":{\"capabilities\":{\"textDocumentSync\":1,\"hoverProvider\":true,\"definitionProvider\":true,\"completionProvider\":{\"triggerCharacters\":[\"@\"]},\"documentSymbolProvider\":true,\"semanticTokensProvider\":{\"legend\":{\"tokenTypes\":[\"keyword\",\"type\",\"function\",\"variable\",\"comment\",\"string\",\"operator\",\"number\"],\"tokenModifiers\":[]},\"full\":true}}}}";
     rpc_send(out);
 }
 

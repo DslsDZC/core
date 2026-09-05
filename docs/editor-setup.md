@@ -69,7 +69,44 @@ code --install-extension editor/vscode-core/
 - 设置 `corelsp.enabled = false` 可关闭 LSP（仅保留语法高亮）。
 - 从源码调试：VS Code 打开 `editor/vscode-core/` 按 F5（见 `.vscode/tasks.json`）。
 
+## Zed（2026-08-28 接入）
+
+### 方式一：扩展（推荐，完整形态：语法高亮 + LSP）
+
+扩展仓库 = **`dslsdzc/core-plugin-zed`**（本地开发路径 `~/core-plugin-zed`；core-language v0.3.0——Rust wasm 扩展：`language_server_command` 返回 corelsp 命令路径 + `extension.toml` `[lib]` 声明；语法 grammar 同源）：
+
+1. Zed → Extensions（扩展）面板 → **Install Dev Extension（安装开发扩展）** → 选择 `~/core-plugin-zed`
+2. 打开 `.cr` 文件：语法高亮 + 诊断 + 悬停 + F12 跳转 + `@` 补全 + 语义着色全部生效
+
+扩展结构：`extension.toml`（`[lib]` + `language_servers` 段）、`src/lib.rs`（`language_server_command` → corelsp 绝对路径）、`languages/core/config.toml`（`language_servers = ["corelsp"]`）、`grammars/`（语法）。**命令路径在 Rust 代码里**（`~/core-plugin-zed/src/lib.rs`）——纯 TOML 无法指定，这是 Zed 扩展的机制约束。构建：`cargo build --release --target wasm32-wasip1` → `extension.wasm`。
+
+### 方式二：settings.json（无扩展时的 LSP 兜底）
+
+本仓库已内置项目配置（`.zed/settings.json`，打开即用）——binary 相对路径以工作区根（仓库根）解析：
+
+```json
+{
+  "lsp": {
+    "corelsp": {
+      "binary": { "path": "build/corelsp" }
+    }
+  },
+  "languages": {
+    "Core": {
+      "language_servers": ["corelsp"],
+      "file_types": ["cr"]
+    }
+  }
+}
+```
+
+**其他项目/全局接入**：全局 `~/.config/zed/settings.json` 同上，`binary.path` 建议用 **绝对路径**（全局配置无工作区根可解析相对路径）。此方式只有 LSP，无语法高亮（高亮需扩展的 grammar）。
+
+- 已通告能力（2026-08-28 补 `hoverProvider`/`definitionProvider` 通告）：诊断（全量同步）、悬浮、跳转定义、补全（`@` 触发）、文档符号、语义令牌。
+- Zed 默认键位：`F12` 跳转定义；悬停即看；LSP 诊断自动显示。
+- 构建 corelsp：`python3 build_selfhost_native.py`（产出 `build/corelsp`）。
+
 ## 其他编辑器
 
-Zed：`editor/zed/`（tree-sitter 语法，暂无 LSP 接入——corelsp 为 stdio 协议，可参照
-[Zed 自定义语言服务器](https://zed.dev/docs/languages) 文档自行接入）。
+其余编辑器（Emacs/LSP-mode、Helix 等）：corelsp 为标准 stdio LSP 服务器，参照各自
+[自定义语言服务器](https://zed.dev/docs/languages) 配置模式接入（要点：绝对路径 + `.cr` 文件类型注册 + language_servers 挂载）。

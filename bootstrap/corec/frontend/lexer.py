@@ -113,9 +113,14 @@ class Lexer:
                     suffix += self.advance()
                 n += suffix
         n = n.replace('_', '')
+        # 前缀进制（0x/0o/0b）整数字面量溢出拒绝——i64 语义，与 self-hosted
+        # lexer 的 base 校准守卫一致（P2）。十进制保持原样词法：self-hosted
+        # 对十进制幅值边界有既有处理（-9223372036854775808），不一致处理。
         if is_prefixed:
-            val = str(int(n[2:].replace('_', ''), base))
-            return Token(TokenType.INT_LIT, val, start_line, start_col)
+            val = int(n[2:], base)
+            if val > 9223372036854775807:
+                self.error("integer literal overflow")
+            return Token(TokenType.INT_LIT, str(val), start_line, start_col)
         if is_float:
             return Token(TokenType.FLOAT_LIT, n, start_line, start_col)
         return Token(TokenType.INT_LIT, n, start_line, start_col)

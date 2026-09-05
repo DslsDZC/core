@@ -7,7 +7,9 @@
 // Magic header for .cir cache files
 // v12: invalidate older call flags, generic cloning/indexing, and yield ASTs.
 // v13: persist nested SG region metadata in per-function cache files.
-CIR_CACHE_MAGIC : int = 0xC1C1C1C1C1C1C1C1;
+// 注意：magic 位模式 = C1C1…（bytes）；以 signed 十进制书写——hex 字面量
+// 0xC1C1C1C1C1C1C1C1 超 i64 上界，会被词法溢出守卫拒绝（见 lexer P2 修复）。
+CIR_CACHE_MAGIC : int = -4485090715960753727;
 CIR_CACHE_VER   : int = 13;
 
 g_cir_write_buf : string, mut;

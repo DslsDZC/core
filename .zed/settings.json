@@ -1,0 +1,13 @@
+{
+  "lsp": {
+    "corelsp": {
+      "binary": { "path": "build/corelsp" }
+    }
+  },
+  "languages": {
+    "Core": {
+      "language_servers": ["corelsp"],
+      "file_types": ["cr"]
+    }
+  }
+}

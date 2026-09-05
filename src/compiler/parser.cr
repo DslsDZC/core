@@ -1708,7 +1708,10 @@ fn parse_all() {
     g_loop_depth = 0; g_loop_stack_cap = 0;
     g_extra_let_count = 0;
     g_block_stmt_count = 0;
-    g_error_count = 0;
+    // 注意：不再清零 g_error_count——tokenize 阶段（词法守卫，如整数字面量
+    // 溢出）已用 add_error 累积错误；parse_all 清零会把它们一并吞掉，
+    // 造成「静默越界/静默环绕」类错误永远不报（run_frontend 在 parse_all
+    // 之后才检查 g_error_count）。parse 自身的语法错误继续 add_error 追加。
     g_mod_path_count = 0; g_mod_path_cap = 0;
     g_iface_count = 0; g_iface_cap = 0;
     g_impl_for_count = 0; g_impl_for_cap = 0;

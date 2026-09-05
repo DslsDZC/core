@@ -124,6 +124,7 @@ fn read_static_runtime_source() -> string {
 // Run the shared frontend pipeline: tokenize → resolve → parse → check
 // Returns 0 on success, 1 on error.
 fn run_frontend() -> int {
+    g_error_count = 0;  // 会话起点清词法/语法错误（tokenize 多轮累积，见 lexer.cr）
     println("[1/5] tokenize...");
     tokenize(g_source);
     println("[2/5] resolve imports...");

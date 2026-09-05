@@ -220,9 +220,20 @@ fn str_int_literal(s: string) -> int {
         else if c >= 65 && c <= 70 { d = c - 55; }
         else if c >= 97 && c <= 102 { d = c - 87; }
         if d < 0 || d >= base { add_error("invalid integer literal"); return 0; }
-        if value > 922337203685477580 ||
-           (value == 922337203685477580 && d > 7) {
-            add_error("integer literal overflow"); return 0;
+        // 溢出守卫按 base 校准：固定 i64max/10 阈值只对十进制有效——base 16
+        // 累积值在最后一次 ×16 直接环绕（0x8000000000000000 → i64min 绕开守卫）。
+        // 阈值必须 = i64max/base（base 10 的末位 d>7 边界保持）。
+        if base == 10 {
+            if value > 922337203685477580 ||
+               (value == 922337203685477580 && d > 7) {
+                add_error("integer literal overflow"); return 0;
+            }
+        } else if base == 16 {
+            if value > 576460752303423487 { add_error("integer literal overflow"); return 0; }
+        } else if base == 8 {
+            if value > 1152921504606846975 { add_error("integer literal overflow"); return 0; }
+        } else {
+            if value > 4611686018427387903 { add_error("integer literal overflow"); return 0; }
         }
         value = value * base + d;
         digits = digits + 1;
@@ -346,7 +357,9 @@ fn skip_ws(src: string, pos: int, max_len: int) -> int {
 
 fn tokenize(_src: string) {
     g_token_count = 0;
-    g_error_count = 0;
+    // 注意：不再清零 g_error_count——res_imports 会重 tokenize（拼接 import
+    // 前后两轮），清零会把首轮词法守卫错误（整数字面量溢出等）吞掉。错误
+    // 清理由 run_frontend 会话起点负责（错误累积跨多轮 tokenize）。
     _pos : ., mut = 0;
     g_pos = 0;
     g_line = 1;

@@ -74,6 +74,15 @@ fn emit_string_bounds(arr_var: int, idx_var: int) {
     emit(IR_BOUNDS_CHECK, -1, idx_var, len_var, 0, 1);
 }
 
+// 字面量下标 + 字符串 → 运行时边界守卫（M-2 遗留：emit_string_bounds
+// 只覆盖变量下标路径，常量下标路径与 arr_len_lit 两头落空——静默越界）。
+fn emit_string_lit_bounds(arr_var: int, idx_lit: int) {
+    if arr_var < 0 || irv_type(arr_var) != TI_STR { return; }
+    idx_var := new_ir_var("_idx_lit", TI_INT);
+    emit(IR_CONST, idx_var, idx_lit, 0, 0, TI_INT);
+    emit_string_bounds(arr_var, idx_var);
+}
+
 fn grow_sg_alloc(needed: int) {
     if needed < g_sg_alloc_cap { return; }
     nc := g_sg_alloc_cap * 2; if nc < 64 { nc = 64; } if nc < needed { nc = needed + 64; }
@@ -764,6 +773,7 @@ emit(IR_STORE, -1, target, val_var, 0, 0);
                 // F1：写路径越界守卫钩子（EXPR_BINARY OP_ASSIGN 遗留路径，同步修复）
                 arr_len_lit : ., mut = arr_len_lit_of(arr_var);
                 if idx_kind == EXPR_INT {
+                    emit_string_lit_bounds(arr_var, ast_int_val(idx_node));
                     if pass_before_array_access(arr_var, -1, ast_int_val(idx_node), arr_len_lit) == 0 {
                         emit(IR_STORE_INDEX, -1, arr_var, val_var, ast_int_val(idx_node), 0);
                     }
@@ -1016,6 +1026,7 @@ emit(IR_STORE, -1, lv, val_var, 0, 0);
             // F1：写路径越界守卫钩子（修复前完全没有——见 compcert-round4 F1）
             arr_len_lit : ., mut = arr_len_lit_of(arr_var);
             if ast_kind(idx_node) == EXPR_INT {
+                emit_string_lit_bounds(arr_var, ast_int_val(idx_node));
                 if pass_before_array_access(arr_var, -1, ast_int_val(idx_node), arr_len_lit) == 0 {
                     emit(IR_STORE_INDEX, -1, arr_var, val_var, ast_int_val(idx_node), 0);
                 }
@@ -1973,6 +1984,7 @@ emit(IR_STORE, -1, lv, val_var, 0, 0);
         }
         v := new_ir_var("elem", TI_INT);
         if idx_kind == EXPR_INT {
+            emit_string_lit_bounds(arr_var, ast_int_val(idx_node));
             if pass_before_array_access(arr_var, -1, ast_int_val(idx_node), arr_len_lit) == 0 {
                 emit(IR_LOAD_INDEX, v, arr_var, 0, ast_int_val(idx_node), 0);
             }
