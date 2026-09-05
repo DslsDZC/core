@@ -104,7 +104,7 @@ M1 模板解释器形态 = 每事件单投影步 `{opcode 字节(≤2), reg 角�
 ### Task 1: HIT 表文件 + toml 解析器接线
 
 **Files:**
-- Create: `src/arch/hit/core-x86.toml`（上节格式全文件，含 4 事件；nand 的 sequence 先以注释占位说明，Task 2 解释器就绪后启用）
+- Create: `src/arch/hit/core-x86.toml`（上节格式全文件，含 4 事件；nand = 单步 and 占位 + M2 注释）
 - Modify: `src/compiler/globals.cr`（表加载全局）
 - Create: `src/arch/hit/hit.cr`（表结构 + `load_hit_table(path)` + `hit_event_lookup(event_id)`）
 - Test: `tests/selfhost/test_hit_table.py`
