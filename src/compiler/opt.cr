@@ -480,6 +480,96 @@ fn dump_entries_summary() {
     }
 }
 
+// ===== v6 Task 3：共存推导（存在区间相交；不落盘——D3 判定现算）=====
+// 格层语义：共存 = 对称关系（无传递性，最弱理论）。条目的 live 区间为
+// 闭区间 [ls, le]（全局指令序坐标——v6 NOD 坐标同源）。
+
+// 单对查询：两条目存在区间相交 ⟺ ls1 ≤ le2 && ls2 ≤ le1（闭区间）。
+// e1/e2 = 全局条目索引；func_i 保留兼容调用约定（跨函数指令区间天然
+// 不重叠，无需按函数过滤）。判定四条之共存互斥的输入。
+fn entries_coexist(func_i: int, e1: int, e2: int) -> int {
+    if e1 < 0 || e2 < 0 { return 0; }
+    if e1 == e2 { return 0; }
+    s1 := ent_live_start(e1); n1 := ent_live_end(e1);
+    s2 := ent_live_start(e2); n2 := ent_live_end(e2);
+    if s1 < 0 || s2 < 0 { return 0; }
+    if s1 <= n2 && s2 <= n1 { return 1; }
+    return 0;
+}
+
+// 同 var 跨版本冲突数（数据自检）：版本按定值点切割，构造保证
+// 版本 j 区间终点 = 版本 j+1 定值点 −1 < 其起点 → 相邻版本必不交。
+// 返回 0 = 版本化正确（任何 >0 = 版本切割 bug）。O(n) 每 var 组。
+fn coexist_version_conflicts(func_i: int) -> int {
+    es := entry_start(func_i);
+    ec := entry_count(func_i);
+    conflicts : ., mut = 0;
+    ei : ., mut = 0;
+    loop {
+        if ei >= ec { break; }
+        e := es + ei;
+        gv := ent_var(e);
+        // 找同 var 的下一版本条目（版本按定值序相邻）
+        ej : ., mut = ei + 1;
+        loop {
+            if ej >= ec { break; }
+            if ent_var(es + ej) == gv {
+                if ent_live_start(es + ej) <= ent_live_end(e) {
+                    conflicts = conflicts + 1;
+                }
+                break;
+            }
+            ej = ej + 1;
+        }
+        ei = ei + 1;
+    }
+    return conflicts;
+}
+
+// 同 home 组内冲突数（判定输入雏形——共存互斥：同槽条目不共存）。
+// home = -1（未分配）不参与；分配后同 home 组内两两检查（组 = 分配器
+// 复用的槽，k 小；若未来组规模大，升级为排序 sweep——D3 不超线性注记）。
+fn coexist_home_conflicts(func_i: int) -> int {
+    es := entry_start(func_i);
+    ec := entry_count(func_i);
+    conflicts : ., mut = 0;
+    ei : ., mut = 0;
+    loop {
+        if ei >= ec { break; }
+        e1 := es + ei;
+        h1 := ent_home(e1);
+        if h1 >= 0 {
+            ej : ., mut = ei + 1;
+            loop {
+                if ej >= ec { break; }
+                e2 := es + ej;
+                if ent_home(e2) == h1 {
+                    if entries_coexist(func_i, e1, e2) != 0 {
+                        conflicts = conflicts + 1;
+                    }
+                }
+                ej = ej + 1;
+            }
+        }
+        ei = ei + 1;
+    }
+    return conflicts;
+}
+
+// --dump-coexist 调试通道（cir 命令调用，Task 3 测试载体）：
+// 每函数输出版本冲突数（应 0）与同 home 组内冲突数（未分配时应 0）。
+fn dump_coexist_summary() {
+    fi : ., mut = 0;
+    loop {
+        if fi >= g_ir_func_count { break; }
+        print("== coexist func "); print(int_str(fi)); print(" (");
+        print(istr_get(r64(g_ir_func_name_idx, fi * 8))); print("):");
+        print(" ver_conf "); print(int_str(coexist_version_conflicts(fi)));
+        print(" home_conf "); println(int_str(coexist_home_conflicts(fi)));
+        fi = fi + 1;
+    }
+}
+
 // ------------------------------------------------------------------
 // Register allocation: rewrite IR operands to encode physical regs
 // ------------------------------------------------------------------

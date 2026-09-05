@@ -197,6 +197,7 @@ fn corec_main() -> int {
     cli_flag_bool("static", "", "Static linking (embed runtime)");
     cli_flag("opt-level", "O", "Optimization level (0,1,2,3; default=1)");
     cli_flag_bool("dump-entries", "", "Hidden debug: versioned entries summary (v6 Task 2 test channel)");
+    cli_flag_bool("dump-coexist", "", "Hidden debug: coexistence summary (v6 Task 3 test channel)");
 
     if cli_parse() != 0 { return 1; }
     // Parse -O flag (default O1)
@@ -497,6 +498,11 @@ fn corec_main() -> int {
         if cli_has("dump-entries") != 0 {
             compute_live_ranges();
             dump_entries_summary();
+            return 0;
+        }
+        if cli_has("dump-coexist") != 0 {
+            compute_live_ranges();
+            dump_coexist_summary();
             return 0;
         }
         dot := df_graph_to_dot();

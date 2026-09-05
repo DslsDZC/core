@@ -171,12 +171,73 @@ def run_smoke() -> tuple:
     return passed == total, "; ".join(detail) if detail else ""
 
 
+
+
+def dump_coexist(source: str) -> tuple:
+    """cir --dump-coexist 通道：返回 (rc, stdout)。"""
+    with tempfile.NamedTemporaryFile("w", suffix=".cr", delete=False) as f:
+        f.write(source)
+        src = f.name
+    try:
+        r = subprocess.run([str(COREC), "cir", src, "--dump-coexist"],
+                           capture_output=True, text=True, timeout=120)
+        return r.returncode, r.stdout + r.stderr
+    finally:
+        os.unlink(src)
+
+
+COEXIST_LINE = re.compile(
+    r"^== coexist func (\d+) \((\S+)\): ver_conf (\d+) home_conf (\d+)$",
+    re.MULTILINE)
+
+
+def check_coexistence() -> tuple:
+    """Task 3：共存推导断言。
+
+    (a) 版本冲突扫描 = 0（版本按定值点切割，同 var 跨版本必不交——数据自检）；
+    (b) home 冲突 = 0（未分配态 home=-1 不参与，共存互斥判定输入雏形）；
+    (c) 概念断言（Python 侧用 --dump-entries 区间数据）：a/b 两变量条目
+        存在区间相交（共存），同一变量两版本区间不相交（不共存）。
+    """
+    src = "fn main()->int{a:=1;b:=2;return a+b;}\n"
+    rc, out = dump_coexist(src)
+    if rc != 0:
+        return False, f"cir --dump-coexist rc={rc}\n{out[-500:]}"
+    m = COEXIST_LINE.search(out)
+    if not m:
+        return False, f"no coexist line in dump:\n{out[-500:]}"
+    vc, hc = int(m.group(3)), int(m.group(4))
+    if vc != 0 or hc != 0:
+        return False, f"coexist: ver_conf={vc} home_conf={hc}, expected 0/0:\n{out}"
+
+    # (c) 区间相交概念断言（Python 侧）
+    rc2, out2 = dump_entries(src)
+    if rc2 != 0:
+        return False, f"dump-entries rc={rc2}"
+    blocks = parse_entry_blocks(out2)
+    if "main" not in blocks:
+        return False, "no main block"
+    ent = blocks["main"]
+    av = [x for x in ent if x["name"] == "a"]
+    bv = [x for x in ent if x["name"] == "b"]
+    if not av or not bv:
+        return False, f"a/b entries missing:\n{out2}"
+    # 取末版本（return 处活跃的是最后定值版——ALLOC 空版区间短暂不相交属正常）
+    a0, b0 = av[-1], bv[-1]
+    coexist = a0["ls"] <= b0["le"] and b0["ls"] <= a0["le"]
+    if not coexist:
+        return False, f"a/b should coexist, ranges {a0['ls']}..{a0['le']} vs {b0['ls']}..{b0['le']}"
+    # a 两版本不相交（若 a 有多版本：a:=1; a=a+b 场景另测；此处 a 单版本跳过——
+    # 版本不交由 (a) ver_conf=0 覆盖）
+    return True, "coexistence OK"
+
+
 def main() -> int:
     if not COREC.exists():
         print("[FAIL] missing build/corec")
         return 1
     passed = 0
-    total = 2
+    total = 3
     ok, msg = run_smoke()
     if ok:
         passed += 1
@@ -185,6 +246,10 @@ def main() -> int:
     if ok:
         passed += 1
     print(f"[{'PASS' if ok else 'FAIL'}] entries versioning: {msg}")
+    ok, msg = check_coexistence()
+    if ok:
+        passed += 1
+    print(f"[{'PASS' if ok else 'FAIL'}] coexistence: {msg}")
     print(f"{passed}/{total} passed")
     return 0 if passed == total else 1
 
