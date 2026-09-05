@@ -1,8 +1,24 @@
 # 格形态 IR v6 二进制格式设计（存在结构主体）
 
+> ## 📌 本文档用途（先读这段）
+>
+> **这份文件回答一个问题：v6 的 `.ccr` 文件在磁盘上长什么样（段布局、每段字段、字节语义）。**
+>
+> - **它是「设计定稿」，不是实现现状，更不是代码文档。** 代码里现在仍是 v5 格式（`ccr_io.cr` 头注释写明 v5 段序列）；本文描述的 v6 段（SYM/NOD/ENT/REG）**一行代码都还没写**。读到「v6 有 XXX 段」不等于代码里有——实现状态以实施计划为准。
+> - **它在文档家族中的位置**：
+>   ```
+>   2026-08-27-lattice-form-ir-design.md  ← 方向定稿（为什么升 v6、存在结构是什么）
+>         ↓ §4.2 的实质化
+>   本文档（v6-format）                     ← 格式设计（字节怎么排）——就是本文
+>         ↓ 实施依据
+>   2026-09-05-lattice-ir-v6.md（计划）     ← 怎么实现（任务分解；Task 4 = 格式 IO 落地）
+>   ```
+> - **与硬件接口表（HIT）的关系**：HIT（`2026-09-05-hardware-interface-table.md`）是**后到**的概念（2026-09-05 同日稍晚定稿），本文档早于它、未含它。衔接点：v6 的 NOD op 是平台无关的 IR 操作，HIT 事件（sub/nand/load/store…）是它的**编码层接口**——「NOD op ↔ HIT event_id」的对齐是实施期事项（本文 §7 开放点 1 同源）。
+> - **代理工作提示**：若你的任务涉及 .ccr 读写/后端发射/存在结构数据，先确认任务的坐标与格式版本——实施计划（`plans/2026-09-05-lattice-ir-v6.md`）里标了「格数据面 Task 1-3 先行（纯内存推导，不落盘）」；格式落盘是 Task 4，**当前代码与测试全部仍是 v5**。不要按本文设计去改 v5 代码，除非你的任务明确是格式 IO。
+
 日期：2026-09-05
 状态：**格式设计定稿（待实现）**——决策拍板：D1 图节点坐标 / D2 corearch 重建投影 / D3 共存推导（sweep，不超线性）。
-关联：`docs/superpowers/specs/2026-08-27-lattice-form-ir-design.md`（方向定稿，§4.2 本设计为其实质化）、`docs/regalloc-cache-mapping.md`（判定四条）、`docs/memory-model-capability-lattice.md` v4、`docs/ir-schema/coreir-schema.md`（v5 规格，v6 实现时同步）、`src/compiler/cir_cache.cr`（图序列化先例）。
+关联：`docs/superpowers/specs/2026-08-27-lattice-form-ir-design.md`（方向定稿，§4.2 本设计为其实质化）、`docs/regalloc-cache-mapping.md`（判定四条）、`docs/memory-model-capability-lattice.md` v4、`docs/ir-schema/coreir-schema.md`（v5 规格，v6 实现时同步）、`src/compiler/cir_cache.cr`（图序列化先例）、`docs/superpowers/plans/2026-09-05-lattice-ir-v6.md`（实施计划——实现状态以它为准）、`docs/superpowers/specs/2026-09-05-hardware-interface-table.md`（HIT——后到概念，NOD op ↔ event_id 对齐见 §7）。
 
 ## 1. 设计原则
 
