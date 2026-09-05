@@ -49,6 +49,72 @@ fn slice_len_set(var_idx: int, len: int) {
     g_ir_slice_len_count = g_ir_slice_len_count + 1;
 }
 
+// F11（运行时界切片，2026-09-05 扩展）：len 字段编码——
+// >= 0 = 字面量长度；<= -2 = 长度 IR 变量（-2-len_var，避开 -1 清除码）；-1 = 已清除/无记录。
+fn slice_len_raw_set(var_idx: int, len_code: int) {
+    si : ., mut = 0;
+    loop { if si >= g_ir_slice_len_count { break; }
+        if r64(g_ir_slice_lens, si * 16) == var_idx {
+            w64(g_ir_slice_lens, si * 16 + 8, len_code);
+            return;
+        }
+        si = si + 1; }
+    if len_code == -1 { return; }  // 清除无条目 = no-op；负编码（长度变量）允许新增
+    grow_ir_slice_lens(g_ir_slice_len_count + 1);
+    w64(g_ir_slice_lens, g_ir_slice_len_count * 16, var_idx);
+    w64(g_ir_slice_lens, g_ir_slice_len_count * 16 + 8, len_code);
+    g_ir_slice_len_count = g_ir_slice_len_count + 1;
+}
+
+// 登记运行时界切片的长度变量；查询返回 len_var（无 → -1）。
+fn slice_len_var_set(var_idx: int, len_var: int) {
+    if var_idx < 0 || len_var < 0 { return; }
+    slice_len_raw_set(var_idx, -2 - len_var);
+}
+
+fn slice_len_var_get(var_idx: int) -> int {
+    si : ., mut = 0;
+    loop { if si >= g_ir_slice_len_count { break; }
+        if r64(g_ir_slice_lens, si * 16) == var_idx {
+            v := r64(g_ir_slice_lens, si * 16 + 8);
+            if v <= -2 { return -2 - v; }
+            return -1;
+        }
+        si = si + 1; }
+    return -1;
+}
+
+// 切片长度沿赋值/LET 传播：无条件同步 src 记录到 dst——src 无记录
+// 时清除 dst（防非切片赋值后陈旧长度残留导致误守卫）。
+fn slice_len_copy_to(dst_var: int, src_var: int) {
+    si : ., mut = 0;
+    loop { if si >= g_ir_slice_len_count { break; }
+        if r64(g_ir_slice_lens, si * 16) == src_var {
+            slice_len_raw_set(dst_var, r64(g_ir_slice_lens, si * 16 + 8));
+            return;
+        }
+        si = si + 1; }
+    slice_len_raw_set(dst_var, -1);
+}
+
+// 切片解引用守卫（运行时界长度）：s1 = idx 变量/字面量，上限 = 长度变量
+// （IR_BOUNDS_CHECK ti=1 动态上限——与 emit_string_bounds 同机制）。
+fn emit_slice_bounds(arr_var: int, idx_var: int) {
+    if arr_var < 0 || idx_var < 0 { return; }
+    lv := slice_len_var_get(arr_var);
+    if lv >= 0 { emit(IR_BOUNDS_CHECK, -1, idx_var, lv, 0, 1); }
+}
+
+fn emit_slice_lit_bounds(arr_var: int, idx_lit: int) {
+    if arr_var < 0 { return; }
+    lv := slice_len_var_get(arr_var);
+    if lv >= 0 {
+        t := new_ir_var("_slice_idx", TI_INT);
+        emit(IR_CONST, t, idx_lit, 0, 0, TI_INT);
+        emit(IR_BOUNDS_CHECK, -1, t, lv, 0, 1);
+    }
+}
+
 // 数组/切片的编译期长度：TYP_ARRAY 的 extra=size；切片查侧表（字面量界）。
 // 未知 → -1（ext_safety 不发射 IR_BOUNDS_CHECK）。
 fn arr_len_lit_of(arr_var: int) -> int {
@@ -742,10 +808,8 @@ fn gen_expr(node: int) -> int {
                     } else {
                         // dex 槽位形式转换（数值迁移 Task 4：apx 槽存 bits，精确槽存缩放）
                         val_var = dex_store_adjust(target, val_var, right);
-                         // F11：切片长度沿赋值传播（RHS 切片 → 拷贝长度；其他 → 清除）
-                         if slice_len_get(target) >= 0 || slice_len_get(val_var) >= 0 {
-                             slice_len_set(target, slice_len_get(val_var));
-                         }
+                         // F11：切片长度沿赋值传播（字面量/运行时界长度变量同步；源无记录则清除）
+                         slice_len_copy_to(target, val_var);
 emit(IR_STORE, -1, target, val_var, 0, 0);
                     }
                 } else {
@@ -774,6 +838,7 @@ emit(IR_STORE, -1, target, val_var, 0, 0);
                 arr_len_lit : ., mut = arr_len_lit_of(arr_var);
                 if idx_kind == EXPR_INT {
                     emit_string_lit_bounds(arr_var, ast_int_val(idx_node));
+                    emit_slice_lit_bounds(arr_var, ast_int_val(idx_node));
                     if pass_before_array_access(arr_var, -1, ast_int_val(idx_node), arr_len_lit) == 0 {
                         emit(IR_STORE_INDEX, -1, arr_var, val_var, ast_int_val(idx_node), 0);
                     }
@@ -781,6 +846,7 @@ emit(IR_STORE, -1, target, val_var, 0, 0);
             idx_var := gen_expr(idx_node);
             idx_var = force_if_thunk(idx_var);
             emit_string_bounds(arr_var, idx_var);
+            emit_slice_bounds(arr_var, idx_var);
             if pass_before_array_access(arr_var, idx_var, -1, arr_len_lit) == 0 {
                 emit(IR_STORE_INDEX_VAR, val_var, arr_var, idx_var, 0, 0);
             }
@@ -997,10 +1063,8 @@ emit(IR_STORE, -1, target, val_var, 0, 0);
                     emit(IR_DYN_PACK, lv, val_var, tag, 0, 0);
                 } else {
                     val_var = dex_store_adjust(lv, val_var, val_node);
-                     // F11：切片长度沿赋值传播
-                     if slice_len_get(lv) >= 0 || slice_len_get(val_var) >= 0 {
-                         slice_len_set(lv, slice_len_get(val_var));
-                     }
+                     // F11：切片长度沿赋值传播（字面量/运行时界长度变量同步；源无记录则清除）
+                     slice_len_copy_to(lv, val_var);
 emit(IR_STORE, -1, lv, val_var, 0, 0);
                 }
             } else {
@@ -1027,12 +1091,14 @@ emit(IR_STORE, -1, lv, val_var, 0, 0);
             arr_len_lit : ., mut = arr_len_lit_of(arr_var);
             if ast_kind(idx_node) == EXPR_INT {
                 emit_string_lit_bounds(arr_var, ast_int_val(idx_node));
+                emit_slice_lit_bounds(arr_var, ast_int_val(idx_node));
                 if pass_before_array_access(arr_var, -1, ast_int_val(idx_node), arr_len_lit) == 0 {
                     emit(IR_STORE_INDEX, -1, arr_var, val_var, ast_int_val(idx_node), 0);
                 }
             } else {
                 idx_var := gen_expr(idx_node);
                 idx_var = force_if_thunk(idx_var);
+                emit_slice_bounds(arr_var, idx_var);
                 if pass_before_array_access(arr_var, idx_var, -1, arr_len_lit) == 0 {
                     emit(IR_STORE_INDEX_VAR, val_var, arr_var, idx_var, 0, 0);
                 }
@@ -1880,10 +1946,9 @@ emit(IR_STORE, -1, lv, val_var, 0, 0);
               if declared_ti != TI_DEX {
                   irv_set_type(var, irv_type(val_var));
               }
-            // F11：切片长度沿 LET 初始化传播（s := arr[0..2] → s 带长度 2）
-            if slice_len_get(var) >= 0 || slice_len_get(val_var) >= 0 {
-                slice_len_set(var, slice_len_get(val_var));
-            }
+            // F11：切片长度沿 LET 初始化传播（s := arr[0..2] → s 带长度 2；
+            // 运行时界 slice 同步长度变量——slice_len_copy_to）
+            slice_len_copy_to(var, val_var);
             emit(IR_STORE, -1, var, val_var, 0, 0);
         }
         bind_local(var_ni, var);
@@ -1975,16 +2040,23 @@ emit(IR_STORE, -1, lv, val_var, 0, 0);
             }
             v := new_ir_var("slice", TI_INT);
             emit(IR_SLICE, v, arr_var, low_var, high_var, 0);
-            // F11：字面量界 → 登记切片编译期长度（解引用处 arr_len_lit 用）
+            // F11：字面量界 → 登记切片编译期长度（解引用处 arr_len_lit 用）；
+            // 运行时界 → 计算 len = high − low 并登记长度变量（解引用处发射
+            // 动态边界检查——见 emit_slice_*_bounds）。
             if ast_kind(low_node) == EXPR_INT && ast_kind(high_node) == EXPR_INT {
                 sl := ast_int_val(high_node) - ast_int_val(low_node);
                 if sl >= 0 { slice_len_set(v, sl); }
+            } else {
+                len_var := new_ir_var("slice_len", TI_INT);
+                emit(IR_BINARY, len_var, high_var, low_var, OP_SUB, TI_INT);
+                slice_len_var_set(v, len_var);
             }
             return v;
         }
         v := new_ir_var("elem", TI_INT);
         if idx_kind == EXPR_INT {
             emit_string_lit_bounds(arr_var, ast_int_val(idx_node));
+            emit_slice_lit_bounds(arr_var, ast_int_val(idx_node));
             if pass_before_array_access(arr_var, -1, ast_int_val(idx_node), arr_len_lit) == 0 {
                 emit(IR_LOAD_INDEX, v, arr_var, 0, ast_int_val(idx_node), 0);
             }
@@ -1992,6 +2064,7 @@ emit(IR_STORE, -1, lv, val_var, 0, 0);
             idx_var := gen_expr(idx_node);
             idx_var = force_if_thunk(idx_var);
             emit_string_bounds(arr_var, idx_var);
+            emit_slice_bounds(arr_var, idx_var);
             if pass_before_array_access(arr_var, idx_var, -1, arr_len_lit) == 0 {
                 emit(IR_LOAD_INDEX_VAR, v, arr_var, idx_var, 0, 0);
             }
