@@ -514,7 +514,7 @@ fn coexist_version_conflicts(func_i: int) -> int {
         loop {
             if ej >= ec { break; }
             if ent_var(es + ej) == gv {
-                if ent_live_start(es + ej) <= ent_live_end(e) {
+                if entries_coexist(func_i, e, es + ej) != 0 {
                     conflicts = conflicts + 1;
                 }
                 break;
@@ -527,8 +527,10 @@ fn coexist_version_conflicts(func_i: int) -> int {
 }
 
 // 同 home 组内冲突数（判定输入雏形——共存互斥：同槽条目不共存）。
-// home = -1（未分配）不参与；分配后同 home 组内两两检查（组 = 分配器
-// 复用的槽，k 小；若未来组规模大，升级为排序 sweep——D3 不超线性注记）。
+// home = -1（未分配）不参与。真实成本注记（评审 I-2）：home ≥ 0 时对每函数
+// 做 O(E²) 相等探测（与组大小 k 无关；当前无回填路径 = 内层不进入 = O(E)）。
+// 触发点 = 判定进入消费端（分配器/自检回填 home 后）——届时须按 v6 格式定稿
+// §4.2 per-group sweep O(k log k) 重写，不得直接复用本函数（ledger 门禁注记）。
 fn coexist_home_conflicts(func_i: int) -> int {
     es := entry_start(func_i);
     ec := entry_count(func_i);

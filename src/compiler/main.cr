@@ -500,6 +500,8 @@ fn corec_main() -> int {
             dump_entries_summary();
             return 0;
         }
+        // Hidden debug (--dump-coexist): coexistence summary — same data/precondition
+        // as dump-entries; flags are mutually exclusive (dump-entries wins if both given).
         if cli_has("dump-coexist") != 0 {
             compute_live_ranges();
             dump_coexist_summary();

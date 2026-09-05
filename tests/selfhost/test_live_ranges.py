@@ -180,7 +180,7 @@ def dump_coexist(source: str) -> tuple:
         src = f.name
     try:
         r = subprocess.run([str(COREC), "cir", src, "--dump-coexist"],
-                           capture_output=True, text=True, timeout=120)
+                           capture_output=True, text=True, cwd=BASE, timeout=120)
         return r.returncode, r.stdout + r.stderr
     finally:
         os.unlink(src)
@@ -222,7 +222,10 @@ def check_coexistence() -> tuple:
     bv = [x for x in ent if x["name"] == "b"]
     if not av or not bv:
         return False, f"a/b entries missing:\n{out2}"
-    # 取末版本（return 处活跃的是最后定值版——ALLOC 空版区间短暂不相交属正常）
+    # 取末版本（return 处活跃的是最后定值版——ALLOC 空版区间短暂不相交属正常；
+    # a/b 在此程序各有 ALLOC+STORE 两版本）
+    if len(av) < 2 or len(bv) < 2:
+        return False, f"a/b should each have >=2 versions (ALLOC+STORE):\n{out2}"
     a0, b0 = av[-1], bv[-1]
     coexist = a0["ls"] <= b0["le"] and b0["ls"] <= a0["le"]
     if not coexist:
