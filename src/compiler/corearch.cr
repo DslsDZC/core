@@ -23,6 +23,7 @@ fn corearch_main() -> int {
     cli_flag("output", "o", "Output path");
     cli_flag("opt-level", "O", "Optimization level (0-3, default=0)");
     cli_flag("table", "", "HIT table file (load & emit mapped ops through it)");
+    cli_flag_bool("dump-events", "", "Dump lowered HIT event stream + const pool");
 
     if cli_parse() != 0 { return 1; }
     g_opt_level = 0;
@@ -47,6 +48,7 @@ fn corearch_main() -> int {
         println("  --link s1,s2   link specific .so files");
         println("  -o FILE         output path");
         println("  --table FILE    load HIT table; emit mapped ops through it (M1: int sub)");
+        println("  --dump-events   dump lowered HIT event stream + const pool");
         return 1; }
 
     src_path := cli_arg(0);
@@ -62,6 +64,34 @@ fn corearch_main() -> int {
     r := load_ccr(buf, fsize);
     if r != 0 { println("error: invalid .ccr file"); return 1; }
     init_backend_arrays();
+
+    // --table（M1 Task 3）：表模式 → 先降低（IR 直线子集 → 事件流 + 常量池）。
+    // 超子集 op → 'needs more events' 错误 exit 1（发射前拒绝）；成功 → 事件流
+    // 供 emit_instr_tabled 消费（elf.cr 发射循环不变）。--dump-events 调试 dump。
+    dump_ev : ., mut = cli_has("dump-events");
+    if hit_table_active() != 0 {
+        if hit_lower_program() != 0 { return 1; }
+        if dump_ev != 0 {
+            print("hit events lowered: "); print_i(g_hit_ev_count); println("");
+            ei : ., mut = 0;
+            loop {
+                if ei >= g_hit_ev_count { break; }
+                ev_id := hit_ev_id(ei);
+                es := hit_event_lookup(ev_id);
+                print("  ev ");
+                if es < 0 { print("?"); } else { print(hit_event_name(es)); }
+                print(" dst="); print_i(hit_ev_dst(ei));
+                print(" s1=");
+                if hit_ev_flags(ei) % 2 == 1 { print("pool"); print_i(hit_ev_s1(ei)); }
+                else { print_i(hit_ev_s1(ei)); }
+                print(" s2=");
+                if hit_ev_flags(ei) / 2 % 2 == 1 { print("pool"); print_i(hit_ev_s2(ei)); }
+                else { print_i(hit_ev_s2(ei)); }
+                println("");
+                ei = ei + 1; }
+            print("hit pool entries: "); print_i(g_hit_pool_count); println("");
+        }
+    }
 
     emit_so := cli_has("shared");
     link_val := cli_get("link");

@@ -1571,6 +1571,23 @@ fi = 0; loop { if fi >= g_ir_func_count { break; }
         loop { if cp % 8 == 0 { break; } w8(buf, cp, 0); cp = cp + 1; }
     si = si + 1; }
 
+    // ── HIT const pool（M1 Task 3 合成层：lower 常量池 → rodata）──
+    // 池引用（mov r64, [rip+disp32] 占位）在函数发射期间记录（instr.cr 编码器）；
+    // 字符串区定稿后回填 disp（池区紧随字符串，8B/槽、8 对齐不破）。
+    hpr : ., mut = 0;
+    loop { if hpr >= g_hit_pool_patch_count { break; }
+        pp := r64(g_hit_pool_patch, hpr * 16);
+        pk := r64(g_hit_pool_patch, hpr * 16 + 8);
+        rel := cp + pk * 8 - (pp + 7);
+        w32(buf, pp + 3, rel);
+        hpr = hpr + 1; }
+    g_hit_pool_patch_count = 0;
+    hpk : ., mut = 0;
+    loop { if hpk >= g_hit_pool_count { break; }
+        w64(buf, cp + hpk * 8, r64(g_hit_pool, hpk * 8));
+        hpk = hpk + 1; }
+    cp = cp + g_hit_pool_count * 8;
+
     // ── Recompute bss_va after all code emitted ──
     // total_code from Phase 2 underestimates; use actual cp for precise calculation.
     // +1 ensures BSS is on a different page from code.
