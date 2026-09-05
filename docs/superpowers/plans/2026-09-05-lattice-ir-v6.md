@@ -193,7 +193,7 @@ jj commit -m 'feat: 存在区间推导 pass——compute_live_ranges 独立表�
 
 **Interfaces:**
 - Consumes: Task 1 的 `compute_live_ranges`
-- Produces: `fn compute_entries(func_i) -> int`（返回该函数条目数）填充全局条目表 `g_ir_entries`（24B/条：var_idx(函数内), def_instr, live_start, live_end, home, flags）；`fn entry_count(func_i) -> int`
+- Produces: `fn compute_entries(func_i) -> int`（返回该函数条目数）填充全局条目表 `g_ir_entries`（24B/条内存表：var_idx(全局), def_instr(全局), live_start, live_end, home, flags——盘上 28B/含 version 由 Task 4 转换，见「v6 格式布局」）；`fn entry_count(func_i) -> int`
 
 - [ ] **Step 1: 设计确认（读代码）**
 
@@ -322,7 +322,7 @@ Commit: `jj commit -m 'feat: 判定一致性自检（共存互斥闭环）+ rega
 ### Task 6: 自举管线 / 测试迁移 / 文档同步
 
 **Files:**
-- Modify: `docs/ir-schema/coreir-schema.md`（v6 段布局 + entries 记录 24B 字段表）
+- Modify: `docs/ir-schema/coreir-schema.md`（v6 段布局 + ENT 记录 28B 字段表，按格式定稿 spec）
 - Modify: `CLAUDE.md`（`.ccr` 描述 v5 → v6：格层存在结构）
 - Modify: `docs/superpowers/specs/2026-08-27-lattice-form-ir-design.md`（状态：执行中→按实施结果复核 §4.2/§5；**§4.2/§5 的「v5→v6 一次性转换工具」按计划定稿取消**（.ccr 为管线中间产物、零持久生态）——同步删除该事项并注记）
 - Modify: `docs/project-book.md`、`docs/compcert-reference.md`（如提及 .ccr v5 线性投影描述处）
