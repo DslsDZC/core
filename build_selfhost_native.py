@@ -26,7 +26,7 @@ def concat(files, wrapper_fn=None):
     for f in files:
         path = os.path.join(BASE, f)
         if os.path.exists(path):
-            with open(path) as fh:
+            with open(path, encoding='utf-8') as fh:
                 content = fh.read().strip()
                 if content:
                     # This build creates one flat compilation unit from an explicit
@@ -84,7 +84,7 @@ def compile_and_assemble(src, label, out_name):
 
     os.makedirs('build', exist_ok=True)
     asm_path = f'build/{out_name}.s'
-    with open(asm_path, 'w') as f:
+    with open(asm_path, 'w', encoding='utf-8') as f:
         f.write(asm)
 
     result = subprocess.run(['as', '-o', f'build/{out_name}.o', asm_path],

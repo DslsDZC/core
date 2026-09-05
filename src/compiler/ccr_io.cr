@@ -87,6 +87,44 @@ fn buf_read_i64(buf: string, pos: int) -> int {
     return lo + hi_part;
 }
 
+// Check a byte range without forming an overflowing end position. CCR counts
+// come from the file, so every variable-length section must use this helper
+// before reading or growing an array from its count.
+fn ccr_has_bytes(pos: int, need: int, fsize: int) -> int {
+    if pos < 0 || need < 0 || pos > fsize { return 0; }
+    if need > fsize - pos { return 0; }
+    return 1;
+}
+
+fn ccr_i32_fits(val: int) -> int {
+    if val < -2147483648 || val > 2147483647 { return 0; }
+    return 1;
+}
+
+fn ccr_validate_i32_fields() -> int {
+    ii : ., mut = 0;
+    loop {
+        if ii >= g_ir_instr_count { break; }
+        if ccr_i32_fits(iri_dest(ii)) == 0 ||
+           ccr_i32_fits(iri_s2(ii)) == 0 ||
+           ccr_i32_fits(iri_s3(ii)) == 0 { return 0; }
+        ii = ii + 1;
+    }
+    si : ., mut = 0;
+    loop {
+        if si >= g_sg_count { break; }
+        f := si * ESZ_SG;
+        if ccr_i32_fits(r64(g_sgs, f + OFF_SG_KIND)) == 0 ||
+           ccr_i32_fits(r64(g_sgs, f + OFF_SG_ENTER)) == 0 ||
+           ccr_i32_fits(r64(g_sgs, f + OFF_SG_EXIT)) == 0 ||
+           ccr_i32_fits(r64(g_sgs, f + OFF_SG_PARENT)) == 0 ||
+           ccr_i32_fits(r64(g_sgs, f + OFF_SG_NSTART)) == 0 ||
+           ccr_i32_fits(r64(g_sgs, f + OFF_SG_NCOUNT)) == 0 { return 0; }
+        si = si + 1;
+    }
+    return 1;
+}
+
 // --- Size calculation ---
 
 fn calc_ccr_size() -> int {
@@ -153,6 +191,9 @@ fn calc_ccr_size() -> int {
 // --- Save ---
 
 fn save_ccr(path: string) -> int {
+    // The v5 wire format stores these fields as signed i32. Refuse to emit a
+    // lossy file instead of letting w32 silently keep only the low bits.
+    if ccr_validate_i32_fields() == 0 { return -1; }
     tsz := calc_ccr_size();
     buf := alloc(tsz);
     pos : ., mut = 0;
@@ -354,6 +395,14 @@ fn load_ccr(data: string, fsize: int) -> int {
     struct_cnt := buf_read_u32(data, pos); pos = pos + 4;
     enum_cnt := buf_read_u32(data, pos); pos = pos + 4;
 
+    // Reject impossible fixed-width counts before allocating their backing
+    // arrays. Variable sections are checked again at their exact position
+    // below, after preceding strings have been consumed.
+    if str_cnt > fsize / 4 || func_cnt > fsize / 28 ||
+       instr_cnt > fsize / 28 || var_cnt > fsize / 12 ||
+       str_const_cnt > fsize / 4 || struct_cnt > fsize / 8 ||
+       enum_cnt > fsize / 8 { return -1; }
+
     // Grow dynamic arrays to needed capacity
     grow_ir_vars(var_cnt);
     grow_ir_instrs(instr_cnt);
@@ -376,7 +425,9 @@ fn load_ccr(data: string, fsize: int) -> int {
     si : ., mut = 0;
     loop {
         if si >= str_cnt { break; }
+        if !ccr_has_bytes(pos, 4, fsize) { return -1; }
         sl := buf_read_u32(data, pos); pos = pos + 4;
+        if !ccr_has_bytes(pos, sl, fsize) { return -1; }
         // Allocate buffer for string content
         s := alloc(sl + 1);
         ci : ., mut = 0;
@@ -396,6 +447,7 @@ fn load_ccr(data: string, fsize: int) -> int {
     fi : ., mut = 0;
     loop {
         if fi >= func_cnt { break; }
+        if !ccr_has_bytes(pos, 28, fsize) { return -1; }
         fv0 := buf_read_u32(data, pos); pos = pos + 4; w64(g_ir_func_name_idx, fi * 8, fv0);
         fv1 := buf_read_u32(data, pos); pos = pos + 4; w64(g_ir_func_param_count, fi * 8, fv1);
         fv2 := buf_read_u32(data, pos); pos = pos + 4; w64(g_ir_func_ret_type, fi * 8, fv2);
@@ -411,6 +463,7 @@ fn load_ccr(data: string, fsize: int) -> int {
     ii : ., mut = 0;
     loop {
         if ii >= instr_cnt { break; }
+        if !ccr_has_bytes(pos, 28, fsize) { return -1; }
         opcode := buf_read_u32(data, pos); pos = pos + 4;
         dest := buf_read_i32(data, pos); pos = pos + 4;
         s1 := buf_read_i64(data, pos); pos = pos + 8;   // 修复 14：s1 64 位
@@ -431,6 +484,7 @@ fn load_ccr(data: string, fsize: int) -> int {
     vi : ., mut = 0;
     loop {
         if vi >= var_cnt { break; }
+        if !ccr_has_bytes(pos, 12, fsize) { return -1; }
         name_ni := buf_read_u32(data, pos); pos = pos + 4;
         id := buf_read_u32(data, pos); pos = pos + 4;
         tk := buf_read_u32(data, pos); pos = pos + 4;
@@ -445,6 +499,7 @@ fn load_ccr(data: string, fsize: int) -> int {
     sci : ., mut = 0;
     loop {
         if sci >= str_const_cnt { break; }
+        if !ccr_has_bytes(pos, 4, fsize) { return -1; }
         scv := buf_read_u32(data, pos); pos = pos + 4; w64(g_ir_str_consts, sci * 8, scv);
         g_ir_str_const_count = sci + 1;
         sci = sci + 1;
@@ -454,9 +509,11 @@ fn load_ccr(data: string, fsize: int) -> int {
     sti : ., mut = 0;
     loop {
         if sti >= struct_cnt { break; }
+        if !ccr_has_bytes(pos, 8, fsize) { return -1; }
         name_ni := buf_read_u32(data, pos); pos = pos + 4;
         fc := buf_read_u32(data, pos); pos = pos + 4;
         if fc > MAX_STRUCT_FIELDS { println("error: .ccr struct field count exceeds max"); return 1; }
+        if fc > (fsize - pos) / 8 { return -1; }
         w64(g_structs, sti * ESZ_STRUCTINFO + OFF_SI_NAME, name_ni);
         w64(g_structs, sti * ESZ_STRUCTINFO + OFF_SI_FIELD_COUNT, fc);
         // Zero out all field slots and type nodes
@@ -489,9 +546,11 @@ fn load_ccr(data: string, fsize: int) -> int {
     ei : ., mut = 0;
     loop {
         if ei >= enum_cnt { break; }
+        if !ccr_has_bytes(pos, 8, fsize) { return -1; }
         ename_ni := buf_read_u32(data, pos); pos = pos + 4;
         vc := buf_read_u32(data, pos); pos = pos + 4;
         if vc > MAX_ENUM_VARIANTS { println("error: .ccr enum variant count exceeds max"); return 1; }
+        if vc > (fsize - pos) / 8 { return -1; }
         w64(g_enums, ei * ESZ_ENUMINFO + OFF_EI_NAME, ename_ni);
         w64(g_enums, ei * ESZ_ENUMINFO + OFF_EI_VARIANT_COUNT, vc);
         // Zero all variant slots
@@ -514,6 +573,7 @@ fn load_ccr(data: string, fsize: int) -> int {
             vni := buf_read_u32(data, pos); pos = pos + 4;
             tc := buf_read_u32(data, pos); pos = pos + 4;
             if tc > MAX_VARIANT_TYPES { println("error: .ccr variant type count exceeds max"); return 1; }
+            if tc > (fsize - pos) / 4 { return -1; }
             w64(g_enums, ei * ESZ_ENUMINFO + OFF_EI_VARIANTS + vi3 * OFF_EV_SIZE + OFF_EV_NAME, vni);
             w64(g_enums, ei * ESZ_ENUMINFO + OFF_EI_VARIANTS + vi3 * OFF_EV_SIZE + OFF_EV_TYPE_COUNT, tc);
             tf : ., mut = 0;
@@ -530,7 +590,11 @@ fn load_ccr(data: string, fsize: int) -> int {
 
     // Globals (version >= 2)
     if ver >= 2 {
+        if !ccr_has_bytes(pos, 4, fsize) { return -1; }
         gc := buf_read_u32(data, pos); pos = pos + 4;
+        global_size : ., mut = 8;
+        if ver >= 4 { global_size = 16; }
+        if gc > (fsize - pos) / global_size { return -1; }
         grow_ir_globals(gc);
         g_ir_global_count = 0;
         gi : ., mut = 0;
@@ -583,7 +647,7 @@ fn load_ccr(data: string, fsize: int) -> int {
     if ver >= 5 {
         if pos + 4 > fsize { return -1; }
         sg_n := buf_read_u32(data, pos); pos = pos + 4;
-        if pos + sg_n * ESZ_SG_DISK > fsize { return -1; }
+        if sg_n > (fsize - pos) / ESZ_SG_DISK { return -1; }
         sg_i : ., mut = 0;
         loop {
             if sg_i >= sg_n { break; }

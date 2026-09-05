@@ -57,7 +57,30 @@ fn arr_len_lit_of(arr_var: int) -> int {
     if ti >= 0 && ti < g_type_count && get_type_kind(ti) == TYP_ARRAY {
         return get_type_extra(ti);
     }
+    if ti == TI_STR {
+        prod := r64(g_df_var_producer, arr_var * 8);
+        if prod >= 0 && r64(g_df_nodes, prod * ESZ_DFNODE + OFF_DF_OPCODE) == IR_CONST &&
+           r64(g_df_nodes, prod * ESZ_DFNODE + OFF_DF_TK) == TI_STR {
+            return istr_len(r64(g_df_nodes, prod * ESZ_DFNODE + OFF_DF_S1));
+        }
+    }
     return slice_len_get(arr_var);
+}
+
+fn emit_string_bounds(arr_var: int, idx_var: int) {
+    if arr_var < 0 || idx_var < 0 || irv_type(arr_var) != TI_STR { return; }
+    len_var := new_ir_var("str_len", TI_INT);
+    emit(IR_CALL, len_var, arr_var, 1, str_intern("str_len"), TI_INT);
+    emit(IR_BOUNDS_CHECK, -1, idx_var, len_var, 0, 1);
+}
+
+// 字面量下标 + 字符串 → 运行时边界守卫（M-2 遗留：emit_string_bounds
+// 只覆盖变量下标路径，常量下标路径与 arr_len_lit 两头落空——静默越界）。
+fn emit_string_lit_bounds(arr_var: int, idx_lit: int) {
+    if arr_var < 0 || irv_type(arr_var) != TI_STR { return; }
+    idx_var := new_ir_var("_idx_lit", TI_INT);
+    emit(IR_CONST, idx_var, idx_lit, 0, 0, TI_INT);
+    emit_string_bounds(arr_var, idx_var);
 }
 
 fn grow_sg_alloc(needed: int) {
@@ -750,15 +773,17 @@ emit(IR_STORE, -1, target, val_var, 0, 0);
                 // F1：写路径越界守卫钩子（EXPR_BINARY OP_ASSIGN 遗留路径，同步修复）
                 arr_len_lit : ., mut = arr_len_lit_of(arr_var);
                 if idx_kind == EXPR_INT {
+                    emit_string_lit_bounds(arr_var, ast_int_val(idx_node));
                     if pass_before_array_access(arr_var, -1, ast_int_val(idx_node), arr_len_lit) == 0 {
                         emit(IR_STORE_INDEX, -1, arr_var, val_var, ast_int_val(idx_node), 0);
                     }
-                } else {
-                    idx_var := gen_expr(idx_node);
-                    idx_var = force_if_thunk(idx_var);
-                    if pass_before_array_access(arr_var, idx_var, -1, arr_len_lit) == 0 {
-                        emit(IR_STORE_INDEX_VAR, val_var, arr_var, idx_var, 0, 0);
-                    }
+        } else {
+            idx_var := gen_expr(idx_node);
+            idx_var = force_if_thunk(idx_var);
+            emit_string_bounds(arr_var, idx_var);
+            if pass_before_array_access(arr_var, idx_var, -1, arr_len_lit) == 0 {
+                emit(IR_STORE_INDEX_VAR, val_var, arr_var, idx_var, 0, 0);
+            }
                 }
                 return val_var;
             }
@@ -1001,6 +1026,7 @@ emit(IR_STORE, -1, lv, val_var, 0, 0);
             // F1：写路径越界守卫钩子（修复前完全没有——见 compcert-round4 F1）
             arr_len_lit : ., mut = arr_len_lit_of(arr_var);
             if ast_kind(idx_node) == EXPR_INT {
+                emit_string_lit_bounds(arr_var, ast_int_val(idx_node));
                 if pass_before_array_access(arr_var, -1, ast_int_val(idx_node), arr_len_lit) == 0 {
                     emit(IR_STORE_INDEX, -1, arr_var, val_var, ast_int_val(idx_node), 0);
                 }
@@ -1800,6 +1826,16 @@ emit(IR_STORE, -1, lv, val_var, 0, 0);
             is_dyn_var = 1;
         }
         var := new_ir_var(istr_get(var_ni), TI_UNIT);
+        declared_ti : ., mut = TI_UNIT;
+        if type_node >= 0 { declared_ti = res_type_node(type_node); }
+        // `dex` is the source-level type; its IR slot has two forms. Only an
+        // explicitly tagged `apx` declaration uses binary64 bits.
+        target_ti : ., mut = declared_ti;
+        if declared_ti == TI_DEX {
+            if is_apx != 0 { target_ti = TI_DEX; }
+            else { target_ti = TI_DEX_S; }
+            irv_set_type(var, target_ti);
+        }
         is_arr : ., mut = 0;
         if type_node >= 0 && val_node < 0 {
             if ast_kind(type_node) == 19 {
@@ -1819,6 +1855,16 @@ emit(IR_STORE, -1, lv, val_var, 0, 0);
         if val_node >= 0 {
             val_var := gen_expr(val_node);
             val_var = force_if_thunk(val_var);
+            // An `apx` dex local stores binary64 bits, unlike the default
+            // scaled-integer dex form. The annotation alone is not enough:
+            // switch the slot type and convert the initializer before later
+            // binary operations inspect its type.
+            if declared_ti == TI_DEX {
+                val_var = dex_store_adjust(var, val_var, val_node);
+            } else if declared_ti == TI_UNIT {
+                target_ti = irv_type(val_var);
+                irv_set_type(var, target_ti);
+            }
             if is_dyn_var != 0 {
                 // Dyn variable: pack value with its type tag
                 dyn_var := new_ir_var("_dyn", TI_DYN);
@@ -1831,7 +1877,9 @@ emit(IR_STORE, -1, lv, val_var, 0, 0);
             }
              // Preserve the initializer type so later operations can select
              // type-specific lowering (notably string + -> concat()).
-             irv_set_type(var, irv_type(val_var));
+              if declared_ti != TI_DEX {
+                  irv_set_type(var, irv_type(val_var));
+              }
             // F11：切片长度沿 LET 初始化传播（s := arr[0..2] → s 带长度 2）
             if slice_len_get(var) >= 0 || slice_len_get(val_var) >= 0 {
                 slice_len_set(var, slice_len_get(val_var));
@@ -1936,12 +1984,14 @@ emit(IR_STORE, -1, lv, val_var, 0, 0);
         }
         v := new_ir_var("elem", TI_INT);
         if idx_kind == EXPR_INT {
+            emit_string_lit_bounds(arr_var, ast_int_val(idx_node));
             if pass_before_array_access(arr_var, -1, ast_int_val(idx_node), arr_len_lit) == 0 {
                 emit(IR_LOAD_INDEX, v, arr_var, 0, ast_int_val(idx_node), 0);
             }
         } else {
             idx_var := gen_expr(idx_node);
             idx_var = force_if_thunk(idx_var);
+            emit_string_bounds(arr_var, idx_var);
             if pass_before_array_access(arr_var, idx_var, -1, arr_len_lit) == 0 {
                 emit(IR_LOAD_INDEX_VAR, v, arr_var, idx_var, 0, 0);
             }

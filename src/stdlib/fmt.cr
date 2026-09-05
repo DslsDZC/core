@@ -203,7 +203,12 @@ fn fpow2i(k: int) -> int {
 fn float_str_bits(bits: int) -> string {
     // 符号（bit63）
     neg : int = 0; u : int = bits;
-    if u < 0 { neg = 1; u = u - (-9223372036854775808); }  // 减 -2^63 = 清 bit63（无 & 运算符）
+    if u < 0 {
+        neg = 1;
+        // Avoid spelling INT64_MIN: the lexer cannot represent its positive
+        // magnitude as an integer token before applying unary minus.
+        u = u - (-9223372036854775807) + 1;
+    }
     // 提取字段（除以 2^52 代替移位）
     exp := (u / 4503599627370496) % 2048;
     mant := u % 4503599627370496;

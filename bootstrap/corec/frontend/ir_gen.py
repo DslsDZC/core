@@ -14,6 +14,7 @@ class IRGen:
         self.local_vars = {}
         self.struct_fields = {}
         self.enum_variants = {}
+        self.module_functions = {}
         self.block_counter = 0
 
     def new_temp(self, name="t"):
@@ -27,6 +28,11 @@ class IRGen:
     def add_instr(self, instr): self.current_block.instrs.append(instr)
 
     def gen_module(self, ast: CompilationUnit) -> Module:
+        self.module_functions = {
+            (getattr(decl, '_module_alias', None), decl.name): decl
+            for decl in ast.declarations
+            if isinstance(decl, FunctionDecl) and getattr(decl, '_module_alias', None)
+        }
         for decl in ast.declarations:
             if isinstance(decl, StructDecl): self.struct_fields[decl.name] = decl.fields
             elif isinstance(decl, EnumDecl): self.enum_variants[decl.name] = decl.variants
@@ -251,6 +257,14 @@ class IRGen:
 
     def gen_call(self, call):
         if isinstance(call.func, FieldAccess):
+            module_fn = None
+            if isinstance(call.func.object, Ident):
+                module_fn = self.module_functions.get((call.func.object.name, call.func.field))
+            if module_fn is not None:
+                args = [self.gen_expr(a) for a in call.args]
+                dest = self.new_temp()
+                self.add_instr(CallInstr(module_fn.name, args, dest))
+                return dest
             obj_expr = call.func.object
             struct_name = None
             if isinstance(obj_expr, Ident):

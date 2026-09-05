@@ -960,7 +960,11 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
                 e2_w32(buf, pos+cp+3, stack_bytes); cp = cp + 7;
             }
         }
-        cp = cp + e2_st(buf, pos+cp, 0, do2);
+        if d >= 0 && irv_type(d) == TI_DEX {
+            cp = cp + e2_sd_store(buf, pos+cp, do2);
+        } else {
+            cp = cp + e2_st(buf, pos+cp, 0, do2);
+        }
         return cp;
     }
 
@@ -1284,10 +1288,15 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
         do2 := g2_slot(d); idx := s3;
         // load array pointer (handles local and global)
         cp = cp + e2_load_var(buf, pos+cp, 10, s1);
-        // mov r10, [r10 + disp32]
-        // mov r10, [r10 + idx*8]
+        if irv_type(s1) == TI_STR {
+            // Strings are byte sequences, unlike arrays of 8-byte values.
+            cp = cp + emit_rex(buf, pos+cp, 1, 10/8, 0, 10/8); e2_w8(buf, pos+cp, 15); cp = cp + 1;
+            e2_w8(buf, pos+cp, 182); cp = cp + 1;
+            cp = cp + emit_modrm(buf, pos+cp, 2, 10%8, 10%8); cp = cp + e2_w32(buf, pos+cp, idx);
+        } else {
             cp = cp + emit_rex(buf, pos+cp, 1, 10/8, 0, 10/8); e2_w8(buf, pos+cp, 139); cp = cp + 1;
             cp = cp + emit_modrm(buf, pos+cp, 2, 10%8, 10%8); cp = cp + e2_w32(buf, pos+cp, idx * 8);
+        }
         cp = cp + e2_st(buf, pos+cp, 10, do2);
         return cp;
     }
@@ -1299,9 +1308,15 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
         // load value to store (handles local and global)
         cp = cp + e2_load_var(buf, pos+cp, 11, s2);
         // mov [r10 + disp32], r11
-        // mov [r10 + idx*8], r11
+        if irv_type(s1) == TI_STR {
+            // String assignment stores one byte, not a full machine word.
+            cp = cp + emit_rex(buf, pos+cp, 0, 11/8, 0, 10/8); e2_w8(buf, pos+cp, 136); cp = cp + 1;
+            cp = cp + emit_modrm(buf, pos+cp, 2, 11%8, 10%8); cp = cp + e2_w32(buf, pos+cp, idx);
+        } else {
+            // mov [r10 + idx*8], r11
             cp = cp + emit_rex(buf, pos+cp, 1, 11/8, 0, 10/8); e2_w8(buf, pos+cp, 137); cp = cp + 1;
             cp = cp + emit_modrm(buf, pos+cp, 2, 11%8, 10%8); cp = cp + e2_w32(buf, pos+cp, idx * 8);
+        }
         return cp;
     }
 
@@ -1311,9 +1326,14 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
         cp = cp + e2_load_var(buf, pos+cp, 10, s1);
         // load index (handles local and global)
         cp = cp + e2_load_var(buf, pos+cp, 11, s2);
-        // mov r10, [r10 + r11*8] — SIB(scale=3, index=r11%8, base=r10%8)
+        // Strings use byte indexing; arrays use 8-byte element indexing.
+        if irv_type(s1) == TI_STR {
+            cp = cp + emit_rex(buf, pos+cp, 1, 10/8, 11/8, 10/8); e2_w8(buf, pos+cp, 15); cp = cp + 1; e2_w8(buf, pos+cp, 182); cp = cp + 1;
+            cp = cp + emit_modrm(buf, pos+cp, 0, 10%8, 4); cp = cp + emit_sib(buf, pos+cp, 0, 11%8, 10%8);
+        } else {
             cp = cp + emit_rex(buf, pos+cp, 1, 10/8, 11/8, 10/8); e2_w8(buf, pos+cp, 139); cp = cp + 1;
             cp = cp + emit_modrm(buf, pos+cp, 0, 10%8, 4); cp = cp + emit_sib(buf, pos+cp, 3, 11%8, 10%8);
+        }
         cp = cp + e2_st(buf, pos+cp, 10, do2);
         return cp;
     }
@@ -1325,9 +1345,15 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
         cp = cp + e2_load_var(buf, pos+cp, 11, s2);
         // load value to store (handles local and global)
         cp = cp + e2_load_var(buf, pos+cp, 12, d);
-        // mov [r10 + r11*8], r12 — SIB(scale=3, index=r11%8, base=r10%8)
+        if irv_type(s1) == TI_STR {
+            // String assignment stores one byte at the runtime byte index.
+            cp = cp + emit_rex(buf, pos+cp, 0, 12/8, 0, 10/8); e2_w8(buf, pos+cp, 136); cp = cp + 1;
+            cp = cp + emit_modrm(buf, pos+cp, 0, 12%8, 4); cp = cp + emit_sib(buf, pos+cp, 0, 11%8, 10%8);
+        } else {
+            // mov [r10 + r11*8], r12 — SIB(scale=3, index=r11%8, base=r10%8)
             cp = cp + emit_rex(buf, pos+cp, 1, 12/8, 11/8, 10/8); e2_w8(buf, pos+cp, 137); cp = cp + 1;
             cp = cp + emit_modrm(buf, pos+cp, 0, 12%8, 4); cp = cp + emit_sib(buf, pos+cp, 3, 11%8, 10%8);
+        }
         return cp;
     }
 
@@ -1367,9 +1393,14 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
         // F1c：s2 是字面量长度（发射约定），修复前按变量槽加载（e2_load_var）——
         // 把长度当变量索引读，检查恒错。
         cp = cp + e2_load_var(buf, pos+cp, 10, s1);  // index
-        // movabs r11, imm64 — REX.W+B 0x49 0xBB + imm64
-        e2_w8(buf, pos+cp, 73); e2_w8(buf, pos+cp+1, 187);
-        e2_w64(buf, pos+cp+2, s2); cp = cp + 10;
+        if ti != 0 {
+            // Dynamic upper bound: load len_var into r11.
+            cp = cp + e2_load_var(buf, pos+cp, 11, s2);
+        } else {
+            // Constant upper bound: movabs r11, imm64.
+            e2_w8(buf, pos+cp, 73); e2_w8(buf, pos+cp+1, 187);
+            e2_w64(buf, pos+cp+2, s2); cp = cp + 10;
+        }
         cp = cp + e2_alu(buf, pos+cp, 57);           // cmp r10, r11
         // jb +2: if index < max (unsigned below), skip the 2-byte ud2 → continue
         e2_w8(buf, pos+cp, 114);                      // 0x72 = jb rel8

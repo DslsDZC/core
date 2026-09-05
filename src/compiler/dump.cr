@@ -228,12 +228,14 @@ fn cmd_ir(src_path: string) -> int {
         return 1;
     }
     g_source_dir = dirname(src_path);
+    g_error_count = 0;  // 会话起点（tokenize 多轮累积词法错误，见 lexer.cr）
     tokenize(g_source);
     g_str_count = 0;
     res_imports();
     parse_all();
     check_all();
     if g_diag_count > 0 { print_diagnostics(); return 1; }
+    if g_error_count > 0 { print_parse_errors(); return 1; }
     ir_gen_all();
     dot := df_graph_to_dot();
 
@@ -340,12 +342,14 @@ fn cmd_cir(src_path: string) -> int {
         return 1;
     }
     g_source_dir = dirname(src_path);
+    g_error_count = 0;  // 会话起点（tokenize 多轮累积词法错误，见 lexer.cr）
     tokenize(g_source);
     g_str_count = 0;
     res_imports();
     parse_all();
     check_all();
     if g_diag_count > 0 { print_diagnostics(); return 1; }
+    if g_error_count > 0 { print_parse_errors(); return 1; }
     ir_gen_all();
     lower_to_ccr();
 
