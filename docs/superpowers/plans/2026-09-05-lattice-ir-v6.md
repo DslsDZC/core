@@ -2,7 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 把 `.ccr` 从 v5（格层线性投影）升级为 v6（线性投影 + 存在结构段：条目版本/存在区间/共存/home/无配方标记），供寄存器分配判定直接消费。
+**Goal:** 把 `.ccr` 从 v5（格层线性投影）升级为 v6（存在结构段：条目版本/存在区间/共存/home/无配方标记），供寄存器分配判定直接消费。
+
+**执行顺序（2026-09-05 定）：格数据面先行**——Task 1-3（存在区间/版本化/共存推导）为 Phase 1 立即执行（纯编译器内推导，不依赖格式 IO）；v6 格式 IO（Task 4）与 HIT（`2026-09-05-hit-minimal-core-m1.md`）在数据面落地后推进；HIT 事件流与 v6 NOD 同构对齐（交汇点 = 事件层）。坐标说明：现管线 DF 节点序 = IR 指令序（`lower_to_ccr` node i → instruction i）——本计划「指令序」即 v6 格式定稿的「NOD 坐标」，落地后同一坐标零迁移。
 
 **Architecture:** v6 = v5 全部基础段 + 新增存在结构段，version 字段 5→6，magic（`CCR1`）/扩展名/CLI 不动（方案 A 定案）。存在结构的数据（版本化条目 × 存在区间）由新推导 pass 从线性 IR 重建（`alloc_registers` 的 live-interval 雏形升级为独立 pass），共存按设计文档「推导规则优先，避免冗余存储」。ELF 后端只消费线性段（v6 保留），故后端改动面小；存在段是分配的判定输入（`docs/regalloc-cache-mapping.md` §4 一致性四条）。
 
