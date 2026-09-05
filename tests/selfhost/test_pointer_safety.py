@@ -2,11 +2,19 @@
 """Regression tests for pointer provenance, bounds, and unsafe boundaries."""
 
 import os
+import resource
 import subprocess
 import tempfile
 
 
 BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def _no_core_dump():
+    # TODO:125：core_pattern 为 systemd-coredump 管道，陷阱程序（SIGILL）在
+    # core dump 写入时会挂起——trap 测试禁用 core dump 让信号立即终止
+    # （临时处理；根治方向见 TODO：图推导边界判定 pass）。
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 
 def compile_ccr(src: str):
@@ -50,7 +58,8 @@ def build_and_run(src: str):
         )
         os.chmod(output_path, 0o755)
         return subprocess.run(
-            [output_path], capture_output=True, text=True, cwd=BASE, timeout=10
+            [output_path], capture_output=True, text=True, cwd=BASE, timeout=10,
+            preexec_fn=_no_core_dump,
         )
     finally:
         for path in (source_path, output_path, output_path + ".ccr"):

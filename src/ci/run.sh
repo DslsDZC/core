@@ -10,6 +10,11 @@ CI_JOB_NAME="${CI_JOB_NAME:-}"
 set -euo pipefail
 IFS=$'\n\t'
 
+# TODO:125（临时处理）：禁用 core dump——桌面 core_pattern 为 systemd-coredump
+# 管道时，陷阱程序（SIGILL）在 core dump 写入会挂起；CI 无诊断价值。根治方向
+# 见 TODO「图推导边界判定 pass」（检查前移编译期，缩小运行时 trap 面）。
+ulimit -c 0 2>/dev/null || true
+
 if [ -n "$CI_JOB_NAME" ]; then
   echo "[CI_JOB_NAME=$CI_JOB_NAME]"
 fi

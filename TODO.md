@@ -122,7 +122,7 @@
 - ~~**Minor-2**：SPAWN 结果存储用 e2_st(rax) 非 e2_store_ret——float 返回值 spawn 存垃圾~~（2026-08-29 已修：IR_SPAWN 按返回类型保存 XMM0/rax）
 - ~~**F11 切片长度**~~（2026-09-05 已修：字面量界原已完成——`g_ir_slice_lens` 侧表 + LET/赋值传播；同日补齐运行时界——`len = high − low` 长度变量登记（侧表编码：≥0 字面量 / ≤−2 长度变量 / −1 清除），沿赋值传播，解引用处发射动态 `IR_BOUNDS_CHECK`（ti=1，interp/ELF 零后端改动）；`tests/selfhost/test_slice_bounds.py` 7 用例覆盖——越界读/写/变量下标/空切片 trap，合法访问值与字面量界回归。来源：compcert-round4-findings.md F11 / 语义表 BC7）
 - ~~**ccr v5 指令记录 i32 截断** ≥2³¹ 的 s3~~（2026-08-30 已修：`save_ccr` 对所有 i32 指令/region 字段做有符号范围校验，超界直接拒绝写出；`load_ccr` 对各段长度/计数做越界检查；`corearch` 拒绝无效文件大小；`test_ccr_writer_rejects_i32_overflow_inputs` 覆盖 writer guard）
-- **core_pattern 管道**致陷阱程序 core dump 挂起——CI 建议 `ulimit -c 0`（来源：波 3 测试审查）
+- ~~**core_pattern 管道**致陷阱程序 core dump 挂起~~（2026-09-05 临时处理：`src/ci/run.sh` 全局 `ulimit -c 0`；trap 类测试内置 `RLIMIT_CORE=0`——test_slice_bounds / test_pointer_safety。机理：桌面 core_pattern = systemd-coredump 管道，SIGILL 后内核写 core 经管道唤醒服务，拥堵时进程挂起；GitHub CI 容器为文件 core_pattern 无此坑。根治方向 = 图推导边界判定 pass——可静态判定的越界前移为编译期拒绝，缩小运行时 trap 面，见下条目。来源：波 3 测试审查）
 - ~~**BC-CONST**：interp TI_STR 字符串表索引近似~~（2026-08-29 已修：解释器统一用驻留索引传递字符串，补齐 `str_len`/`str_eq`/`concat`/`int_str`/`chr`/`get_char`/`str_sub` 与字节索引路径）
 
 ## 架构规划
@@ -233,6 +233,7 @@
 - **apx 降级策略被实现为报错**（apx-degrade，2026-08-28 审计）：设计 = 只支持精确的环境直接忽略 apx 标签、走精确语义（优雅降级）；实现 = 解释器对 apx 的 I2F/F2I 显式报错（`src/stdlib/dex.cr:32-33`；报错本身是 Task 6 安全修复——替代静默跳过致 SIGFPE，但方向与设计相悖）。修复方向 = 解释器忽略 apx 标签走精确路径。注：apx 结果跨环境可不同（native 走 binary64），为标签显式代价，账本如实记录
 - **宽度类型移出语言**（width-out-of-language，2026-08-30 定案）：设计决定——int 无上限为默认（已定）；宽度（i64/u32/w32 等）不进入语言类型/标签体系，避免第二标签范式（单标签单范式原则）；机器形状全部归 hw-map（硬件映射表，`docs/superpowers/specs/2026-08-23-hw-map-design.md`——依赖 crasm，链式阻塞现状不变）；apx 保持单一语义 = 精度降级开关，不扩张为宽度标签。三层映射对应：图/格 = 纯数学，编码 = hw-map 领域。语言侧清理（不阻塞，可立即做）：ast.cr `T_INT_I8..T_INT_U64` / `T_FLOAT_F32/F64` 死条目移除（勿重编号）、`_f32/_f64` 后缀死路径处理、`1_000` 两编译器分歧复核；v6 规格影响：编码层宽度由目标自动决定，hw-map 为未来显式控制通道（v6 格式规格先行更新）
 - **类型系统方向定案**（type-system-direction，2026-08-30 定稿）：图本体 + 接口统一总纲——图 = 唯一真相层（类型 = 图标注、接口 = 图上契约、类型检查 = 图良构性验证 pass，与指针三 pass 同级）；接口注册表（int/dex/string = 原生接口条目，规则内建、公理引用规约层、用户不可实现）；where 值约束三档语义（常量→编译错误 / 符号→VC / 动态→运行时检查）；泛型 = 编译期接口具体化（无运行期字典）；宽度移出语言（见 width-out-of-language）。损失账本（免费午餐债 5 项）+ 演进顺序（where 值约束 → 泛型=编译期接口 → 验证切片 → v6 格形态 → 类型概念收敛，两条根基革命不得同时进行）+ 学术支撑（PLDI 2025 Webs 平行印证、语义子类型 = 完整补偿、ISO TS 6010 provenance 对齐）详见 `docs/superpowers/specs/2026-08-30-type-system-direction-design.md`
+- **边界判定图 pass**（bounds-inference，2026-09-05 挂账）：在 HDFG 上做下标/切片长度的符号传播 pass（与指针三 pass 同级）——idx 来源链 + slice 长度来源链（F11 侧表传播的图化升级）：证明恒安全 → 不发射检查（零成本）；证明恒越界 → 编译期 R002 拒绝；证明不了 → 保留运行时检查并带图推导必要性标注。目标：运行时 trap 面最小化（trap = 推导不出才留的兜底，兼作验证证据）；核心_pattern 桌面挂起坑的根治方向（见 :125 划销注）。现状基础：pass_before_array_access/ext_safety 检查发射钩子、slice_len 侧表（字面量/长度变量编码）、checker R002 编译期越界
 ## 待实现特性
 
 ### 控制流自动惰性（2026-08-09 记）
