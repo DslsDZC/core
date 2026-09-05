@@ -1309,7 +1309,13 @@ fi = 0; loop { if fi >= g_ir_func_count { break; }
 
         ii := 0; loop { if ii >= ic { break; }
             inst_idx := ist + ii;
-            sz := emit_instr(inst_idx, buf, cp);
+            // HIT 表模式（M1 Task 2）：表映射 op 走 emit_instr_tabled；
+            // -1（未映射/形态不支持/无表）落旧路径 emit_instr——混合模式。
+            sz : ., mut = -1;
+            if hit_table_active() != 0 {
+                sz = emit_instr_tabled(inst_idx, buf, cp);
+            }
+            if sz < 0 { sz = emit_instr(inst_idx, buf, cp); }
             cp = cp + sz;
         ii = ii + 1; }
 

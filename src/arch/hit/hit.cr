@@ -183,6 +183,16 @@ fn hit_parse_proj_chunk(pc: string, event_id: int) -> int {
     if n > 2 {
         print("error: HIT table: event "); print_i(event_id); println(" opcode >2 bytes (M1 single-step)");
         return 0; }
+    // 值域校验：每项须 0..255（字节）——防 >255 静默截断（发射端按字节写）。
+    // toml 无负号解析 → 负值不可达，仅查上限。
+    j : ., mut = 0;
+    loop {
+        if j >= n { break; }
+        if hit_r32(opc, j * 4) > 255 {
+            print("error: HIT table: event "); print_i(event_id);
+            println(" opcode byte >255 (not a byte)");
+            return 0; }
+        j = j + 1; }
     hit_grow_steps(g_hit_step_count + 1);
     sb := g_hit_step_count * HIT_STEP_REC;
     g_hit_step_count = g_hit_step_count + 1;
@@ -299,6 +309,11 @@ fn load_hit_table(path: string) -> int {
         print("error: HIT table: [table] events="); print_i(expected);
         print(" parsed="); print_i(g_hit_event_count); println(" mismatch");
         return 1; }
+    return 0; }
+
+// 表模式激活态：加载成功（g_hit_event_count > 0）= 发射循环启用表优先
+fn hit_table_active() -> int {
+    if g_hit_event_count > 0 { return 1; }
     return 0; }
 
 // 事件 id → 事件槽（记录下标）；-1 = 无

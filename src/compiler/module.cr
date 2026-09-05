@@ -546,6 +546,10 @@ fn res_imports() {
                             content = module_get_source(path);
                         }
                         if str_len(content) == 0 {
+                            path = "src/arch/hit/" + fs_path + ".cr";
+                            content = module_get_source(path);
+                        }
+                        if str_len(content) == 0 {
                             path = fs_path + ".cr";
                             content = module_get_source(path);
                         }

@@ -6,6 +6,7 @@
 g_x86_rodata_base : int, mut;
 g_x86_func_frame_start : int, mut;  // abs buf pos of current function body (after frame)
 g_current_func_var_start : int, mut;  // var_start of current function, set before emit
+g_hit_tabled_count : int, mut;  // 表驱动实际发射指令数（诊断：corearch 表模式总结）
 
 E2_REG_SLOT_BASE : int = 1000000000;
 
@@ -1564,3 +1565,68 @@ fn emit_instr(instr_idx: int, buf: string, pos: int) -> int {
 
     return 0;
 }
+
+// ══════════════════════════════════════════════════════════════
+// HIT 表驱动发射（M1 Task 2）——emit_instr 的并行路径
+// ══════════════════════════════════════════════════════════════
+// 数据 = core-x86.toml（src/arch/hit/，load_hit_table 已载入 g_hit_events/steps）。
+// 调用方（elf.cr 发射循环）：hit_table_active() 时先调 emit_instr_tabled，
+// 返回 -1 = 未映射/形态不支持 → 落旧路径 emit_instr（混合模式）。
+// 正确性契约：emit_instr_tabled 实际发射时，输出字节 == 旧路径同指令输出
+// （操作数装载/回存复用同一组 e2_* → 槽/reg/rip_patch 记录逐字节一致；
+//  差异仅在中间指令字节——由表数据决定，表 = 数据，错在数据不在代码）。
+// 接口：hit_map_ir_op / hit_proj_step / HIT_* 布局常量（src/arch/hit/hit.cr，
+// 构建清单中 hit.cr 位于本文件之前）。
+
+// 角色 → M1 寄存器对低 3 位（modrm 字段编码；r10=2 主累加 / r11=3 第二操作数）
+fn hit_role_reg_low(role: int) -> int {
+    if role == HIT_ROLE_DST { return 2; }
+    if role == HIT_ROLE_SRC1 { return 2; }
+    if role == HIT_ROLE_SRC2 { return 3; }
+    if role == HIT_ROLE_VAL { return 2; }
+    return -1; }   // addr/未知：无寄存器惯例（M1 addr 走 rbp+disp 形态）
+
+// IR 指令 → 最小核事件号：-1 = 未映射（落旧路径）。
+// M1 直通面 = IR_BINARY(OP_SUB) 整数 sub → 事件 1；dex（binary64）sub 走 SSE
+// 旧路径（TI_DEX 不映射）。其余子操作（add/and/…）映射 = Task 3 合成层。
+fn hit_map_ir_op(op: int, s3: int, ti: int) -> int {
+    if op == IR_BINARY {
+        if s3 == OP_SUB && ti != TI_DEX { return 1; }
+    }
+    return -1; }
+
+// 表驱动单指令发射。与 emit_instr 同签名；返回写入字节数；-1 = 未映射/不支持。
+fn emit_instr_tabled(instr_idx: int, buf: string, pos: int) -> int {
+    op := iri_op(instr_idx); d := iri_dest(instr_idx);
+    s1 := iri_s1(instr_idx); s2 := iri_s2(instr_idx);
+    s3 := iri_s3(instr_idx); ti := iri_tk(instr_idx);
+    ev := hit_map_ir_op(op, s3, ti);
+    if ev < 0 { return -1; }
+    es := hit_event_lookup(ev);
+    if es < 0 { return -1; }   // 表在但事件缺 = 表数据不完整 → 保守落旧路径
+    st := alloc(HIT_STEP_REC);
+    if hit_proj_step(es, 0, st) != 0 { return -1; }
+    rm_mode := hit_r32(st, HIT_ST_OFF_RM_MODE);
+    rr := hit_r32(st, HIT_ST_OFF_REG_ROLE);
+    mr := hit_r32(st, HIT_ST_OFF_RM_ROLE);
+    if rm_mode != 0 { return -1; }   // rbp+disp32 形态（load/store 事件）消费 = Task 3
+    // M1 直通形态（sub = 双寄存器累加形 29/r）：装载约定 = 旧路径 IR_BINARY——
+    // s1 → r10（rm 位/累加器）、s2 → r11（reg 位）；modrm 角色须与之自洽
+    // （reg 字段 = 第二输入 src2、rm 字段 = 目标 dst）——表数据错则回旧路径，
+    // 不静默发错码。
+    rreg := hit_role_reg_low(rr);
+    mreg := hit_role_reg_low(mr);
+    if rreg < 0 || mreg < 0 { return -1; }
+    if rr != HIT_ROLE_SRC2 || mr != HIT_ROLE_DST { return -1; }
+    cp : ., mut = 0;
+    cp = cp + e2_load_var(buf, pos+cp, 10, s1);
+    cp = cp + e2_load_var(buf, pos+cp, 11, s2);
+    // 指令字节：opcode ≤2 字节逐字发射（REX 位含在表数据：r10/r11 对 = W+R+B）
+    e2_w8(buf, pos+cp, hit_r32(st, HIT_ST_OFF_OP0)); cp = cp + 1;
+    op1 := hit_r32(st, HIT_ST_OFF_OP1);
+    if op1 != 0 { e2_w8(buf, pos+cp, op1); cp = cp + 1; }
+    // modrm：mod=3（寄存器）；reg/rm 低 3 位来自角色（src2→r11=3、dst→r10=2）
+    cp = cp + emit_modrm(buf, pos+cp, 3, rreg, mreg);
+    cp = cp + e2_st(buf, pos+cp, 10, g2_slot(d));
+    g_hit_tabled_count = g_hit_tabled_count + 1;
+    return cp; }
