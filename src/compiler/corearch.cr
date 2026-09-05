@@ -22,11 +22,21 @@ fn corearch_main() -> int {
     cli_flag("link", "l", "Comma-sep .so files, or 'auto' for ~/.core/lib/");
     cli_flag("output", "o", "Output path");
     cli_flag("opt-level", "O", "Optimization level (0-3, default=0)");
+    cli_flag("table", "", "HIT table file (load & validate, then exit)");
 
     if cli_parse() != 0 { return 1; }
     g_opt_level = 0;
     ol : ., mut = cli_get("opt-level");
     if str_len(ol) > 0 { g_opt_level = str_int(ol); if g_opt_level > 3 { g_opt_level = 3; } if g_opt_level < 0 { g_opt_level = 0; } }
+    // --table：HIT 表加载自检通道（M1 Task 1）——load 成功打印
+    // "hit table loaded: N events" 并 exit 0；失败 exit 1。发射接线 = Task 2。
+    tbl : ., mut = cli_get("table");
+    if str_len(tbl) > 0 {
+        if load_hit_table(tbl) != 0 { return 1; }
+        print("hit table loaded: ");
+        print_i(g_hit_event_count);
+        println(" events");
+        return 0; }
     if cli_arg_count() < 1 {
         println("usage: corearch <file.ccr> [options]");
         println("  --elf           ELF binary (default: dynamic)");
@@ -35,6 +45,7 @@ fn corearch_main() -> int {
         println("  --link auto     link ~/.core/lib/*.so (default)");
         println("  --link s1,s2   link specific .so files");
         println("  -o FILE         output path");
+        println("  --table FILE    load & validate HIT table, then exit");
         return 1; }
 
     src_path := cli_arg(0);

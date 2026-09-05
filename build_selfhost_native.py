@@ -189,6 +189,7 @@ def main():
             'src/stdlib/goroutine.cr',
             'src/stdlib/chan.cr',
             'src/stdlib/sched.cr',
+            'src/arch/hit/hit.cr',
             'src/compiler/corearch.cr',
         ], wrapper_fn='corearch_main'),
         label='corearch',
