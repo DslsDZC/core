@@ -4,7 +4,7 @@
 
 **Goal:** 把 `.ccr` 从 v5（格层线性投影）升级为 v6（线性投影 + 存在结构段：条目版本/存在区间/共存/home/无配方标记），供寄存器分配判定直接消费。
 
-**Architecture:** v6 = v5 全部基础段 + 新增存在结构段，version 字段 5→6，magic（`CCR1`）/扩展名/CLI 不动（方案 A 定案）。存在结构的数据（版本化条目 × 存在区间）由新推导 pass 从线性 IR 重建（`alloc_registers` 的 live-interval 雏形升级为独立 pass），共存按设计文档「推导规则优先，避免冗余存储」。v5→v6 一次性转换工具重建存在段。ELF 后端只消费线性段（v6 保留），故后端改动面小；存在段是分配的判定输入（`docs/regalloc-cache-mapping.md` §4 一致性四条）。
+**Architecture:** v6 = v5 全部基础段 + 新增存在结构段，version 字段 5→6，magic（`CCR1`）/扩展名/CLI 不动（方案 A 定案）。存在结构的数据（版本化条目 × 存在区间）由新推导 pass 从线性 IR 重建（`alloc_registers` 的 live-interval 雏形升级为独立 pass），共存按设计文档「推导规则优先，避免冗余存储」。ELF 后端只消费线性段（v6 保留），故后端改动面小；存在段是分配的判定输入（`docs/regalloc-cache-mapping.md` §4 一致性四条）。
 
 **Tech Stack:** Core 自举编译器（`src/compiler/`）、Python bootstrap（`bootstrap/corec/`）、x86-64 ELF 后端（`src/arch/linux/ld/`）。无外部依赖。
 
@@ -13,7 +13,7 @@
 - 版本控制用 `jj`（铁律 #2，git 被 hook 拦截）。提交：`jj commit -m '<msg>'`；推送：`jj git push ...`
 - 长时间编译/测试用 `nice -n 19`（铁律 #6；无 cpulimit 时）
 - `.ccr` 扩展名 / magic `CCR1` / CLI / 文件路径**不动**（2026-08-27 方案 A 定案）
-- v6 **不承诺 v5 后向兼容**；v5→v6 一次性转换工具（趁程序生态小）
+- v6 **不承诺 v5 后向兼容**；v6 落地即 v6-only（.ccr 为管线中间产物，corec→corearch 现生成、零持久生态，无需 v5→v6 转换工具——2026-09-05 计划定稿取消）
 - 宽度标签（`T_INT_I8..U64` / `W_*`）不进入 v6（width-out-of-language 定案；v5 格式本身无宽度字段——parser 的宽度标注在 AST 节点，不落 .ccr）
 - 共存不落盘冗余存储——推导规则（存在区间相交）优先（设计文档 §4.2 第 2 条）
 - 内存数组操作沿用仓库模式：动态 byte buffer + `grow_*`/`w64`/`r64`/`i32` 字段访问器，无 `MAX_*` 硬限
@@ -44,7 +44,6 @@
 - `entries` 段放在 `sgs` 之后（尾部超集扩展的先例：v3 opt_meta、v5 sgs 均尾部追加）
 - 语义：一个条目 = 变量 × 版本（每次 `IR_STORE`/`IR_ALLOC` 定值切分一个版本）；`def_instr` = 定值指令号（-1 = 函数参数/全局）；`live_start/live_end` = 存在区间（指令序，含定值与最后使用）；`home` = 分配器回填的槽位（v6 先行格式字段，未分配填 -1）；`flags` 位 0 = 无配方（图内不可重算，条款 4b）
 - **共存不落盘**：判定消费时由区间相交现算（O(n²)，判定可判定/局部）
-- **v5 → v6 转换**：读 v5 → 跑存在推导 pass → 写 v6（转换工具 = 同一推导函数复用）
 
 ---
 
@@ -264,7 +263,7 @@ Commit: `jj commit -m 'feat: 共存推导规则（存在区间相交，不落盘
 - Test: `tests/selfhost/test_region_cfg.py` 同款 ccr round-trip 模式或新 `test_ccr_v6.py`
 
 **Interfaces:**
-- Produces: version 常量升 6（`ccr_io.cr` 头部注释 + save 写 `6`）；v6 段布局见本文「v6 格式布局」；`load_ccr` 读 v6 时填充条目表（v5 文件：entries_count=0 兼容读取——转换工具产出前允许空条目段）
+- Produces: version 常量升 6（`ccr_io.cr` 头部注释 + save 写 `6`）；v6 段布局见本文「v6 格式布局」；`load_ccr` 校验 `version == 6`（不承诺 v5 后向兼容，v6-only——.ccr 中间产物现生成，无旧文件兼容需求）后解析 entries 段填充条目表
 
 - [ ] **Step 1: 写 round-trip 测试**
 
@@ -289,36 +288,7 @@ Commit: `jj commit -m 'feat: .ccr v6 entries 段 save/load——版本 6 落盘�
 
 ---
 
-### Task 5: v5 → v6 一次性转换工具
-
-**Files:**
-- Modify: `src/compiler/ccr_io.cr`（转换函数）
-- Modify: `src/compiler/corearch.cr` 或 `main.cr`（CLI 入口）
-- Test: `tests/selfhost/test_ccr_v6.py`（追加）
-
-**Interfaces:**
-- Produces: `fn convert_ccr_v5_to_v6(data: string, fsize: int) -> string`（v5 字节 → v6 字节：读 v5 全段 → 对每函数跑 compute_live_ranges/compute_entries → 写 v6 = v5 段 + entries 段）；CLI：`corearch --convert-v5 <in> <out>` 或等价
-
-- [ ] **Step 1: 写失败测试**
-
-`test_ccr_v6.py` 追加：手工构造/收集 v5 .ccr（用 git 历史中 v5 时代的产物或 `git show` 旧 build 产物不可行——用**转换前保存**：Task 4 提交后 CI 产物全是 v6；测试用测试夹具固定一个 v5 字节样本（从 Task 4 前的 .ccr 导出 hex 存 fixtures）→ 转换 → 断言 version=6 且可 load + 条目数合理）。
-
-- [ ] **Step 2: 实现 convert**
-
-复用 load_ccr 的段解析（v5 时 entries_count 0）→ 跑推导 → save 段组装。注意 load_ccr 填充的是全局 IR 状态，转换需在干净状态跑（新函数独立实现段搬运，或 save/load 之间重置——按 ccr_io 现有模式选最小改动）。
-
-- [ ] **Step 3: 接 CLI**
-
-corearch 加参数（参考现有 `--elf`/`--static` 风格）：`--convert-v5` 输入输出两路径参数。
-
-- [ ] **Step 4: 测试 + 提交**
-
-Run: `nice -n 19 python3 tests/selfhost/test_ccr_v6.py`
-Commit: `jj commit -m 'feat: v5→v6 一次性转换工具（转换 = 读 v5 + 跑存在推导 + 写 v6）——v6 Task 5'`
-
----
-
-### Task 6: 判定消费最小闭环（.corespec + checker 自检）
+### Task 5: 判定消费最小闭环（.corespec + checker 自检）
 
 **Files:**
 - Create: `spec/regalloc-consistency.corespec`（判定四条规约，先规格后实现——TODO 判据「判定规约：一致性四条写成 .corespec」）
@@ -343,16 +313,16 @@ Create `spec/regalloc-consistency.corespec`：四条判定以规范语言陈述�
 - [ ] **Step 4: 测试 + 提交**
 
 Run: `nice -n 19 python3 tests/selfhost/test_live_ranges.py`
-Commit: `jj commit -m 'feat: 判定一致性自检（共存互斥闭环）+ regalloc-consistency.corespec 规约——v6 Task 6'`
+Commit: `jj commit -m 'feat: 判定一致性自检（共存互斥闭环）+ regalloc-consistency.corespec 规约——v6 Task 5'`
 
 ---
 
-### Task 7: 自举管线 / 测试迁移 / 文档同步
+### Task 6: 自举管线 / 测试迁移 / 文档同步
 
 **Files:**
 - Modify: `docs/ir-schema/coreir-schema.md`（v6 段布局 + entries 记录 24B 字段表）
 - Modify: `CLAUDE.md`（`.ccr` 描述 v5 → v6：格层存在结构）
-- Modify: `docs/superpowers/specs/2026-08-27-lattice-form-ir-design.md`（状态：执行中→按实施结果复核 §4.2/§5）
+- Modify: `docs/superpowers/specs/2026-08-27-lattice-form-ir-design.md`（状态：执行中→按实施结果复核 §4.2/§5；**§4.2/§5 的「v5→v6 一次性转换工具」按计划定稿取消**（.ccr 为管线中间产物、零持久生态）——同步删除该事项并注记）
 - Modify: `docs/project-book.md`、`docs/compcert-reference.md`（如提及 .ccr v5 线性投影描述处）
 - Modify: `TODO.md`（v6 事项划销：见「格形态 IR 升级」节 8 事项逐条核对）
 - 验证：`bootstrap/corec/ir/ccr.py`（Python bootstrap 的 .ccr 读写——查它是否真的读写 .ccr 还是仅占位）
@@ -373,7 +343,7 @@ CLAUDE.md 的 `.ccr` 描述更新（Architecture 节 + Key Conventions）；latt
 - [ ] **Step 4: 全量回归 + 自检 + 提交**
 
 Run: `nice -n 19 python3 tests/bootstrap/test_pipeline.py && nice -n 19 python3 tests/bootstrap/test_borrow.py && nice -n 19 python3 tests/bootstrap/test_generics.py && ./build/corec check src/compiler`
-Commit: `jj commit -m 'docs: v6 落地同步——coreir-schema/CLAUDE.md/设计文档状态/TODO 划销（v6 Task 7）'`
+Commit: `jj commit -m 'docs: v6 落地同步——coreir-schema/CLAUDE.md/设计文档状态/TODO 划销（v6 Task 6）'`
 
 ---
 
