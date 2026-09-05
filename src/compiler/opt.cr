@@ -187,6 +187,100 @@ fn ast_optimize_body(body: int) {
 }
 
 // ------------------------------------------------------------------
+// v6 数据基础：存在区间推导（指令序 [first_ref, last_ref]）
+// ------------------------------------------------------------------
+// compute_live_ranges 填充全局 g_ir_live_ranges（表全局声明在 globals.cr），
+// alloc_registers 改读本表——与原内联 iv_buf 构建逻辑逐行一致（行为不变）。
+// 表布局：每函数一段，段内每「函数内 var」16B（first_ref/last_ref 各 8B，
+// 函数内指令序）；func_i 段起始 = Σ var_count[0..func_i)，不乘固定稠密系数
+// （live_range_slot 即该前缀累计；16B 记录 + grow 风格同 g_ir_slice_lens）。
+
+fn grow_live_ranges(needed: int) {
+    if needed < g_live_range_cap { return; }
+    nc := g_live_range_cap * 2; if nc < 64 { nc = 64; } if nc < needed { nc = needed + 64; }
+    nb := alloc(nc * 16); _dyncpy(g_ir_live_ranges, g_live_range_cap * 16, nb);
+    g_ir_live_ranges = nb; g_live_range_cap = nc;
+}
+
+fn live_range_slot(func_i: int, var_i: int) -> int {
+    // 函数内 var 索引 = var_i − var_start[func_i]；func_i 段起始 = 前缀 var_count 累计
+    off : ., mut = 0;
+    fi : ., mut = 0;
+    loop { if fi >= func_i { break; }
+        off = off + r64(g_ir_func_var_count, fi * 8);
+        fi = fi + 1; }
+    return (off + (var_i - r64(g_ir_func_var_start, func_i * 8))) * 16;
+}
+
+fn live_first(func_i: int, var_i: int) -> int {
+    if func_i < 0 || var_i < 0 { return -1; }
+    return r64(g_ir_live_ranges, live_range_slot(func_i, var_i));
+}
+
+fn live_last(func_i: int, var_i: int) -> int {
+    if func_i < 0 || var_i < 0 { return -1; }
+    return r64(g_ir_live_ranges, live_range_slot(func_i, var_i) + 8);
+}
+
+// 存在区间推导：填充 g_ir_live_ranges。语义 = 原 alloc_registers 内联 iv_buf
+// 构建（:210-241）：逐函数逐指令扫描，dest/s1/s2 落在 [vs, vs+vc) 内则扩展
+// [first_ref,last_ref]（首见写 first，之后推进 last）；未使用 var 两条均为 -1。
+fn compute_live_ranges() {
+    total : ., mut = 0;
+    fi : ., mut = 0;
+    loop { if fi >= g_ir_func_count { break; }
+        total = total + r64(g_ir_func_var_count, fi * 8);
+        fi = fi + 1; }
+    grow_live_ranges(total);
+    g_live_range_count = total;
+    // 首遍写 -1（区间未知 = -1，同 alloc_registers 的 iv_buf 初始化语义）
+    zi : ., mut = 0;
+    loop { if zi >= total { break; }
+        w64(g_ir_live_ranges, zi * 16, -1);
+        w64(g_ir_live_ranges, zi * 16 + 8, -1);
+        zi = zi + 1; }
+    // 逐函数逐指令扫描：段偏移 = 运行中前缀累计（与 live_range_slot 前缀一致）
+    seg : ., mut = 0;
+    fi = 0;
+    loop {
+        if fi >= g_ir_func_count { break; }
+        ic := r64(g_ir_func_instr_count, fi * 8);
+        ist := r64(g_ir_func_instr_start, fi * 8);
+        vc := r64(g_ir_func_var_count, fi * 8);
+        vs := r64(g_ir_func_var_start, fi * 8);
+        if vc > 0 {
+            ii : ., mut = 0;
+            loop {
+                if ii >= ic { break; }
+                inst := ist + ii;
+                d := iri_dest(inst); s1 := iri_s1(inst); s2 := iri_s2(inst);
+                if d >= vs && d < vs + vc {
+                    lv := d - vs;
+                    st := (seg + lv) * 16;
+                    if r64(g_ir_live_ranges, st) < 0 { w64(g_ir_live_ranges, st, ii); }
+                    w64(g_ir_live_ranges, st + 8, ii);
+                }
+                if s1 >= vs && s1 < vs + vc {
+                    lv := s1 - vs;
+                    st := (seg + lv) * 16;
+                    if r64(g_ir_live_ranges, st) < 0 { w64(g_ir_live_ranges, st, ii); }
+                    w64(g_ir_live_ranges, st + 8, ii);
+                }
+                if s2 >= vs && s2 < vs + vc {
+                    lv := s2 - vs;
+                    st := (seg + lv) * 16;
+                    if r64(g_ir_live_ranges, st) < 0 { w64(g_ir_live_ranges, st, ii); }
+                    w64(g_ir_live_ranges, st + 8, ii);
+                }
+                ii = ii + 1;
+            }
+        }
+        seg = seg + vc;
+        fi = fi + 1;
+    }
+}
+
+// ------------------------------------------------------------------
 // Register allocation: rewrite IR operands to encode physical regs
 // ------------------------------------------------------------------
 // Rewrites g_ir_instrs operand fields: operands pointing to IR vars
@@ -197,6 +291,8 @@ fn ast_optimize_body(body: int) {
 
 fn alloc_registers() {
     if g_opt_level < 1 { return; }
+    // v6 数据基础：存在区间表先行（原内联 iv_buf 构建已提取为 compute_live_ranges）
+    compute_live_ranges();
     fi : ., mut = 0;
     loop {
         if fi >= g_ir_func_count { break; }
@@ -205,31 +301,6 @@ fn alloc_registers() {
         vc := r64(g_ir_func_var_count, fi * 8);
         vs := r64(g_ir_func_var_start, fi * 8);
         if vc <= 0 { fi = fi + 1; continue; }
-
-        // Build live intervals: [first_ref, last_ref] per var
-        iv_buf := alloc(vc * 16);
-        vi : ., mut = 0;
-        loop { if vi >= vc { break; } w64(iv_buf, vi*16, -1); w64(iv_buf, vi*16+8, -1); vi = vi + 1; }
-
-        ii : ., mut = 0;
-        loop {
-            if ii >= ic { break; }
-            inst := ist + ii;
-            op := iri_op(inst); d := iri_dest(inst); s1 := iri_s1(inst); s2 := iri_s2(inst);
-            vc2 : ., mut = 0;
-            vars : string, mut = alloc(64 * 8);    vars_cap : int, mut = 64;
-            if vars_cap == 0 { vars = alloc(64); vars_cap = 8; }
-            if d >= vs && d < vs + vc { if vc2 < vars_cap { w64(vars, vc2 * 8, d - vs); vc2 = vc2 + 1; } }
-            if s1 >= vs && s1 < vs + vc { if vc2 < vars_cap { w64(vars, vc2 * 8, s1 - vs); vc2 = vc2 + 1; } }
-            if s2 >= vs && s2 < vs + vc { if vc2 < vars_cap { w64(vars, vc2 * 8, s2 - vs); vc2 = vc2 + 1; } }
-            vj : ., mut = 0;
-            loop { if vj >= vc2 { break; }
-                lv := r64(vars, vj * 8);
-                if r64(iv_buf, lv*16) < 0 { w64(iv_buf, lv*16, ii); }
-                w64(iv_buf, lv*16+8, ii);
-                vj = vj + 1; }
-            ii = ii + 1;
-        }
 
         // Use only callee-saved registers (preserved across function calls)
         // rbx(3), r12(12), r13(13), r14(14), r15(15) = 5 registers
@@ -248,7 +319,8 @@ fn alloc_registers() {
         loop { if vr_clear >= vrc { break; } w64(var_reg, vr_clear * 8, -1); vr_clear = vr_clear + 1; }
 
         // Simple linear scan: for each instruction, allocate regs for dest
-        ii = 0;
+        vi : ., mut = 0;
+        ii : ., mut = 0;
         loop {
             if ii >= ic { break; }
             inst := ist + ii;
@@ -258,7 +330,7 @@ fn alloc_registers() {
             vi = 0;
             loop { if vi >= vc { break; }
                 if r64(var_reg, vi * 8) >= 0 {
-                    last_ref := r64(iv_buf, vi*16+8);
+                    last_ref := live_last(fi, vs + vi);
                     if last_ref < ii {
                         // Return reg to pool
                         w64(var_reg, vi * 8, -1);
@@ -270,8 +342,8 @@ fn alloc_registers() {
             if d >= vs && d < vs + vc {
                 lvi := d - vs;
                 if r64(var_reg, lvi * 8) < 0 {
-                    first_ref := r64(iv_buf, lvi*16);
-                    last_ref := r64(iv_buf, lvi*16+8);
+                    first_ref := live_first(fi, d);
+                    last_ref := live_last(fi, d);
                     if first_ref >= 0 && last_ref >= 0 && reg_idx < MAX_REGS {
                         w64(var_reg, lvi * 8, r64(reg_phys, reg_idx * 8));
                         reg_idx = reg_idx + 1;

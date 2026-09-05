@@ -60,6 +60,14 @@ g_ir_func_var_count : string, mut;  g_ir_func_var_count_cap : int, mut;
 g_ir_func_param_count : string, mut; g_ir_func_param_count_cap : int, mut;
 g_ir_func_count : int, mut;
 
+// v6 数据基础：存在区间表（compute_live_ranges 填充，alloc_registers 改读本表）。
+// 布局：每函数一段，段内每「函数内 var」两条 i64（first_ref/last_ref，指令序）；
+// func_i 段起始 = Σ var_count[0..func_i)，不乘固定稠密系数。未使用 var 为 -1。
+// 与 g_ir_slice_lens 同风格：16B 记录 + grow 函数（grow_live_ranges 在 opt.cr）。
+g_ir_live_ranges : string, mut;
+g_live_range_count : int, mut;
+g_live_range_cap : int, mut;
+
 // Module system arrays (dynamic byte buffers)
 DIAG_REC_SIZE : int = 40;   // g_diags 记录字节数：[ec(8) msg(8) line(8) col(8) file_id(8)]
 g_diags : string, mut;           g_diag_count : int, mut;     g_diag_cap : int, mut;
