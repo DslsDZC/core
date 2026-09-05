@@ -351,6 +351,9 @@ Commit: `jj commit -m 'docs: v6 落地同步——coreir-schema/CLAUDE.md/设计
 
 ## 后续（本计划外，挂 TODO）
 
+- **SYM 归并 / REG 重排 + 区内条目范围**（Task 4 评审 I-1 条件，2026-09-06）：v6.0 保守路径未做 spec §3.2/§3.5 目标形状——SYM 现为 v5 符号面装入段表、REG 为 v5 sgs 原序。坐标化全量目标须挂账（spec 与代码避免永久脱节）
+- Task 6 schema 同步以**实现形状**为准落笔（不写编译器永不产出的格式）
+
 - **贪心放置升级**（`opt.cr` alloc_registers → 上下文贪心：存在结构上的 First Fit + 驱逐写回 + 调用点失效）——消费 v6 条目/共存/home；解锁 caller-saved
 - **证书层**：最优性证书（DP 表重放 / ILP 对偶）
 - **无配方条目完整语义**（条款 4b 边界 + 驱逐必写回）——v6 flags 位 0 字段已预留
