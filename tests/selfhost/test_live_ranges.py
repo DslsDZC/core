@@ -256,9 +256,13 @@ VIOLATION_LINE = re.compile(r"^regalloc-consistency: func \d+ \(.+\): rule (\d+)
 
 def check_regalloc_consistency() -> tuple:
     """Task 5：(a) O2 分配的正确程序自检静默通过（rc=0、无 violation 行）。
-    覆盖路径真实消费分配结果（g_opt_meta var→reg 对投影到条目，规则 ① 逐寄存器组
-    sweep）+ 版本区间覆盖读点断言（规则 ② 框架）。fib 递归密集 + 6 变量程序使
-    a-e 占 5 个 callee-saved（f 落栈）——寄存器组/读点覆盖均实际触发。"""
+    覆盖来源如实披露（评审 M1 收敛措辞）：绿路径为结构性空转——实测
+    alloc_registers 现分配输出恒为空（2026-09-06 注记，opt.cr alloc 区头；无
+    var 存活 → g_opt_meta 无 REG_ASSIGN 对）→ 无寄存器驻留条目，规则 ①/② 在
+    真实数据上平凡通过（「a-e 占 5 个 callee-saved」为虚假印象——寄存器加速
+    长期未生效，挂账 CAG）。规则 ①/② 的实际触发证据 = 注入红路径
+    （check_regalloc_violations / check_regalloc_read_gap_nonfunc0）；fib/6 变量
+    绿程序按行为锚点保留（自检接线回归：误报即红）。"""
     for name, src in (
         ("fib", "fn fib(n:int)->int{if n<2{return n;}return fib(n-1)+fib(n-2);}\n"
                 "fn main()->int{return fib(10);}\n"),
@@ -302,12 +306,48 @@ def check_regalloc_violations() -> tuple:
     return True, "regalloc violations detected (rules 1/1/2)"
 
 
+def check_regalloc_read_gap_nonfunc0() -> tuple:
+    """F1 回归（评审发现）：规则 ② 注入目标 = 非 func 0 函数。
+
+    rl_rule2_func 曾以局部扫描下标 ii 对照条目表全局坐标（ent_def/ent_live_end
+    存 ist+局部），非 func 0 函数（ist > 0）上规则 ② 失明（只漏报不误报）——
+    func 0 上 ii == inst 掩盖缺陷。本用例把 --inject-read-gap 的注入目标推到
+    func 9（sum6）：前导 noop 函数撑大 ist（实测 sum6 ist=49 > ic≈26，读点局部
+    下标永不越过全局 def）——旧实现漏报 rc=0（红），修复（三处比较改用
+    inst := ist + ii）后 rc=1 + func 9 (sum6) 规则 ② 诊断行（绿）。"""
+    src = "fn main()->int{return n0(1,2);}\n" \
+          "fn n0(a:int,b:int)->int{return a+b;}\n" \
+          "fn n1(a:int,b:int)->int{return a+b;}\n" \
+          "fn n2(a:int,b:int)->int{return a+b;}\n" \
+          "fn n3(a:int,b:int)->int{return a+b;}\n" \
+          "fn n4(a:int,b:int)->int{return a+b;}\n" \
+          "fn n5(a:int,b:int)->int{return a+b;}\n" \
+          "fn n6(a:int,b:int)->int{return a+b;}\n" \
+          "fn n7(a:int,b:int)->int{return a+b;}\n" \
+          "fn sum6()->int{a:=1;b:=2;c:=3;d:=4;e:=5;f:=6;return a+b+c+d+e+f;}\n"
+    rc, out = check_regalloc(src, ["--inject-read-gap"])
+    if rc != 1:
+        return False, f"check-regalloc +--inject-read-gap (non-func0): rc={rc}, expected 1:\n{out[-500:]}"
+    m = SUMMARY_LINE.search(out)
+    if not m or int(m.group(2)) == 0:
+        return False, f"check-regalloc +--inject-read-gap (non-func0): summary missing or 0 violations:\n{out[-500:]}"
+    v = re.search(r"^regalloc-consistency: func (\d+) \((\S+)\): rule (\d+) violation",
+                  out, re.MULTILINE)
+    if not v:
+        return False, f"check-regalloc +--inject-read-gap (non-func0): no violation line:\n{out[-500:]}"
+    if v.group(3) != "2" or v.group(2) != "sum6" or int(v.group(1)) == 0:
+        return False, (f"check-regalloc +--inject-read-gap (non-func0): violation not on "
+                       f"non-func-0 rule 2 (got func {v.group(1)} ({v.group(2)}) rule "
+                       f"{v.group(3)}):\n{out[-500:]}")
+    return True, "read-gap detected on non-func-0 func (rule 2)"
+
+
 def main() -> int:
     if not COREC.exists():
         print("[FAIL] missing build/corec")
         return 1
     passed = 0
-    total = 5
+    total = 6
     ok, msg = run_smoke()
     if ok:
         passed += 1
@@ -328,6 +368,10 @@ def main() -> int:
     if ok:
         passed += 1
     print(f"[{'PASS' if ok else 'FAIL'}] regalloc violations: {msg}")
+    ok, msg = check_regalloc_read_gap_nonfunc0()
+    if ok:
+        passed += 1
+    print(f"[{'PASS' if ok else 'FAIL'}] regalloc read-gap non-func0: {msg}")
     print(f"{passed}/{total} passed")
     return 0 if passed == total else 1
 

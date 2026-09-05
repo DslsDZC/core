@@ -16,7 +16,11 @@ RequiresClause = 'requires' SpecExpr ';' ;
 EnsuresClause = 'ensures' SpecExpr ';' ;
 
 (*** 规约表达式 ***)
-SpecExpr = SpecLogicalOr ;
+(* 蕴含 ==>：2026-09-06 评审 F2 补（regalloc-consistency.corespec 使用）。
+   优先级低于 ||（最低层）；右结合——右侧递归展开（A ==> B ==> C = A ==>
+   (B ==> C)）。量词箭头 '=>'（SpecQuantifier 内）为不同词法形态，不冲突。 *)
+SpecExpr = SpecImplies ;
+SpecImplies = SpecLogicalOr [ '==>' SpecImplies ] ;
 SpecLogicalOr = SpecLogicalAnd { '||' SpecLogicalAnd } ;
 SpecLogicalAnd = SpecEquality { '&&' SpecEquality } ;
 SpecEquality = SpecComparison { ('==' | '!=') SpecComparison } ;

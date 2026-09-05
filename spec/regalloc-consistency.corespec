@@ -6,16 +6,21 @@
      1. 编译器内 checker 自检（实现期，本文件落 spec/ 后代码按此实现——opt.cr
         verify_regalloc_consistency 消费条目表 + 分配结果）
      2. 外部验证器（远期：翻译桥 → CIC 内核，docs/spec-design.md §2.7 体系）
-   语言形态依 grammar/corespec.ebnf（fn 契约声明 + 量词 + result/old）。目前仓库其余
-   .corespec 为空壳，本文件为第一份实义规约——契约声明的可执行消费在编译器内自检
-   （verify_* 实现），句法消费（.csr/验证器）随规约体系里程碑落地。
+   语言形态依 grammar/corespec.ebnf（fn 契约声明 + 量词 + result/old + 蕴含
+   '==>'——评审 F2 后文法已含 SpecImplies 产生式：右结合、优先级低于 ||，见
+   corespec.ebnf SpecExpr 层注记）。目前仓库其余 .corespec 为空壳，本文件为第一份
+   实义规约——契约声明的可执行消费在编译器内自检（verify_* 实现），句法消费
+   （.csr/验证器）随规约体系里程碑落地。
    语义出处：存在区间/共存/条目版本 = 格形态 v6（docs/superpowers/specs/
    2026-09-05-lattice-ir-v6-format.md §3.4/§4）；判定四条 = docs/regalloc-cache-mapping.md §四。
 *)
 
 (* 术语（对象层，v6 格式定稿 §3.4 同源）
    条目 entry   = IR 变量 × 版本（每次定值 = 新版本 = 新条目；def=-1 = 参数/无定值单条）
-   存在区间     = 条目在指令序上的存活闭区间 [live_start, live_end]（全局指令序坐标）
+   存在区间     = 条目在指令序上的存活闭区间 [live_start, live_end]（全局指令序坐标）。
+                 坐标分界注记（评审 M3）：本文件按内存态闭区间书写；落盘 .ccr ENT
+                 （v6 格式定稿 §3.4）为半开——live_end 编码「最后使用点 +1」，读入
+                 重建为内存态时 end−1 = 本文件 live_end，两端点定义在此对齐。
    共存 coexist = 两条目存在区间相交（对称关系，无传递性——无格承诺）
    位置 location= 条目材料的物理承载：寄存器（分配结果，当前 = g_opt_meta var→reg）
                  或 home 槽（条目表 home 字段，分配器回填 seam）

@@ -749,7 +749,11 @@ fn rl_rule2_func(func_i: int, vs: int, vc: int, ist: int, ic: int, es: int, ec: 
             }
             ei = ei + 1;
         }
-        // 逐指令升序扫读点；版本游标单调推进（版本区间自 def 起无缝相接）
+        // 逐指令升序扫读点；版本游标单调推进（版本区间自 def 起无缝相接）。
+        // 坐标注意（评审 F1 修复）：ent_def/ent_live_end 存全局指令坐标（ist+局部，
+        // compute_entries 写入 inst = ist + ii）——比较必须用 inst 不得用局部 ii；
+        // func 0 上 ist=0 使 ii == inst 掩盖该错配，非 func 0 函数上规则 ② 会失明
+        // （只漏报不误报；回归 = test_live_ranges check_regalloc_read_gap_nonfunc0）。
         cursor : ., mut = 0;
         first_def := r64(vers, 0 * 8);
         ii : ., mut = 0;
@@ -762,16 +766,16 @@ fn rl_rule2_func(func_i: int, vs: int, vc: int, ist: int, ic: int, es: int, ec: 
             s2 := iri_s2(inst);
             if s1 == gv && op != IR_STORE { rd = 1; }
             if s2 == gv { rd = 1; }
-            if rd != 0 && ii >= ent_def(first_def) {
-                // 推进游标至最后一个 def ≤ ii 的版本
+            if rd != 0 && inst >= ent_def(first_def) {
+                // 推进游标至最后一个 def ≤ inst 的版本
                 loop {
                     if cursor + 1 >= m { break; }
                     nx := r64(vers, (cursor + 1) * 8);
-                    if ent_def(nx) > ii { break; }
+                    if ent_def(nx) > inst { break; }
                     cursor = cursor + 1;
                 }
                 cv := r64(vers, cursor * 8);
-                if ent_live_end(cv) < ii {
+                if ent_live_end(cv) < inst {
                     if violations < RPT_MAX { rl_report_rule2(func_i, gv, inst); }
                     violations = violations + 1;
                 }
@@ -1116,11 +1120,15 @@ fn alloc_registers() {
 
         // Write register assignments to g_opt_meta (flat array of var_idx+reg_num pairs)
         // Store register assignments in g_opt_meta (simple format: var_idx,reg pairs)
-        // ⚠️ 已知（2026-09-06 实测注记）：rc 恒为 0——instr 循环每步对 last_ref < ii
-        // 的已分配 var 复位 var_reg（「归还」），循环末只保留末指令仍活跃的 var，实际
-        // 无 var 存活 → g_opt_meta 无 REG_ASSIGN 对 → 后端全栈发射（正确但无寄存器
-        // 加速）。本函数语义本轮不动（v6 Task 5 范围控制）；寄存器复用/回池修复随
-        // CAG 分配器升级（docs/regalloc-cache-mapping.md §五）同批——判定消费 seam
+        // ⚠️ 已知（2026-09-06 实测注记；措辞经评审 M2 收敛）：实测语料（tests/suite
+        // 与自举构建语料）上 rc 恒为 0——instr 循环每步对 last_ref < ii 的已分配 var
+        // 复位 var_reg（「归还」），循环末只保留末指令仍活跃的 var，实际无 var 存活
+        // → g_opt_meta 无 REG_ASSIGN 对 → 后端全栈发射（正确但无寄存器加速）。
+        // 「恒为 0」仅为上述语料的观测，非形式保证——防回退挂账（v6 Task 6 / CAG
+        // 前）：分配器改动后须跑 --check-regalloc 载体核对 rc 汇总（g_opt_meta
+        // REG_ASSIGN 对数 > 0）或加看门狗计数（全函数 rc==0 时告警），防止回归。
+        // 本函数语义本轮不动（v6 Task 5 范围控制）；寄存器复用/回池修复随 CAG
+        // 分配器升级（docs/regalloc-cache-mapping.md §五）同批——判定消费 seam
         // 已就绪（meta_reg_for_var/verify 按分配输出消费，届时自动接管）。
         rc : ., mut = 0;
         vi = 0;
