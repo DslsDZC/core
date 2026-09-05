@@ -171,8 +171,6 @@ def run_smoke() -> tuple:
     return passed == total, "; ".join(detail) if detail else ""
 
 
-
-
 def dump_coexist(source: str) -> tuple:
     """cir --dump-coexist 通道：返回 (rc, stdout)。"""
     with tempfile.NamedTemporaryFile("w", suffix=".cr", delete=False) as f:
@@ -230,8 +228,9 @@ def check_coexistence() -> tuple:
     coexist = a0["ls"] <= b0["le"] and b0["ls"] <= a0["le"]
     if not coexist:
         return False, f"a/b should coexist, ranges {a0['ls']}..{a0['le']} vs {b0['ls']}..{b0['le']}"
-    # a 两版本不相交（若 a 有多版本：a:=1; a=a+b 场景另测；此处 a 单版本跳过——
-    # 版本不交由 (a) ver_conf=0 覆盖）
+    # a 两版本（ALLOC 空版 vs STORE 值版）区间不相交——同变量版本不共存
+    if av[0]["ls"] <= av[1]["le"] and av[1]["ls"] <= av[0]["le"]:
+        return False, f"a versions should not coexist: {av[0]['ls']}..{av[0]['le']} vs {av[1]['ls']}..{av[1]['le']}"
     return True, "coexistence OK"
 
 
