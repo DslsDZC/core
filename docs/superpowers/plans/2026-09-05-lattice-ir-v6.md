@@ -35,17 +35,15 @@
 - **save/load**：`save_ccr`（ccr_io.cr:193）、`load_ccr`（:376）、`calc_ccr_size`（:130）、字段校验 `ccr_i32_fits`（:99）/`ccr_validate_i32_fields`（:104）
 - **消费方**：corearch（后端）读 .ccr → ELF；`.cir` 缓存走 `cir_cache.cr`（独立，不动）
 
-## v6 格式布局（本计划定稿）
+## v6 格式布局（2026-09-05 定案：**以格式定稿 spec 为唯一真相**）
 
-```
-[magic: "CCR1" = 4B]  [version: u32 = 6]
-[基础段：strings / func_meta / instrs / vars / str_consts / structs / enums / globals / opt_meta / sgs]   ← 与 v5 逐字节相同
-[entries: entry_count × {var_idx: u32, def_instr: i32, live_start: i32, live_end: i32, home: i32, flags: u32} = 24B/条]   ← v6 新增
-```
-
-- `entries` 段放在 `sgs` 之后（尾部超集扩展的先例：v3 opt_meta、v5 sgs 均尾部追加）
-- 语义：一个条目 = 变量 × 版本（每次 `IR_STORE`/`IR_ALLOC` 定值切分一个版本）；`def_instr` = 定值指令号（-1 = 函数参数/全局）；`live_start/live_end` = 存在区间（指令序，含定值与最后使用）；`home` = 分配器回填的槽位（v6 先行格式字段，未分配填 -1）；`flags` 位 0 = 无配方（图内不可重算，条款 4b）
-- **共存不落盘**：判定消费时由区间相交现算（O(n²)，判定可判定/局部）
+> 本文档早前的「追加式 24B」布局是草案残留，已废弃。**权威布局 = `docs/superpowers/specs/2026-09-05-lattice-ir-v6-format.md`**（B 方向：存在结构主体）：
+>
+> - Header 16B（magic `CCR1` / version 6 / seg_count）+ 段表（每段 {tag, offset, size}）——段序自由
+> - 段：STR（字符串）/ SYM（符号表，函数含 first_ent/last_ent）/ NOD（图事件 + 显式边）/ **ENT（条目表 28B/条：var_id, version, def_nod, live_start, live_end(半开), home, flags）** / REG（region，NOD 坐标）
+> - 坐标 = NOD id（图节点序 = 现 IR 指令序，见计划头注记）
+> - 共存不落盘（判定现算，sweep 不超线性）
+> - v6-only（无转换工具）
 
 ---
 
@@ -203,7 +201,9 @@ jj commit -m 'feat: 存在区间推导 pass——compute_live_ranges 独立表�
 
 - [ ] **Step 2: 写失败测试**
 
-`test_live_ranges.py` 追加：一个 `x := 1; x = x + 1; x = x + 2; return x;` 程序 → 期望 x 有 3 个条目（ALLOC 定值 + 2 次 STORE）——通过新 dump 通道（Task 2 加 `corec cir --entries` 或 `ccr` 命令输出条目摘要）断言 `entries(x) == 3`。
+`test_live_ranges.py` 追加：一个 `x := 1; x = x + 1; x = x + 2; return x;` 程序 → 期望 x 有 **4** 个条目——真实 IR 里 LET 初始化 `x := 1` 发射 `IR_ALLOC` + `IR_STORE` 两条定值（ir_gen EXPR_LET 路径），故 x = ALLOC 定值 + 3 次 STORE = 4 版本（2026-09-05 勘误：原写 3 系误按「LET 只发 ALLOC」的错误 IR 模型估算；规则原文含 ALLOC 定值，实现按规则得 4，测试断言 4）。
+
+**定值识别假设注记**（评审 Important）："函数段内 var 只被 ALLOC/STORE 写"成立范围有限——`IR_ALLOC_ARRAY/IR_ALLOC_STRUCT` 的 dest 也直写 var（`x : [3]int;` 无初值声明不发 IR_ALLOC）。若此类 var 后续被 STORE 重定值且其间有读，窗口无条目覆盖。当前影响小（内存对象非寄存器候选），Task 5 读点判定前需处理（格式定稿 §4.1「dest≥0 = 定值点」规则可消解）。
 
 - [ ] **Step 3: 实现 compute_entries**
 
@@ -265,7 +265,7 @@ Commit: `jj commit -m 'feat: 共存推导规则（存在区间相交，不落盘
 - Test: `tests/selfhost/test_region_cfg.py` 同款 ccr round-trip 模式或新 `test_ccr_v6.py`
 
 **Interfaces:**
-- Produces: version 常量升 6（`ccr_io.cr` 头部注释 + save 写 `6`）；v6 段布局见本文「v6 格式布局」；`load_ccr` 校验 `version == 6`（不承诺 v5 后向兼容，v6-only——.ccr 中间产物现生成，无旧文件兼容需求）后解析 entries 段填充条目表
+- Produces: version 常量升 6；**ENT 段按格式定稿 spec 落盘**（`docs/superpowers/specs/2026-09-05-lattice-ir-v6-format.md` §3.4：28B/条含 version + 半开区间；段表架构 Header+seg 表）；`load_ccr` 校验 version==6 + 段表完整性（越界拒绝）后按段表解析填充条目表
 
 - [ ] **Step 1: 写 round-trip 测试**
 
@@ -273,15 +273,15 @@ Create `tests/selfhost/test_ccr_v6.py`：编译一个含多版本变量的程序
 
 - [ ] **Step 2: 更新格式注释与 version**
 
-`ccr_io.cr:6-20` 头注释补 entries 段描述；save_ccr :203 写 `6`；`calc_ccr_size` 加 `entry_count × 24`。
+`ccr_io.cr` 头注释按 spec 更新段布局；version 写 `6`；`calc_ccr_size` 按 spec 段表 + 各段大小（ENT = entry_count × 28）计算。
 
 - [ ] **Step 3: save 前计算 + 落盘**
 
-save_ccr 在写 sgs 后追加：`entry_count`（= 各函数 compute_entries 之和）与条目数组。**调用点**：save_ccr 由 corec/corearch 调用，条目表须在 save 前就绪——在 `lower_to_ccr()` 尾部（dataflow.cr:351 函数末尾）显式调 `compute_live_ranges()` + 各函数 `compute_entries()`（在 main.cr 的 save 路径之前已执行；`opt.cr` 的 `alloc_registers` 在 `--opt-level ≥1` 才跑——compute 与 opt 解耦，无条件在 lower 尾部算）。
+save_ccr 按 spec 段表写各段（STR/SYM/NOD/ENT/REG）；ENT 条目（28B/条：var_id/version/def_nod/live_start/live_end/home/flags——version = 组内定值升序序数，半开 live_end = 最后使用点+1，由 Task 2 内存表转换）。**调用点**：save_ccr 由 corec/corearch 调用，条目表须在 save 前就绪——在 `lower_to_ccr()` 尾部（dataflow.cr:351 函数末尾）显式调 `compute_live_ranges()` + 各函数 `compute_entries()`（compute 与 opt 门控解耦，无条件在 lower 尾部算）。
 
 - [ ] **Step 4: load_ccr 读 entries**
 
-load_ccr 解析 entries 段（尾部）：校验 `entry_count ≤ 文件余量/24`（越界拒绝，先例 ccr 校验风格），填充条目表；不消费 entries 的旧路径（ELF 后端只读基础段）不受影响。
+load_ccr 按段表定位 ENT 段：校验 `entry_count ≤ 段大小/28`（越界拒绝，先例 ccr 校验风格），填充条目表；ELF 后端只读 NOD 段（= 原线性指令消费路径的坐标化），不依赖 ENT。
 
 - [ ] **Step 5: 跑测试 + 回归 + 提交**
 
