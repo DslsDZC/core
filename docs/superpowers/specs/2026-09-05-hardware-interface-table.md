@@ -1,7 +1,7 @@
 # 硬件接口表设计（Hardware Interface Table）
 
 日期：2026-09-05
-状态：设计定稿（结构拍板：最小核 4 事件 + 表驱动运行架构；实施里程碑待排）
+状态：设计定稿（结构拍板：最小核 4 事件 + 表驱动运行架构）；**M1 最小核运行闭环已完成（2026-09-06）**——表文件/编码器/合成层/冒烟落地（`src/arch/hit/` + `emit_instr_tabled` + `lower_to_core.cr`）；M2 挂账见 TODO
 关联：`docs/superpowers/specs/2026-09-05-lattice-ir-v6-format.md`（v6 格式）、`docs/superpowers/specs/2026-08-23-hw-map-design.md`（MMIO 设备表——同家族前件）、`docs/regalloc-cache-mapping.md`（优化/判定独立于表）、width-out-of-language 定案（编码 = hw-map 领域）。
 
 ## 1. 定位与命名
