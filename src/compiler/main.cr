@@ -520,6 +520,10 @@ fn corec_main() -> int {
             saved_opt := g_opt_level;
             g_opt_level = 2;
             alloc_registers();
+            // 看门狗行：g_opt_meta REG_ASSIGN 对总数（rc>0 = 寄存器真实分配
+            // 实证——CAG 前 rc 恒 0 全栈发射，防回退，见 opt.cr alloc 区头）
+            print("regalloc-assign: "); print(int_str(meta_reg_assign_total()));
+            println(" pairs");
             if cli_has("inject-home-conflict") != 0 { inject_home_conflict(); }
             if cli_has("inject-reg-conflict") != 0 { inject_reg_conflict(); }
             if cli_has("inject-read-gap") != 0 { inject_read_gap(); }

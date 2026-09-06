@@ -252,17 +252,20 @@ def check_regalloc(source: str, extra_flags) -> tuple:
 
 SUMMARY_LINE = re.compile(r"^regalloc-consistency: funcs (\d+) violations (\d+)$", re.MULTILINE)
 VIOLATION_LINE = re.compile(r"^regalloc-consistency: func \d+ \(.+\): rule (\d+) violation", re.MULTILINE)
+ASSIGN_LINE = re.compile(r"^regalloc-assign: (\d+) pairs$", re.MULTILINE)
 
 
 def check_regalloc_consistency() -> tuple:
-    """Task 5：(a) O2 分配的正确程序自检静默通过（rc=0、无 violation 行）。
-    覆盖来源如实披露（评审 M1 收敛措辞）：绿路径为结构性空转——实测
-    alloc_registers 现分配输出恒为空（2026-09-06 注记，opt.cr alloc 区头；无
-    var 存活 → g_opt_meta 无 REG_ASSIGN 对）→ 无寄存器驻留条目，规则 ①/② 在
-    真实数据上平凡通过（「a-e 占 5 个 callee-saved」为虚假印象——寄存器加速
-    长期未生效，挂账 CAG）。规则 ①/② 的实际触发证据 = 注入红路径
-    （check_regalloc_violations / check_regalloc_read_gap_nonfunc0）；fib/6 变量
-    绿程序按行为锚点保留（自检接线回归：误报即红）。"""
+    """Task 5 绿路径 + CAG 真实化回归：O2 分配的**正确程序**自检静默通过
+    （rc=0、无 violation 行）。
+
+    CAG 前（2026-09-06 注记，opt.cr alloc 区头）：分配结果恒为空（rc=0 缺陷
+    ——free 遍时机 + 循环末只收仍活跃 var → g_opt_meta 无 REG_ASSIGN 对），规则
+    ①/② 在真实数据上平凡通过（无寄存器驻留条目）。CAG 挂账清项后分配真实化：
+    本绿路径消费真实分配结果——寄存器组规则 ①/② 在真数据上必须仍绿（判定
+    消费端首次吃到真数据；误报即红）。规则 ①/② 的实际触发证据 = 注入红路径
+    （check_regalloc_violations / check_regalloc_read_gap_nonfunc0，注入现以
+    改写真实分配输出为手段）；fib/6 变量绿程序按行为锚点保留。"""
     for name, src in (
         ("fib", "fn fib(n:int)->int{if n<2{return n;}return fib(n-1)+fib(n-2);}\n"
                 "fn main()->int{return fib(10);}\n"),
@@ -280,6 +283,70 @@ def check_regalloc_consistency() -> tuple:
         if VIOLATION_LINE.search(out):
             return False, f"check-regalloc({name}): violation lines on correct program:\n{out[-500:]}"
     return True, "regalloc consistency self-check OK"
+
+
+def check_regalloc_real_use() -> tuple:
+    """CAG 挂账清项（opt.cr alloc_registers rc=0 缺陷）：寄存器真实分配实证。
+
+    --check-regalloc 在 O2 强制分配后打印看门狗行 regalloc-assign（g_opt_meta
+    REG_ASSIGN 对总数）。修复前 rc 恒为 0（free 遍 `last_ref < ii` 复位 + reg_idx
+    单调不复用 + 循环末只收集仍活跃 var → meta 恒空 → 后端全栈发射——正确但无
+    寄存器加速）→ 本断言红；真实分配后 pairs > 0 → 绿。
+
+    覆盖源 = 6 个共存 int var（压 5 callee-saved 上限）：分配真实发生（≥1 对）
+    且必有栈驻留余数——驱逐/落 home（不分配 = 保留栈 home）路径共存验证。
+    """
+    src = "fn main()->int{a:=1;b:=2;c:=3;d:=4;e:=5;f:=6;return a+b+c+d+e+f;}\n"
+    rc, out = check_regalloc(src, [])
+    if rc != 0:
+        return False, f"check-regalloc rc={rc}:\n{out[-500:]}"
+    m = ASSIGN_LINE.search(out)
+    if not m:
+        return False, (f"regalloc-assign watchdog line missing in check-regalloc "
+                       f"output:\n{out[-500:]}")
+    n = int(m.group(1))
+    if n <= 0:
+        return False, (f"regalloc-assign: {n} pairs — 寄存器从未真实分配（rc=0 "
+                       f"缺陷回退）：\n{out[-500:]}")
+    if n < 5:
+        return False, (f"regalloc-assign: {n} pairs < 5 — 6 共存 var 应吃满 "
+                       f"5 callee-saved：\n{out[-500:]}")
+    return True, f"regalloc real assignment OK ({n} pairs)"
+
+
+LOOP_CARRY_SRC = (
+    "fn main()->int{\n"
+    "  i:=0;s:=0;\n"
+    "  loop {\n"
+    "    if i>=4 { break; }\n"
+    "    i = i + 1;\n"
+    "    d := 5;\n"
+    "    s = s + d;\n"
+    "  }\n"
+    "  return s;\n"
+    "}\n"
+)
+
+
+def check_regalloc_loop_carry() -> tuple:
+    """CAG 上下文贪心——循环携带值语义锚（region 生命周期上下文）。
+
+    i 的读点（cond）在文字序上先于其重定值（i=i+1）→ 每轮迭代末写入的值跨回边
+    存活（cond 读的是上一轮 i 的值）。朴素 [first_ref, last_ref] 文字窗口序
+    First Fit 会把 i 的寄存器（窗口止于其末引用 = 重定值点）与循环尾文字区间不
+    交的 var（d := 5 的 ALLOC/STORE 在 i 末引用之后）共享 → d 的定值在回边前
+    污染 i 的寄存器 → 下轮 cond 读到 5 → 提前 break（s=5）。上下文贪心把携带
+    值（region 内首引用为读）窗口扩至整函数 → 不共享 → s = 4×5 = 20。
+
+    断言 O2（真实分配）行为 == 20；O1（无分配路径基线）同断言。
+    """
+    for name, flags in (("O1-baseline", []), ("O2-regalloc", ["--opt-level", "2"])):
+        rc = build_and_run(LOOP_CARRY_SRC, flags)
+        ok = rc == 20
+        print(f"[{'PASS' if ok else 'FAIL'}] loop-carry {name}: rc={rc}")
+        if not ok:
+            return False, f"loop-carry {name} rc={rc}, expected 20"
+    return True, "loop-carried register semantics OK"
 
 
 def check_regalloc_violations() -> tuple:
@@ -347,7 +414,7 @@ def main() -> int:
         print("[FAIL] missing build/corec")
         return 1
     passed = 0
-    total = 6
+    total = 8
     ok, msg = run_smoke()
     if ok:
         passed += 1
@@ -364,6 +431,14 @@ def main() -> int:
     if ok:
         passed += 1
     print(f"[{'PASS' if ok else 'FAIL'}] regalloc consistency: {msg}")
+    ok, msg = check_regalloc_real_use()
+    if ok:
+        passed += 1
+    print(f"[{'PASS' if ok else 'FAIL'}] regalloc real use: {msg}")
+    ok, msg = check_regalloc_loop_carry()
+    if ok:
+        passed += 1
+    print(f"[{'PASS' if ok else 'FAIL'}] regalloc loop carry: {msg}")
     ok, msg = check_regalloc_violations()
     if ok:
         passed += 1
