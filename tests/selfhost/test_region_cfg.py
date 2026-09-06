@@ -234,8 +234,9 @@ def ccr_walk(path: str):
     (version, sg_count, file_size, end_pos). Raises if the layout is invalid.
 
     v6 (serialization v3): Header 16B + 段表 5×12B {tag, offset, size}（规范序
-    tag 1..5）+ 段体 STR/SYM/NOD/ENT/REG。REG = v5 SG 内容装入段表（tag 5）。
-    见 ccr_io.cr 头注释（v6.0 布局权威）。"""
+    tag 1..5）+ 段体 STR/SYM/NOD/ENT/REG。REG（tag 5）= 24B×sg_count（v6 坐标化
+    字段序 kind/parent/enter/exit/first_ent/last_ent，记录宽不变）。
+    见 ccr_io.cr 头注释（v6 布局权威）。"""
     with open(path, 'rb') as fh:
         d = fh.read()
     pos = 0

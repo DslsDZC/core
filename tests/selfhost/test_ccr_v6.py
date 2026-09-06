@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""v6 .ccr 格式 IO 测试——段表架构 + ENT 存在结构段（v6 计划 Task 4）。
+"""v6 .ccr 格式 IO 测试——段表架构 + ENT 存在结构段 + SYM 归并/REG 坐标化。
 
-格式真相：docs/superpowers/specs/2026-09-05-lattice-ir-v6-format.md（§2/§3.4）
-+ ccr_io.cr 头注释（v6.0 保守路径：v5 语义段装入段表 + 新增 ENT，Task 4 定稿）。
+格式真相：docs/superpowers/specs/2026-09-05-lattice-ir-v6-format.md（§2/§3.2/§3.5）
++ ccr_io.cr 头注释（v6 目标形状：SYM 归并 spec §3.2——globals/funcs/str_consts/
+structs/enums/opt_meta；REG 坐标化 spec §3.5——kind/parent/enter/exit/first_ent/
+last_ent）。
 落盘布局（全 LE，offset 相对文件头）：
   [0]   magic u32 = 0x31524343 ("CCR1")
   [4]   version u32 = 6
@@ -11,13 +13,21 @@
   [16]  段表 5 × 12B {tag u32, offset u32, size u32}（规范序 tag 1..5）
   [76]  段体（tag 升序）：STR / SYM / NOD / ENT / REG
   STR(1): str_count + {len u32, data}
-  SYM(2): v5 符号面拼接（自描述计数）：func_meta 28B / vars 12B / str_consts 4B /
-          structs / enums / globals 16B / opt_meta——v6.0 未归并（后续任务）
+  SYM(2): v5 vars/globals 归并——globals 16B（var_idx 槽 → type）前置 +
+          函数记录内嵌 var 声明区（v5 vars 表并入，位置即行序）：
+    [global_count][globals × {name u32, type u32, init_val i64}]
+    [func_count][funcs × {name u32, param_count u32, ret_type u32,
+                 root_region i32, first_ent i32, last_ent i32 |
+                 param_ents[param_count]×i32（参数 def=-1 条目 id，-1=无）|
+                 var_count u32, var_decls[var_count]×{name u32, type u32}}]
+    [str_const_count][×4B][structs][enums][opt_meta]
   NOD(3): nod_count + 28B×nod_count（= v5 instrs 内容；NOD id = 文件序）
   ENT(4): ent_count + 28B×ent_count
           {var_id i32, version u32, def_nod i32, live_start u32,
            live_end u32（半开 = 最后使用点+1）, home i32, flags u32}
-  REG(5): sg_count + 24B×sg_count（v5 sgs 记录，字段序未重排）
+  REG(5): sg_count + 24B×sg_count {kind u32, parent i32, enter_nod u32,
+          exit_nod u32, first_ent i32, last_ent i32}（v5 nstart/ncount 由
+          enter/exit 派生；first/last = 区内条目范围——定值点 ∈ [enter, exit)）
 """
 import os
 import re
@@ -81,9 +91,10 @@ class V6File:
         assert pos == len(b), f"STR walk ended at {pos} of {len(b)}"
         return strs
 
-    def sym_walk(self):
-        """Walk the whole SYM body (7 self-counting subsections, mirrors
-        load_ccr) and return per-subsection counts. Asserts end == body size."""
+    def sym_parse(self):
+        """Parse the whole SYM body (target shape: globals → funcs with embedded
+        var-decl areas → str_consts → structs → enums → opt_meta). Asserts
+        end == body size (mirrors load_ccr). Returns a structured dict."""
         b = self.body(2)
         pos = 0
 
@@ -93,34 +104,58 @@ class V6File:
             pos += 4
             return v
 
+        def i32():
+            nonlocal pos
+            v = struct.unpack_from('<i', b, pos)[0]
+            pos += 4
+            return v
+
+        g = u32()  # global_count
+        globals_ = []
+        for _ in range(g):
+            (name, ty, init) = struct.unpack_from('<IIq', b, pos)
+            pos += 16
+            globals_.append({'name': name, 'type': ty, 'init': init})
         n = u32()  # func_count
-        pos += n * 28
-        n = u32()  # var_count
-        pos += n * 12
-        n = u32()  # str_const_count
-        pos += n * 4
-        n = u32()  # struct_count
+        funcs = []
         for _ in range(n):
+            (name, pc, rt, root, fe, le) = struct.unpack_from('<IIiiii', b, pos)
+            pos += 24
+            param_ents = [i32() for _ in range(pc)]
+            vc = u32()  # var_count
+            decls = []
+            for _ in range(vc):
+                (vn, vt) = struct.unpack_from('<II', b, pos)
+                pos += 8
+                decls.append({'name': vn, 'type': vt})
+            funcs.append({'name': name, 'param_count': pc, 'ret_type': rt,
+                          'root_region': root, 'first_ent': fe, 'last_ent': le,
+                          'param_ents': param_ents, 'var_count': vc,
+                          'var_decls': decls})
+        scn = u32()  # str_const_count
+        pos += scn * 4
+        stn = u32()  # struct_count
+        for _ in range(stn):
             u32()
             fc = u32()
             pos += fc * 8
-        n = u32()  # enum_count
-        for _ in range(n):
+        en = u32()  # enum_count
+        for _ in range(en):
             u32()
-            vc = u32()
-            for _ in range(vc):
+            vc2 = u32()
+            for _ in range(vc2):
                 u32()
                 tc = u32()
                 pos += tc * 4
-        n = u32()  # global_count
-        pos += n * 16
-        n = u32()  # opt_count
-        for _ in range(n):
+        oc = u32()  # opt_count
+        for _ in range(oc):
             u32()
             dl = u32()
             pos += dl
         assert pos == len(b), f"SYM walk ended at {pos} of {len(b)}"
-        return pos
+        return {'globals': globals_, 'funcs': funcs,
+                'str_const_count': scn, 'struct_count': stn,
+                'enum_count': en, 'opt_count': oc}
 
     def nod(self):
         b = self.body(3)
@@ -153,6 +188,7 @@ class V6File:
         return out
 
     def reg(self):
+        """REG rows: {kind, parent, enter_nod, exit_nod, first_ent, last_ent}."""
         b = self.body(5)
         (n,) = struct.unpack_from('<I', b, 0)
         assert (len(b) - 4) % REG_REC == 0, "REG body size not a multiple of 24"
@@ -254,8 +290,8 @@ def test_header_segment_table_and_walk():
         assert v6.fsize > 76
         strs = v6.str_table()
         assert len(strs) >= 2, f"expected >=2 strings, got {len(strs)}"
-        sym_end = v6.sym_walk()  # validates the full SYM body layout
-        assert sym_end == len(v6.body(2))
+        sym = v6.sym_parse()  # validates the full SYM body layout
+        assert len(sym['funcs']) >= 1 and len(sym['globals']) >= 1
         n = v6.nod()
         assert len(n) > 4, f"expected nodes, got {len(n)}"
         reg = v6.reg()
@@ -440,9 +476,173 @@ def test_ccr_v6_roundtrip_elf():
                 pass
 
 
+def test_sym_reg_target_shape():
+    """SYM 归并/REG 坐标化目标形状（spec §3.2/§3.5 落地）：
+    - SYM func 记录 = {name/param_count/ret_type/root_region/first_ent/last_ent}
+      + param_ents + var 声明区（v5 vars 表并入）；globals 记录带 type；
+    - REG 记录 = {kind, parent, enter_nod, exit_nod, first_ent, last_ent}；
+    - 根 region（SG_FUNC）行与 func 记录 1:1，span 连续铺满 NOD 空间，
+      first/last = 本函数条目块；嵌套 region 条目范围 = 定值点 ∈ [enter, exit)
+      （文件条目序连续一段）；变量命名空间行数覆盖 ENT/NOD 引用。"""
+    src = ("fn main() -> int {\n"
+           "    s : ., mut = 0;\n"
+           "    for i in 0..4 { s = s + i; }\n"
+           "    return s;\n"
+           "}\n")
+    ccr_path = os.path.join(BASE, 'build/test_v6_symreg.ccr')
+    try:
+        os.unlink(ccr_path)
+    except FileNotFoundError:
+        pass
+    try:
+        corec_ccr(src, ccr_path)
+        v6 = V6File(read_ccr(ccr_path))
+        sym = v6.sym_parse()
+        globs = sym['globals']
+        funcs = sym['funcs']
+        strs = v6.str_table()
+        nod_cnt = len(v6.nod())
+        ents = v6.ent()
+        regs = v6.reg()
+        # func 记录
+        assert len(funcs) >= 1
+        f = funcs[0]
+        assert strs[f['name']] == 'main', f"func0 is {strs[f['name']]!r}"
+        assert f['param_count'] == 0
+        assert f['var_count'] >= f['param_count']
+        decl_names = [strs[d['name']] for d in f['var_decls']]
+        assert len(decl_names) == f['var_count']
+        # 局部变量声明随函数记录落盘（for 循环变量内部名 = for_i）
+        for want in ('s', 'for_i'):
+            assert want in decl_names, \
+                f"local {want} missing from func var decls: {decl_names}"
+        # 全局记录：有数据（>=1 条），全局行数 = var 行序前缀（func0 var 基准）
+        assert len(globs) >= 1
+        g_base = len(globs)
+        # REG: 根行（kind=0）与 func 1:1；span 连续铺满 NOD 空间
+        roots = [(i, r) for i, r in enumerate(regs) if r[0] == 0]
+        assert len(roots) == len(funcs), \
+            f"SG_FUNC rows {len(roots)} != func records {len(funcs)}"
+        prev_end = 0
+        for k, (rid, r) in enumerate(roots):
+            assert funcs[k]['root_region'] == rid, \
+                f"func {k} root_region {funcs[k]['root_region']} != row {rid}"
+            assert r[2] == prev_end, \
+                f"root {k} enter {r[2]} != previous end {prev_end}"
+            prev_end = r[3]
+            # 根 region 条目范围 == 函数条目块（SYM func 记录同值）
+            assert funcs[k]['first_ent'] == r[4] and funcs[k]['last_ent'] == r[5]
+            assert (r[4] == -1) == (r[5] == -1)
+        assert prev_end == nod_cnt, \
+            f"root spans end at {prev_end}, nod_count {nod_cnt}"
+        # 嵌套 region：first/last = def_nod ∈ [enter, exit) 的文件序连续段
+        for rid, r in enumerate(regs):
+            if r[0] == 0:
+                assert r[1] == -1, f"root {rid} parent != -1: {r}"
+                continue
+            if r[1] >= 0:
+                p = regs[r[1]]
+                assert r[2] >= p[2] and r[3] <= p[3], \
+                    f"region {rid} escapes parent span: {r} vs {p}"
+            exp = {ei for ei, en in enumerate(ents)
+                   if en[2] >= 0 and r[2] <= en[2] < r[3]}
+            if not exp:
+                assert r[4] == -1 and r[5] == -1, \
+                    f"empty region {rid} has range {r[4]}..{r[5]}"
+            else:
+                assert r[4] == min(exp) and r[5] == max(exp), \
+                    f"region {rid} range {r[4]}..{r[5]} != expected {min(exp)}..{max(exp)}"
+                got = set(range(r[4], r[5] + 1))
+                assert got == exp, \
+                    f"region {rid} run not exactly the def'd-in-range set"
+        # 变量命名空间（globals + 各 func var_count）覆盖 ENT var id / NOD dest
+        total_vars = len(globs) + sum(fn['var_count'] for fn in funcs)
+        for en in ents:
+            assert 0 <= en[0] < total_vars, \
+                f"ENT var_id {en[0]} outside var namespace 0..{total_vars - 1}"
+        for (op, dest, s1, s2, s3, tk) in v6.nod():
+            if dest >= 0:
+                assert dest < total_vars, f"NOD dest {dest} outside var namespace"
+    finally:
+        try:
+            os.unlink(ccr_path)
+        except FileNotFoundError:
+            pass
+
+
+def test_sym_func_params_blocks():
+    """函数记录 param_ents（参数 def=-1 条目 id）+ 条目块序（文件序 = 函数序）：
+    参数变量 = 函数 var 声明区前 param_count 个（行序 = 参数序，类型 int）；
+    add 全条目 def=-1；main 的 x 重定值切 4 个定值条目（dump-entries 同源）。"""
+    src = ("fn add(a: int, b: int) -> int { return a + b; }\n"
+           "fn main() -> int {\n"
+           "    x := 1;\n"
+           "    x = x + 1;\n"
+           "    x = x + 2;\n"
+           "    return x;\n"
+           "}\n")
+    ccr_path = os.path.join(BASE, 'build/test_v6_symparams.ccr')
+    try:
+        os.unlink(ccr_path)
+    except FileNotFoundError:
+        pass
+    try:
+        corec_ccr(src, ccr_path)
+        v6 = V6File(read_ccr(ccr_path))
+        sym = v6.sym_parse()
+        funcs = sym['funcs']
+        strs = v6.str_table()
+        ents = v6.ent()
+        regs = v6.reg()
+        assert strs[funcs[0]['name']] == 'add'
+        assert strs[funcs[1]['name']] == 'main'
+        g_base = len(sym['globals'])
+        # add: 参数声明 = var 声明区前 2 个（a, b, TI_INT=0）
+        add = funcs[0]
+        assert add['param_count'] == 2
+        assert add['var_count'] >= 3
+        pdecls = add['var_decls'][:2]
+        assert [strs[d['name']] for d in pdecls] == ['a', 'b']
+        assert [d['type'] for d in pdecls] == [0, 0], "int param type != TI_INT"
+        # add 的条目：全 def=-1（无 ALLOC/STORE）；param_ents 指向 a/b 的入参条目
+        a_block = ents[add['first_ent']:add['last_ent'] + 1]
+        assert all(en[2] == -1 for en in a_block), \
+            f"add has def'd entries: {a_block}"
+        for pi, pid in enumerate(add['param_ents']):
+            assert pid == add['first_ent'] + pi, \
+                f"param {pi} entry {pid} != block offset {pi}"
+            assert ents[pid][0] == g_base + pi and ents[pid][2] == -1, \
+                f"param {pi} entry wrong var/def: {ents[pid]}"
+        # 文件条目块 = 函数序（main 块紧接 add 块——add 块非空）
+        main_f = funcs[1]
+        assert main_f['first_ent'] == add['last_ent'] + 1
+        # 根 region（kind=0）行序 = 函数序 1:1（含目录 _import 拉入的 stdlib 函数）
+        roots = [(i, r) for i, r in enumerate(regs) if r[0] == 0]
+        assert len(roots) == len(funcs)
+        assert funcs[0]['root_region'] == roots[0][0]
+        assert funcs[1]['root_region'] == roots[1][0]
+        assert roots[0][1][4] == add['first_ent'] and roots[0][1][5] == add['last_ent']
+        assert roots[1][1][4] == main_f['first_ent'] and roots[1][1][5] == main_f['last_ent']
+        # main: x 重定值 → ALLOC+3×STORE = 4 个定值条目（与 dump-entries 同源；
+        # main 块内唯一的 def'd 组即 x 的版本序列）
+        main_block = ents[main_f['first_ent']:main_f['last_ent'] + 1]
+        x_defs = [en for en in main_block if en[2] >= 0]
+        assert len(x_defs) == 4, \
+            f"main should have 4 def'd entries (x versions), got {len(x_defs)}"
+        assert all(x_defs[j][1] == x_defs[j - 1][1] + 1 for j in range(1, 4)), \
+            f"x versions not sequential: {x_defs}"
+    finally:
+        try:
+            os.unlink(ccr_path)
+        except FileNotFoundError:
+            pass
+
+
 if __name__ == '__main__':
     tests = [test_header_segment_table_and_walk,
              test_ent_record_conversion_matches_dump,
+             test_sym_reg_target_shape,
+             test_sym_func_params_blocks,
              test_loader_rejects_non_v6_version,
              test_ccr_v6_roundtrip_elf]
     failed = 0

@@ -4,8 +4,24 @@
 //
 // v6 format（serialization v3；v6-only——load 校验 version==6，无 v5 兼容/转换）
 // 字节真相 = docs/superpowers/specs/2026-09-05-lattice-ir-v6-format.md（设计定稿）
-// + coreir-schema.md 家风格（Task 6 并入 schema）。v6.0 保守实施（v6 Task 4）：
-// 段表架构 + 新增 ENT 段；SYM/REG 内容暂为 v5 记录装入段表（归并/坐标化 = 后续任务）。
+// + coreir-schema.md 家风格（Task 6 并入 schema）。本文件头注释 = 实现权威
+// （v6 目标形状落地：SYM 归并 spec §3.2——vars 表并入函数记录声明区/globals；
+// REG 坐标化 spec §3.5——kind/parent/enter/exit/first_ent/last_ent，nstart/
+// ncount 由 enter/exit 派生）。与 spec 表格的编码层差异（实现决策，Task 6
+// schema 同步按本注释落笔）：
+//   (a) 局部变量 name/type 不丢：ENT 28B 定长记录只携带 var_id（NOD 同命名
+//       space = 内存行序），无法容纳声明元数据——「存在即声明」落为：变量的
+//       名称/类型 = 函数记录内嵌声明区（位置数组，行序即创建序、前 param_count
+//       个 = 参数；非符号命名空间——SYM 无 vars 小节）；全局 type 占 v5 全局
+//       记录 var_idx 槽（var_idx 恒 == 行序，冗余）——记录仍 16B。
+//   (b) SYM 子节序 = globals → funcs → str_consts → structs → enums →
+//       opt_meta（globals 前置 = loader 单遍流式重建 var 行序 [全局行][函数块]）。
+//   (c) func 记录的 instr/var 范围不再落盘——instr 范围由 root_region（REG 行
+//       id）span 派生（根 region = SG_FUNC，span = 函数节点范围，与 v5 func_meta
+//       instr_start/count 恒等）；var_start = 声明区行序游标（globals 行 + 前缀
+//       函数块）。
+//   (d) REG 由「可缺」升为必备（load 拒绝无 REG 的文件——函数指令边界唯一
+//       真源）；ENT 仍可缺（v5 精神：旧段缺失 = 空）。
 // 全整数 LE；offset 相对文件头：
 //   [header 16B]: magic u32 = "CCR1" | version u32 = 6 | seg_count u32 = 5 |
 //                 reserved u32 = 0
@@ -13,19 +29,26 @@
 //                 offset = 上一段尾，段体紧随段表连续排列）
 //   [seg bodies]（按段表寻址）:
 //     STR(1) 字符串表：  [str_count u32] [× {len u32, data}]（同 v5）
-//     SYM(2) 符号面（v6.0 未归并——v5 func_meta/structs/enums/globals + vars/
-//              str_consts/opt_meta 自描述拼接，每小节自带计数）:
-//       [func_count][func_count×28B name_idx/param_count/ret_type/instr_start/
-//                    instr_count/var_start/var_count: u32×7]
-//       [var_count][var_count×12B name_idx/id/type_kind: u32×3]  （局部 var 声明
-//                    表——v6 目标并入 ENT「存在即声明」，未达）
+//     SYM(2) 符号面（spec §3.2 归并形状——每小节自带计数）:
+//       [global_count][global_count×16B {name u32, type u32, init_val i64}]
+//                    （v5 var_idx 槽 → type：var 行序 = 全局记录序 0..G-1，
+//                    行名/型随本记录携带——var_idx 恒等行序故删除）
+//       [func_count][func_count×{name u32, param_count u32, ret_type u32,
+//                    root_region i32（本函数 SG_FUNC 的 REG 行 id）,
+//                    first_ent i32, last_ent i32（本函数条目文件范围；
+//                    -1 = 无条目）}                                   = 24B
+//                    + param_ents[param_count]×i32（参数变量的「入参」条目 =
+//                    该参数 def_nod=-1 条目 id；函数内被重定值/从未引用 → -1）
+//                    + var_count u32
+//                    + var_decls[var_count]×{name u32, type u32}]（v5 vars 表
+//                    并入——行序 = 创建序，前 param_count 个 = 参数；变量命名
+//                    space = globals 行 + 函数块行序相接，ENT/NOD var_id 指此）
 //       [str_const_count][str_const_count×4B]
 //       [struct_count][struct_count×{name u32, field_count u32,
 //                      fields[field_count]×{name u32, type u32}}]
 //       [enum_count][enum_count×{name u32, variant_count u32,
 //                     variants[variant_count]×{name u32, type_count u32,
 //                     types[type_count]×u32}}]
-//       [global_count][global_count×16B {name_idx u32, var_idx u32, init_val i64}]
 //       [opt_count][opt_count×{key u32, len u32, data lenB}]
 //     NOD(3) 节点表：    [nod_count u32] [×28B {op i32, dest i32, src1 i64,
 //                        src2 i32, src3 i32, tk i32}]——v5 instrs 内容不变；
@@ -37,12 +60,24 @@
 //                        内存表 24B/条（闭区间、无 version，opt.cr compute_entries）
 //                        → 落盘：version = 同 var 组内定值升序序数（1-based），
 //                        live_end_disk = live_end_mem + 1；盘上 7 字段 = 28B
-//     REG(5) region 表： [sg_count u32] [×24B kind/enter/exit/parent/nstart/
-//                        ncount: i32×6]——v5 SG 内容装入段表（记录重排/区内
-//                        条目范围 = 后续坐标任务）
+//     REG(5) region 表： [sg_count u32] [×24B {kind u32, parent i32,
+//                        enter_nod u32, exit_nod u32（v5 enter/exit 指令号 =
+//                        NOD 坐标，语义不变）, first_ent i32, last_ent i32}]
+//                        v5 的 nstart/ncount 不再落盘——nstart ≡ enter、
+//                        ncount = exit − enter（sg_push/sg_pop 不变式），
+//                        load 内存态重建与 v5 记录逐字节一致。
+//                        first_ent/last_ent（区内条目范围）语义：条目按其
+//                        def_nod ∈ [enter_nod, exit_nod) 归属 region（定值点
+//                        升序 → 文件条目序连续一段）；根 region（kind=SG_FUNC）
+//                        = 整个函数条目块（含 def=-1 参数条目）；无条目 = -1。
 // 载荷约定（corec → corearch）：NOD 段 = v5 instrs 坐标化（字段同布局）——
-// corearch 消费路径不变（本任务硬约束）；ENT 由 corearch 加载校验，发射不依赖。
-// 与 v5 差异：固定 36B 头 + 定序段 → Header + 段表；entries 段新增。
+// corearch 消费路径不变（硬约束）；ENT 由 corearch 加载校验，发射不依赖。
+// 内存态重建（load 后 = 本文件字节的投影，ELF 发射语义零变化）：g_ir_vars 行
+// {name,id,type}（id = 行序）、g_ir_globals {name,var_idx,init_val}（var_idx =
+// 行序）、g_ir_func_* 七数组（instr/var 范围派生，见 (c)）、g_sgs（nstart/
+// ncount 派生）、g_ir_entries 24B 表 + func 条目块（块界按 SYM func first/last
+// 校验）。
+// 与 v5 差异：固定 36B 头 + 定序段 → Header + 段表；entries 段新增；
 //   v5 参考：magic/version=5/7 计数在固定偏移，本文件旧注释已废弃。
 
 // --- Byte buffer helpers ---
@@ -52,10 +87,21 @@ CCR_MAGIC : int = 827474755;  // "CCR1" (0x31524343)
 CCR_VERSION : int = 6;        // v6-only（load 校验 ==6；拒绝 v5——无转换工具）
 CCR_SEG_COUNT : int = 5;      // STR SYM NOD ENT REG（规范序；预留 tag 6+ 不占空间）
 
-// On-disk SG record size: 6 × i32 = 24 bytes (kind/enter/exit/parent/nstart/ncount).
+// On-disk REG record size: 6 × i32 = 24 bytes — v6 坐标化字段序
+// {kind, parent, enter_nod, exit_nod, first_ent, last_ent}（v5 的 nstart/ncount
+// 不落盘——load 由 enter/exit 派生：nstart = enter, ncount = exit − enter）。
 // NOTE: the in-memory SG entry is ESZ_SG (48 bytes, u64 fields) — that is NOT
 // the wire format. Always use ESZ_SG_DISK for .ccr size math, never ESZ_SG.
 ESZ_SG_DISK : int = 24;
+
+// SYM 落盘记录尺寸：
+//   全局记录 16B {name u32, type u32, init_val i64}（v5 var_idx 槽 → type）
+//   函数记录 = 24B 定长头 {name, param_count, ret_type, root_region,
+//                first_ent, last_ent} + param_ents[i32 × param_count]
+//              + {var_count u32} + var_decls[8B × var_count]
+ESZ_GLOBAL_DISK : int = 16;
+ESZ_FUNC_HEAD_DISK : int = 24;
+ESZ_VARDECL_DISK : int = 8;
 
 // On-disk ENT record: 7 × 4B = 28 bytes (var_id/version/def_nod/live_start/
 // live_end/home/flags; version + 半开 live_end 由内存 24B 表转换，见文件头注释).
@@ -146,6 +192,8 @@ fn ccr_validate_i32_fields() -> int {
            ccr_i32_fits(iri_s3(ii)) == 0 { return 0; }
         ii = ii + 1;
     }
+    // REG 落盘字段 = kind/parent/enter/exit（nstart/ncount 由 enter/exit 派生，
+    // 不再落盘——v5 校验过的内存 nstart/ncount 字段随之免除）
     si : ., mut = 0;
     loop {
         if si >= g_sg_count { break; }
@@ -153,13 +201,33 @@ fn ccr_validate_i32_fields() -> int {
         if ccr_i32_fits(r64(g_sgs, f + OFF_SG_KIND)) == 0 ||
            ccr_i32_fits(r64(g_sgs, f + OFF_SG_ENTER)) == 0 ||
            ccr_i32_fits(r64(g_sgs, f + OFF_SG_EXIT)) == 0 ||
-           ccr_i32_fits(r64(g_sgs, f + OFF_SG_PARENT)) == 0 ||
-           ccr_i32_fits(r64(g_sgs, f + OFF_SG_NSTART)) == 0 ||
-           ccr_i32_fits(r64(g_sgs, f + OFF_SG_NCOUNT)) == 0 { return 0; }
+           ccr_i32_fits(r64(g_sgs, f + OFF_SG_PARENT)) == 0 { return 0; }
         si = si + 1;
     }
     return 1;
 }
+
+// 函数 fi 的根 region = REG 行序第 fi 个 SG_FUNC 行（压栈序：每个已编译函数
+// df_begin_func 推 SG_FUNC，嵌套行紧随其根行——根行按函数序 1:1）。
+// 返回行 id；-1 = 越界/结构不一致。
+fn ccr_func_root_sg(func_i: int) -> int {
+    if func_i < 0 { return -1; }
+    k : ., mut = 0;
+    si : ., mut = 0;
+    loop {
+        if si >= g_sg_count { break; }
+        if r64(g_sgs, si * ESZ_SG + OFF_SG_KIND) == SG_FUNC {
+            if k == func_i { return si; }
+            k = k + 1;
+        }
+        si = si + 1;
+    }
+    return -1;
+}
+
+// 函数 fi 条目块界（全局条目序）——写 reg/func 记录共用；未算过 = 0 段
+fn ccr_func_ent_start(func_i: int) -> int { return r64(g_ir_func_entry_start, func_i * 8); }
+fn ccr_func_ent_count(func_i: int) -> int { return r64(g_ir_func_entry_count, func_i * 8); }
 
 // --- Segment size calculation（段体大小；Header+段表 = 16 + 12×5 = 76）---
 // 每段自带计数 u32；写侧与 calc 侧逐字节一致（v6 测试 walk 校验 end==fsize）。
@@ -176,9 +244,19 @@ fn ccr_str_seg_size() -> int {
 }
 
 fn ccr_sym_seg_size() -> int {
-    sz : ., mut = 4;  // func_count
-    sz = sz + g_ir_func_count * 28;
-    sz = sz + 4 + g_ir_var_count * 12;          // var_count + vars
+    // 布局 = ccr_sym_seg_size/save_ccr/load_ccr 三方逐字节一致（见头注释）：
+    //   globals(16B) → funcs(24B 头 + param_ents + var_count + var_decls 8B)
+    //   → str_consts → structs → enums → opt_meta
+    sz : ., mut = 4 + g_ir_global_count * ESZ_GLOBAL_DISK;   // global_count + globals
+    sz = sz + 4;  // func_count
+    fi : ., mut = 0;
+    loop {
+        if fi >= g_ir_func_count { break; }
+        pc := r64(g_ir_func_param_count, fi * 8);
+        vc := r64(g_ir_func_var_count, fi * 8);
+        sz = sz + ESZ_FUNC_HEAD_DISK + pc * 4 + 4 + vc * ESZ_VARDECL_DISK;
+        fi = fi + 1;
+    }
     sz = sz + 4 + g_ir_str_const_count * 4;     // str_const_count + str_consts
     // structs: struct_count + {name, field_count, fields×8B}
     sz = sz + 4;
@@ -204,8 +282,6 @@ fn ccr_sym_seg_size() -> int {
         }
         ei = ei + 1;
     }
-    // globals: global_count + 16B each (name_idx, var_idx, init_val i64)
-    sz = sz + 4 + g_ir_global_count * 16;
     // opt_meta: opt_count + {key, len, data}
     sz = sz + 4;
     mi : ., mut = 0;
@@ -336,30 +412,83 @@ fn save_ccr(path: string) -> int {
         si = si + 1;
     }
 
-    // === SYM: func meta ===
+    // === SYM: globals（16B each: name u32, type u32, init_val i64）===
+    // v5 var_idx 槽 → type（var_idx 恒 == 行序——ir_gen reg_one_global 每全局
+    // 一 var 行、行序与记录序锁步；下方校验强制，失配拒绝 = 防止未来布局漂移
+    // 时静默生成行序错位的文件）。全局行 = var 命名空间前缀 0..G-1。
+    buf_write_u32(buf, pos, g_ir_global_count); pos = pos + 4;
+    gi : ., mut = 0;
+    loop {
+        if gi >= g_ir_global_count { break; }
+        if r64(g_ir_globals, gi * 24 + 8) != gi { return -1; }
+        buf_write_u32(buf, pos, r64(g_ir_globals, gi * 24)); pos = pos + 4;     // name
+        buf_write_u32(buf, pos, irv_type(gi)); pos = pos + 4;                   // type
+        buf_write_i64(buf, pos, r64(g_ir_globals, gi * 24 + 16)); pos = pos + 8; // init_val
+        gi = gi + 1;
+    }
+
+    // === SYM: funcs（24B 头 + param_ents + var 声明区——v5 func_meta 的
+    // instr_start/count 由 root_region span 取代、var_start/count 由声明区
+    // 行序游标取代；v5 vars 表并入声明区：行序 = 创建序、前 param_count 个
+    // = 参数。var 行序守卫：全局行 + 各函数块严格相接铺满 g_ir_vars）===
+    tv : ., mut = g_ir_global_count;
+    vfi : ., mut = 0;
+    loop {
+        if vfi >= g_ir_func_count { break; }
+        tv = tv + r64(g_ir_func_var_count, vfi * 8);
+        vfi = vfi + 1;
+    }
+    if tv != g_ir_var_count { return -1; }  // 行序有洞/错位 → 拒绝（防静默错文件）
+
     buf_write_u32(buf, pos, g_ir_func_count); pos = pos + 4;
     fi : ., mut = 0;
     loop {
         if fi >= g_ir_func_count { break; }
+        froot := ccr_func_root_sg(fi);
+        if froot < 0 { return -1; }
+        vc := r64(g_ir_func_var_count, fi * 8);
+        vs := r64(g_ir_func_var_start, fi * 8);
+        pc := r64(g_ir_func_param_count, fi * 8);
+        if pc > vc { return -1; }
+        es := ccr_func_ent_start(fi);
+        ec := ccr_func_ent_count(fi);
+        fe2 : ., mut = -1;
+        le2 : ., mut = -1;
+        if ec > 0 { fe2 = es; le2 = es + ec - 1; }
         buf_write_u32(buf, pos, r64(g_ir_func_name_idx, fi * 8)); pos = pos + 4;
-        buf_write_u32(buf, pos, r64(g_ir_func_param_count, fi * 8)); pos = pos + 4;
+        buf_write_u32(buf, pos, pc); pos = pos + 4;
         buf_write_u32(buf, pos, r64(g_ir_func_ret_type, fi * 8)); pos = pos + 4;
-        buf_write_u32(buf, pos, r64(g_ir_func_instr_start, fi * 8)); pos = pos + 4;
-        buf_write_u32(buf, pos, r64(g_ir_func_instr_count, fi * 8)); pos = pos + 4;
-        buf_write_u32(buf, pos, r64(g_ir_func_var_start, fi * 8)); pos = pos + 4;
-        buf_write_u32(buf, pos, r64(g_ir_func_var_count, fi * 8)); pos = pos + 4;
+        buf_write_i32(buf, pos, froot); pos = pos + 4;
+        buf_write_i32(buf, pos, fe2); pos = pos + 4;
+        buf_write_i32(buf, pos, le2); pos = pos + 4;
+        // param_ents：参数变量的入参条目 = 该参数（行 vs+pi）的 def=-1 条目
+        // （函数内被 ALLOC/STORE 重定值或从未引用的参数无入参版本条目 → -1）
+        pp : ., mut = 0;
+        loop {
+            if pp >= pc { break; }
+            pvar := vs + pp;
+            pid : ., mut = -1;
+            e2 : ., mut = es;
+            loop {
+                if e2 >= es + ec { break; }
+                if ccr_ent_var(e2) == pvar && ccr_ent_def(e2) < 0 { pid = e2; break; }
+                e2 = e2 + 1;
+            }
+            buf_write_i32(buf, pos, pid); pos = pos + 4;
+            pp = pp + 1;
+        }
+        // var 声明区（行序声明——name/type；ENT「存在即声明」的名称/类型投影）
+        buf_write_u32(buf, pos, vc); pos = pos + 4;
+        vv : ., mut = 0;
+        loop {
+            if vv >= vc { break; }
+            row := vs + vv;
+            if row < 0 || row >= g_ir_var_count { return -1; }
+            buf_write_u32(buf, pos, irv_name(row)); pos = pos + 4;
+            buf_write_u32(buf, pos, irv_type(row)); pos = pos + 4;
+            vv = vv + 1;
+        }
         fi = fi + 1;
-    }
-
-    // === SYM: IR variables ===
-    buf_write_u32(buf, pos, g_ir_var_count); pos = pos + 4;
-    vi : ., mut = 0;
-    loop {
-        if vi >= g_ir_var_count { break; }
-        buf_write_u32(buf, pos, irv_name(vi)); pos = pos + 4;
-        buf_write_u32(buf, pos, irv_id(vi)); pos = pos + 4;
-        buf_write_u32(buf, pos, irv_type(vi)); pos = pos + 4;
-        vi = vi + 1;
     }
 
     // === SYM: string constants ===
@@ -412,17 +541,6 @@ fn save_ccr(path: string) -> int {
             vi2 = vi2 + 1;
         }
         ei2 = ei2 + 1;
-    }
-
-    // === SYM: globals（16B each: name_idx u32, var_idx u32, init_val i64）===
-    buf_write_u32(buf, pos, g_ir_global_count); pos = pos + 4;
-    gi : ., mut = 0;
-    loop {
-        if gi >= g_ir_global_count { break; }
-        buf_write_u32(buf, pos, r64(g_ir_globals, gi * 24)); pos = pos + 4;     // name_idx
-        buf_write_u32(buf, pos, r64(g_ir_globals, gi * 24 + 8)); pos = pos + 4; // var_idx
-        buf_write_i64(buf, pos, r64(g_ir_globals, gi * 24 + 16)); pos = pos + 8; // init_val
-        gi = gi + 1;
     }
 
     // === SYM: opt_meta ===
@@ -491,18 +609,54 @@ fn save_ccr(path: string) -> int {
         ej = ej + 1;
     }
 
-    // === REG: sgs（24B each）===
+    // === REG: region（24B each——spec §3.5 字段序 {kind, parent, enter_nod,
+    // exit_nod, first_ent, last_ent}；v5 nstart/ncount 不落盘 = enter/exit 派生，
+    // 未闭合（exit < enter）region 无法表示 → 拒绝）===
+    // first/last 语义：区内条目 = 定值点 def_nod ∈ [enter, exit)（定值点升序 →
+    // 文件条目序连续段）；根 region（kind=SG_FUNC，函数 k = 行序第 k 个根）=
+    // 整个函数条目块（含 def=-1 参数条目）；无条目 = -1。
     buf_write_u32(buf, pos, g_sg_count); pos = pos + 4;
+    rfunc : ., mut = -1;  // 当前根 region 的函数号（行序 = 压栈序）
     si2 : ., mut = 0;
     loop {
         if si2 >= g_sg_count { break; }
         f := si2 * ESZ_SG;
-        buf_write_i32(buf, pos, r64(g_sgs, f + OFF_SG_KIND)); pos = pos + 4;
-        buf_write_i32(buf, pos, r64(g_sgs, f + OFF_SG_ENTER)); pos = pos + 4;
-        buf_write_i32(buf, pos, r64(g_sgs, f + OFF_SG_EXIT)); pos = pos + 4;
-        buf_write_i32(buf, pos, r64(g_sgs, f + OFF_SG_PARENT)); pos = pos + 4;
-        buf_write_i32(buf, pos, r64(g_sgs, f + OFF_SG_NSTART)); pos = pos + 4;
-        buf_write_i32(buf, pos, r64(g_sgs, f + OFF_SG_NCOUNT)); pos = pos + 4;
+        sk2 := r64(g_sgs, f + OFF_SG_KIND);
+        sen := r64(g_sgs, f + OFF_SG_ENTER);
+        sex := r64(g_sgs, f + OFF_SG_EXIT);
+        spa := r64(g_sgs, f + OFF_SG_PARENT);
+        if sex < sen { return -1; }  // 未闭合 → ncount 不可派生
+        if sk2 == SG_FUNC { rfunc = rfunc + 1; }
+        if rfunc < 0 || rfunc >= g_ir_func_count { return -1; }  // 行序结构失配
+        fes := ccr_func_ent_start(rfunc);
+        fec := ccr_func_ent_count(rfunc);
+        fe2 : ., mut = -1;
+        le2 : ., mut = -1;
+        if sk2 == SG_FUNC {
+            // 根 region span = 函数指令范围（REG = 文件里函数边界的唯一真源，
+            // 与 func 表一致性校验——失配 = 内部状态漂移）
+            is2 := r64(g_ir_func_instr_start, rfunc * 8);
+            ic2 := r64(g_ir_func_instr_count, rfunc * 8);
+            if sen != is2 || sex != is2 + ic2 { return -1; }
+            if fec > 0 { fe2 = fes; le2 = fes + fec - 1; }
+        } else {
+            e3 : ., mut = fes;
+            loop {
+                if e3 >= fes + fec { break; }
+                dd := ccr_ent_def(e3);
+                if dd >= 0 && dd >= sen && dd < sex {
+                    if fe2 < 0 { fe2 = e3; }
+                    le2 = e3;
+                }
+                e3 = e3 + 1;
+            }
+        }
+        buf_write_i32(buf, pos, sk2); pos = pos + 4;
+        buf_write_i32(buf, pos, spa); pos = pos + 4;
+        buf_write_i32(buf, pos, sen); pos = pos + 4;
+        buf_write_i32(buf, pos, sex); pos = pos + 4;
+        buf_write_i32(buf, pos, fe2); pos = pos + 4;
+        buf_write_i32(buf, pos, le2); pos = pos + 4;
         si2 = si2 + 1;
     }
 
@@ -517,8 +671,11 @@ fn save_ccr(path: string) -> int {
 }
 
 // --- Load（v6-only：校验 Header + 段表规范布局 + 逐段越界拒绝）---
-// 段体内容 = 对应 v5 段记录（STR/SYM/NOD/REG），解析逻辑与 v5 load 逐行一致；
-// ENT 盘上 28B → 内存 24B 表（去掉 version、live_end 半开转回闭区间 −1）。
+// 解析序：STR → SYM（globals/funcs 声明区重建 var 命名空间行序）→ REG
+// （nstart/ncount 派生 + func 指令边界回填）→ NOD → ENT（28B → 内存 24B 表，
+// 去掉 version、live_end 半开转回闭区间 −1；块界与 SYM func first/last 对照）。
+// 内存态（g_ir_vars 行 id=行序 / g_ir_globals var_idx=行序 / func 七数组 /
+// g_sgs）与 v6.0 加载结果逐字节一致——文件布局变化不影响下游（ELF 发射）。
 
 fn load_ccr(data: string, fsize: int) -> int {
     if fsize < 16 { return -1; }  // header
@@ -569,10 +726,10 @@ fn load_ccr(data: string, fsize: int) -> int {
         ri = ri + 1;
     }
 
-    // STR/SYM/NOD 必备；ENT/REG 可缺（v5 兼容精神：旧段缺失 = 空）
-    if have1 == 0 || have2 == 0 || have3 == 0 { return -1; }
+    // STR/SYM/NOD/REG 必备（v6 坐标化后 func 指令边界 = root_region span 的
+    // 唯一真源，REG 缺段无法重建函数边界）；ENT 可缺（v5 精神：旧段缺失 = 空）
+    if have1 == 0 || have2 == 0 || have3 == 0 || have5 == 0 { return -1; }
     if have4 == 0 { seg_off4 = 0; seg_end4 = 0; }
-    if have5 == 0 { seg_off5 = 0; seg_end5 = 0; }
 
     // 状态重置（corearch 单次加载；保持可重入）
     g_str_count = 0;
@@ -611,44 +768,96 @@ fn load_ccr(data: string, fsize: int) -> int {
         si = si + 1;
     }
 
-    // === SYM: func meta（28B each）===
+    // === SYM: globals（16B each: name u32, type u32, init_val i64）===
+    // var 命名空间重建（流式）：全局行 = 记录序 0..G-1（行名/型随本记录携带，
+    // v5 的 var 行 = 同源冗余）；id = 行序。后续函数声明区行序相接。
     pos = seg_off2;
     if !ccr_has_bytes(pos, 4, seg_end2) { return -1; }
+    gc := buf_read_u32(data, pos); pos = pos + 4;
+    if gc > (seg_end2 - seg_off2) / ESZ_GLOBAL_DISK { return -1; }
+    grow_ir_globals(gc);
+    gi : ., mut = 0;
+    loop {
+        if gi >= gc { break; }
+        if !ccr_has_bytes(pos, ESZ_GLOBAL_DISK, seg_end2) { return -1; }
+        gname_ni := buf_read_u32(data, pos); pos = pos + 4;
+        gtype := buf_read_u32(data, pos); pos = pos + 4;
+        ginit_val := buf_read_i64(data, pos); pos = pos + 8;
+        grow_ir_vars(g_ir_var_count + 1);
+        gvar := g_ir_var_count;
+        irv_set_name(gvar, gname_ni);
+        irv_set_id(gvar, gvar);
+        irv_set_type(gvar, gtype);
+        g_ir_var_count = gvar + 1;
+        w64(g_ir_globals, gi * 24, gname_ni);
+        w64(g_ir_globals, gi * 24 + 8, gvar);
+        w64(g_ir_globals, gi * 24 + 16, ginit_val);
+        g_ir_global_count = gi + 1;
+        gi = gi + 1;
+    }
+
+    // === SYM: funcs（24B 头 + param_ents + var 声明区）===
+    // 头字段 = spec §3.2：name/param_count/ret_type/root_region（REG 行 id）/
+    // first_ent/last_ent（本函数条目文件范围）。instr/var 范围不落盘：instr =
+    // root_region span（REG 段解析后回填），var_start = 声明区行序游标。
+    if !ccr_has_bytes(pos, 4, seg_end2) { return -1; }
     func_cnt := buf_read_u32(data, pos); pos = pos + 4;
-    if func_cnt > (seg_end2 - seg_off2) / 28 { return -1; }
+    if func_cnt > (seg_end2 - pos) / ESZ_FUNC_HEAD_DISK { return -1; }
     grow_ir_func_meta(func_cnt);
+    // func 记录临时元数据（REG 段回填/ENT 块界校验用）：{root i64, first i64, last i64}
+    fn_meta := alloc((func_cnt + 8) * 24);
     fi : ., mut = 0;
     loop {
         if fi >= func_cnt { break; }
-        if !ccr_has_bytes(pos, 28, seg_end2) { return -1; }
-        fv0 := buf_read_u32(data, pos); pos = pos + 4; w64(g_ir_func_name_idx, fi * 8, fv0);
-        fv1 := buf_read_u32(data, pos); pos = pos + 4; w64(g_ir_func_param_count, fi * 8, fv1);
-        fv2 := buf_read_u32(data, pos); pos = pos + 4; w64(g_ir_func_ret_type, fi * 8, fv2);
-        fv3 := buf_read_u32(data, pos); pos = pos + 4; w64(g_ir_func_instr_start, fi * 8, fv3);
-        fv4 := buf_read_u32(data, pos); pos = pos + 4; w64(g_ir_func_instr_count, fi * 8, fv4);
-        fv5 := buf_read_u32(data, pos); pos = pos + 4; w64(g_ir_func_var_start, fi * 8, fv5);
-        fv6 := buf_read_u32(data, pos); pos = pos + 4; w64(g_ir_func_var_count, fi * 8, fv6);
+        if !ccr_has_bytes(pos, ESZ_FUNC_HEAD_DISK, seg_end2) { return -1; }
+        fname := buf_read_u32(data, pos); pos = pos + 4;
+        fpc := buf_read_u32(data, pos); pos = pos + 4;
+        fret := buf_read_u32(data, pos); pos = pos + 4;
+        froot := buf_read_i32(data, pos); pos = pos + 4;
+        ffe := buf_read_i32(data, pos); pos = pos + 4;
+        fle := buf_read_i32(data, pos); pos = pos + 4;
+        if froot < 0 { return -1; }             // 每函数必有根 region（df_begin_func）
+        if ffe < -1 || fle < -1 || (ffe == -1) != (fle == -1) { return -1; }
+        w64(g_ir_func_name_idx, fi * 8, fname);
+        w64(g_ir_func_param_count, fi * 8, fpc);
+        w64(g_ir_func_ret_type, fi * 8, fret);
+        w64(fn_meta, fi * 24, froot);
+        w64(fn_meta, fi * 24 + 8, ffe);
+        w64(fn_meta, fi * 24 + 16, fle);
+        // param_ents（i32 each；内存无消费者——只做越界拒绝）
+        pj : ., mut = 0;
+        loop {
+            if pj >= fpc { break; }
+            if !ccr_has_bytes(pos, 4, seg_end2) { return -1; }
+            pid := buf_read_i32(data, pos); pos = pos + 4;
+            if pid < -1 { return -1; }
+            pj = pj + 1;
+        }
+        // var 声明区（行序 = 创建序，前 param_count 个 = 参数）
+        if !ccr_has_bytes(pos, 4, seg_end2) { return -1; }
+        fvc := buf_read_u32(data, pos); pos = pos + 4;
+        if fpc > fvc { return -1; }
+        if fvc > (seg_end2 - pos) / ESZ_VARDECL_DISK { return -1; }
+        fvs2 := g_ir_var_count;
+        w64(g_ir_func_var_start, fi * 8, fvs2);
+        dj : ., mut = 0;
+        loop {
+            if dj >= fvc { break; }
+            if !ccr_has_bytes(pos, ESZ_VARDECL_DISK, seg_end2) { return -1; }
+            dname := buf_read_u32(data, pos); pos = pos + 4;
+            dtype := buf_read_u32(data, pos); pos = pos + 4;
+            grow_ir_vars(g_ir_var_count + 1);
+            drow := g_ir_var_count;
+            irv_set_name(drow, dname);
+            irv_set_id(drow, drow);
+            irv_set_type(drow, dtype);
+            g_ir_var_count = drow + 1;
+            dj = dj + 1;
+        }
+        if g_ir_var_count - fvs2 != fvc { return -1; }
+        w64(g_ir_func_var_count, fi * 8, fvc);
         g_ir_func_count = fi + 1;
         fi = fi + 1;
-    }
-
-    // === SYM: IR variables（12B each）===
-    if !ccr_has_bytes(pos, 4, seg_end2) { return -1; }
-    var_cnt := buf_read_u32(data, pos); pos = pos + 4;
-    if var_cnt > (seg_end2 - seg_off2) / 12 { return -1; }
-    grow_ir_vars(var_cnt);
-    vi : ., mut = 0;
-    loop {
-        if vi >= var_cnt { break; }
-        if !ccr_has_bytes(pos, 12, seg_end2) { return -1; }
-        name_ni := buf_read_u32(data, pos); pos = pos + 4;
-        id := buf_read_u32(data, pos); pos = pos + 4;
-        tk := buf_read_u32(data, pos); pos = pos + 4;
-        irv_set_name(vi, name_ni);
-        irv_set_id(vi, id);
-        irv_set_type(vi, tk);
-        g_ir_var_count = vi + 1;
-        vi = vi + 1;
     }
 
     // === SYM: string constants（4B each）===
@@ -758,24 +967,6 @@ fn load_ccr(data: string, fsize: int) -> int {
         ei = ei + 1;
     }
 
-    // === SYM: globals（16B each: name_idx, var_idx, init_val i64）===
-    if !ccr_has_bytes(pos, 4, seg_end2) { return -1; }
-    gc := buf_read_u32(data, pos); pos = pos + 4;
-    if gc > (seg_end2 - seg_off2) / 16 { return -1; }
-    grow_ir_globals(gc);
-    gi : ., mut = 0;
-    loop {
-        if gi >= gc { break; }
-        gname_ni := buf_read_u32(data, pos); pos = pos + 4;
-        gvar_idx := buf_read_u32(data, pos); pos = pos + 4;
-        ginit_val := buf_read_i64(data, pos); pos = pos + 8;
-        w64(g_ir_globals, gi * 24, gname_ni);
-        w64(g_ir_globals, gi * 24 + 8, gvar_idx);
-        w64(g_ir_globals, gi * 24 + 16, ginit_val);
-        g_ir_global_count = gi + 1;
-        gi = gi + 1;
-    }
-
     // === SYM: opt_meta ===
     if !ccr_has_bytes(pos, 4, seg_end2) { return -1; }
     mc := buf_read_u32(data, pos); pos = pos + 4;
@@ -799,6 +990,68 @@ fn load_ccr(data: string, fsize: int) -> int {
         }
         g_opt_meta_count = mi + 1;
         mi = mi + 1;
+    }
+
+    // === REG: region（24B each——spec §3.5 字段序 {kind, parent, enter_nod,
+    // exit_nod, first_ent, last_ent}）===
+    // v5 的 nstart/ncount 不落盘——由 enter/exit 派生（不变式 nstart ≡ enter、
+    // ncount = exit − enter），内存态与 v5 记录逐字节一致。未闭合（exit < enter）
+    // 记录 v6 无法表示 → 拒绝。
+    // first/last 校验：SG_FUNC 根行（行序第 k 个 = 函数 k）的区内条目范围必须
+    // 与 SYM func 记录 first/last 一致（同信息双写，失配 = 格式不一致）。
+    // 函数指令边界重建：func root_region（SYM）→ REG span = [enter, exit)。
+    pos = seg_off5;
+    if !ccr_has_bytes(pos, 4, seg_end5) { return -1; }
+    sg_n := buf_read_u32(data, pos); pos = pos + 4;
+    if sg_n > (seg_end5 - seg_off5) / ESZ_SG_DISK { return -1; }
+    sg_i : ., mut = 0;
+    rfcnt : ., mut = 0;  // 已见 SG_FUNC 根行数（行序 = 函数序 1:1）
+    loop {
+        if sg_i >= sg_n { break; }
+        grow_sg(sg_i + 1);
+        f := sg_i * ESZ_SG;
+        rk := buf_read_i32(data, pos); pos = pos + 4;
+        rp := buf_read_i32(data, pos); pos = pos + 4;
+        ren := buf_read_i32(data, pos); pos = pos + 4;
+        rex := buf_read_i32(data, pos); pos = pos + 4;
+        rfe := buf_read_i32(data, pos); pos = pos + 4;
+        rle := buf_read_i32(data, pos); pos = pos + 4;
+        if rex < ren { return -1; }  // 未闭合 → ncount 不可派生
+        if rfe < -1 || rle < -1 || (rfe == -1) != (rle == -1) { return -1; }
+        w64(g_sgs, f + OFF_SG_KIND, rk);
+        w64(g_sgs, f + OFF_SG_ENTER, ren);
+        w64(g_sgs, f + OFF_SG_EXIT, rex);
+        w64(g_sgs, f + OFF_SG_PARENT, rp);
+        w64(g_sgs, f + OFF_SG_NSTART, ren);
+        w64(g_sgs, f + OFF_SG_NCOUNT, rex - ren);
+        if rk == SG_FUNC {
+            if rfcnt >= func_cnt { return -1; }  // 根行多于函数记录
+            if rfe != r64(fn_meta, rfcnt * 24 + 8) || rle != r64(fn_meta, rfcnt * 24 + 16) {
+                return -1;  // REG 根行条目范围 ≠ SYM func 记录
+            }
+            rfcnt = rfcnt + 1;
+        }
+        sg_i = sg_i + 1;
+    }
+    if rfcnt != func_cnt { return -1; }  // 根行少于函数记录（每函数必有根）
+    g_sg_count = sg_n;
+
+    // 函数指令边界回填：instr_start = root_region enter, instr_count = exit − enter
+    // （根 region span = 函数节点范围——与 v5 func_meta instr_start/count 恒等，
+    // 内存态与 v5 逐字节一致）
+    bfi : ., mut = 0;
+    loop {
+        if bfi >= func_cnt { break; }
+        rid := r64(fn_meta, bfi * 24);
+        if rid < 0 || rid >= sg_n { return -1; }
+        fr := rid * ESZ_SG;
+        if r64(g_sgs, fr + OFF_SG_KIND) != SG_FUNC { return -1; }
+        ren := r64(g_sgs, fr + OFF_SG_ENTER);
+        rex := r64(g_sgs, fr + OFF_SG_EXIT);
+        if rex < ren { return -1; }
+        w64(g_ir_func_instr_start, bfi * 8, ren);
+        w64(g_ir_func_instr_count, bfi * 8, rex - ren);
+        bfi = bfi + 1;
     }
 
     // === NOD: instructions（28B each）===
@@ -848,7 +1101,7 @@ fn load_ccr(data: string, fsize: int) -> int {
             efl := buf_read_u32(data, pos); pos = pos + 4;  // flags
             // 语义校验（越界拒绝，先例 ccr 校验风格）
             if evr < 1 { return -1; }
-            if ev < 0 || ev >= var_cnt { return -1; }
+            if ev < 0 || ev >= g_ir_var_count { return -1; }  // var 命名空间 = SYM 行重建总量
             if els >= ele || ele > instr_cnt { return -1; }
             if ed >= 0 {
                 if ed >= instr_cnt { return -1; }
@@ -867,7 +1120,8 @@ fn load_ccr(data: string, fsize: int) -> int {
         }
         // 函数条目段界重建：条目按函数升序成块落盘（compute_entries func_i 升序），
         // 每函数一段 [start, count)——块判定 = var 槽 ∈ 该函数 var 区间（var 槽
-        // 全属唯一函数，段序与函数序一致）。重建失败 = 格式不一致。
+        // 全属唯一函数，段序与函数序一致）。重建结果与 SYM func 记录
+        // first_ent/last_ent 逐函数对照（同信息双写，失配 = 格式不一致）。
         ccr_grow_func_entry_meta(func_cnt);
         pf : ., mut = 0;
         pe : ., mut = 0;
@@ -875,6 +1129,7 @@ fn load_ccr(data: string, fsize: int) -> int {
             if pf >= func_cnt { break; }
             fvs := r64(g_ir_func_var_start, pf * 8);
             fvc := r64(g_ir_func_var_count, pf * 8);
+            pstart := pe;
             w64(g_ir_func_entry_start, pf * 8, pe);
             loop {
                 if pe >= g_entry_count { break; }
@@ -882,32 +1137,18 @@ fn load_ccr(data: string, fsize: int) -> int {
                 if fvc <= 0 || pv < fvs || pv >= fvs + fvc { break; }
                 pe = pe + 1;
             }
-            w64(g_ir_func_entry_count, pf * 8, pe - r64(g_ir_func_entry_start, pf * 8));
+            pcnt := pe - pstart;
+            w64(g_ir_func_entry_count, pf * 8, pcnt);
+            ffe := r64(fn_meta, pf * 24 + 8);
+            fle := r64(fn_meta, pf * 24 + 16);
+            if pcnt == 0 {
+                if ffe != -1 || fle != -1 { return -1; }
+            } else {
+                if ffe != pstart || fle != pstart + pcnt - 1 { return -1; }
+            }
             pf = pf + 1;
         }
         if pe != g_entry_count { return -1; }
-    }
-
-    // === REG: sgs（24B each；v5 SG 内容装入段表，记录序不变）===
-    if have5 != 0 {
-        pos = seg_off5;
-        if !ccr_has_bytes(pos, 4, seg_end5) { return -1; }
-        sg_n := buf_read_u32(data, pos); pos = pos + 4;
-        if sg_n > (seg_end5 - seg_off5) / ESZ_SG_DISK { return -1; }
-        sg_i : ., mut = 0;
-        loop {
-            if sg_i >= sg_n { break; }
-            grow_sg(sg_i + 1);
-            f := sg_i * ESZ_SG;
-            w64(g_sgs, f + OFF_SG_KIND, buf_read_i32(data, pos)); pos = pos + 4;
-            w64(g_sgs, f + OFF_SG_ENTER, buf_read_i32(data, pos)); pos = pos + 4;
-            w64(g_sgs, f + OFF_SG_EXIT, buf_read_i32(data, pos)); pos = pos + 4;
-            w64(g_sgs, f + OFF_SG_PARENT, buf_read_i32(data, pos)); pos = pos + 4;
-            w64(g_sgs, f + OFF_SG_NSTART, buf_read_i32(data, pos)); pos = pos + 4;
-            w64(g_sgs, f + OFF_SG_NCOUNT, buf_read_i32(data, pos)); pos = pos + 4;
-            sg_i = sg_i + 1;
-        }
-        g_sg_count = sg_n;
     }
 
     return 0;
