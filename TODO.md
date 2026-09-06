@@ -245,6 +245,15 @@
 - corec build 透传 `--table`；事件流/表数据入 v6 段（NOD op ↔ HIT event_id 对齐）
 - M2 挂账细节（评审 Minor）：hit_w32 负值哨兵实现分裂、add 反减 dest-fresh 前提固化、'events emitted' 计数改名、负值/宽常量池载体
 
+## 规约语法并入 .cr（2026-09-06 .corespec 退役挂账）
+
+独立 .corespec 格式/语言退役（crasm 同构：规约只有一种表达 = Core 语言，无第二套文件/语言）：
+- ~~grammar/corespec.ebnf~~（退役标注——内容保留为迁移源）→ **迁移：规约语法（requires/ensures/old/result/where/SpecImplies）并入 grammar/core.ebnf**
+- ~~spec/*.corespec 4 文件~~（退役标注）→ 组件行为契约迁移至对应 .cr 注释/契约文档（先例：src/compiler/regalloc-consistency.cr）
+- **.cr 规约语法实现**（requires/ensures/where 子句 = 语言实现——原类型系统方向定案线：where 值约束三档 → 验证切片；TagNode 图节点已在设计 coreir-schema「图即验证」）
+- .csr（图约束二进制）保留——它是 .cr 规约编译进图后的序列化，非独立语言
+- 文档引用（10+ 文件）随语法并入逐步同步
+
 ## 待实现特性
 
 ### 控制流自动惰性（2026-08-09 记）

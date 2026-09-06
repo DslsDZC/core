@@ -1,3 +1,11 @@
+(* grammar/corespec.ebnf —— 2026-09-06 退役 *)
+
+本文件（独立 .corespec 规约语言语法）已退役——与 .crasm 退役同一逻辑：
+规约（requires/ensures/old/result/where）是 Core 语言语法的一部分，只有一种表达 =
+.cr（编译进图 = TagNode，见 coreir-schema「图即验证」），无第二套文件/语言。
+- 规约语法并入 grammar/core.ebnf（迁移事项，见 TODO「规约语法并入 .cr」）
+- 本文件内容保留为迁移源，不再演进；SpecImplies 产生式随迁
+
 (*** 顶层 ***)
 SpecCompilationUnit = { ImportDecl } { SpecItem } ;
 

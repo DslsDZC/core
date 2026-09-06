@@ -263,11 +263,11 @@ Design documents (Chinese):
 
 ## Key Conventions
 
-- File extensions: `.cr` (source), `.cir` (dataflow graph IR / 图形态), `.ccr` (格形态 IR，v6 = 段表架构 + 存在结构段 ENT，v6-only), `.corespec` (spec)
+- File extensions: `.cr` (source), `.cir` (dataflow graph IR / 图形态), `.ccr` (格形态 IR，v6 = 段表架构 + 存在结构段 ENT，v6-only), `.corespec`（已退役 2026-09-06——规约并入 .cr 语法，见 grammar/core.ebnf 迁移事项）
 - Tests in `tests/bootstrap/` and `tests/selfhost/` define inline Core source strings and compare output
 - Python bootstrap: `sys.path.insert(0, 'bootstrap')` to import compiler modules
 - VS Code extension in `vscode-core/`
-- Spec files in `spec/` (`.corespec`) for formal verifier
+- Spec files in `spec/`（.corespec 已退役——规约语法并入 .cr，图即验证承载于 TagNode/.csr）
 - Examples in `examples/`
 
 ## Known Issues & TODO
