@@ -1205,8 +1205,19 @@ fn inject_read_gap() -> int {
 // i=i+1 前）跨回边存活，窗口止于末引用会把 reg 让给循环尾文字区间不交的 var
 // → 定值污染（test_live_ranges LOOP_CARRY_SRC 语义锚）。判定：对每个回边
 // span [label_pos, branch_pos]，var 在 span 内首个引用为读（非定值形式）→
-// 携带 → 窗口扩至整函数。残余近似（条件定值 + 非 span 首引用读需 CFG 活性，
-// RegionCheck 图层为升级点）见报告 cag-report.md。
+// 携带 → 窗口扩至整函数。
+// 条件定值健全化（复审 Critical，2026-09-06 修复）：def-form 首引用 ≠ 每轮
+// 必刷新——「首引用为定值 ⇒ 不携带」只在定值无条件每轮执行时成立。定值点 d
+// 位于 span 内条件区域（∃ BRANCH b ∈ [t0, d)，目标 label t ∈ (d, b0]——跳过
+// d 后仍在 span 内继续循环）时，跳过路径上旧值跨回边存活（下轮读污染值，
+// v_noz/conddef_repro3 确定性误编译，O2 专属）。此类定值按携带处理（窗口
+// 扩至整函数）。另：dest/STORE-s1 定值若同指令自读（s1/s2 == 目标，读先于
+// 写）→ 该读本身就是跨回边读 → 亦按携带（防御性统一，现 IR 未见此形态——
+// x=x+1 的读在独立 BINARY 指令上，首引用已是读形式）。
+// 残余近似：非 span 首引用读点 + 跨 span 复杂路径需真 CFG 活性（RegionCheck
+// 图层 = docs/regalloc-cache-mapping.md §三 定案升级点，未接线；判定与分配器
+// 同文字区间模型——条件定值携带语义的判定侧同步 = 该升级点前的一贯挂账，
+// 回归语义锚 = test_live_ranges COND_DEF_CARRY 源，见报告 cag-report.md）。
 
 fn label_pos_of(id: int, lab_id: string, lab_ps: string, n: int) -> int {
     i : ., mut = 0;
@@ -1332,16 +1343,26 @@ fn alloc_registers() {
         loop { if iz >= vc { break; } w64(car, iz * 8, 0); iz = iz + 1; }
         if has_loop != 0 {
             // span 内逐指令扫：var 的 span 内首引用若为读形式 → 值跨回边存活
-            // （携带）；定值形式（dest / STORE-s1）首引用 → 每轮刷新，不携带。
-            // 状态：0 未见 / 1 首引用 = 定值 / 2 首引用 = 读（携带）。
+            // （携带）；定值形式（dest / STORE-s1）首引用且每轮必执行 → 每轮
+            // 刷新，不携带。状态：0 未见 / 1 首引用 = 定值 / 2 首引用 = 读。
+            // 条件定值健全化（评审 Critical）：首引用为定值 d 但 d 可被 span 内
+            // 条件分支跳过（仍在 span 继续循环）→ 未必每轮刷新 → 同读形式按
+            // 携带处理（差分标记 + 前缀累计见下）。
             st : string, mut = alloc(vc * 8);
+            st_def : string, mut = alloc(vc * 8);      // state-1 var 的定值位置
+            skp : string, mut = alloc((ic + 2) * 8);   // 可跳过位置差分（span 局部序）
             bi : ., mut = 0;
             loop {
                 if bi >= bn { break; }
                 t0 := r64(bt, bi * 16);
                 b0 := r64(bt, bi * 16 + 8);
                 iz = 0;
-                loop { if iz >= vc { break; } w64(st, iz * 8, 0); iz = iz + 1; }
+                loop {
+                    if iz >= vc { break; }
+                    w64(st, iz * 8, 0);
+                    w64(st_def, iz * 8, -1);
+                    iz = iz + 1;
+                }
                 pp : ., mut = t0;
                 loop {
                     if pp > b0 { break; }
@@ -1350,11 +1371,29 @@ fn alloc_registers() {
                     d := iri_dest(inst); s1 := iri_s1(inst); s2 := iri_s2(inst);
                     if d >= vs && d < vs + vc {
                         lvd := d - vs;
-                        if r64(st, lvd * 8) == 0 { w64(st, lvd * 8, 1); }
+                        if r64(st, lvd * 8) == 0 {
+                            // dest 定值同指令自读（s1/s2 == d）：读先于写，该读
+                            // 可能取上一轮值 → 按读首引用（携带）处理
+                            if s1 == d || s2 == d {
+                                w64(st, lvd * 8, 2);
+                                w64(car, lvd * 8, 1);
+                            } else {
+                                w64(st, lvd * 8, 1);
+                                w64(st_def, lvd * 8, pp);
+                            }
+                        }
                     }
                     if op == IR_STORE && s1 >= vs && s1 < vs + vc {
                         lvs := s1 - vs;
-                        if r64(st, lvs * 8) == 0 { w64(st, lvs * 8, 1); }
+                        if r64(st, lvs * 8) == 0 {
+                            if s2 == s1 {
+                                w64(st, lvs * 8, 2);
+                                w64(car, lvs * 8, 1);
+                            } else {
+                                w64(st, lvs * 8, 1);
+                                w64(st_def, lvs * 8, pp);
+                            }
+                        }
                     }
                     if s1 >= vs && s1 < vs + vc && op != IR_STORE {
                         lv1 := s1 - vs;
@@ -1371,6 +1410,54 @@ fn alloc_registers() {
                         }
                     }
                     pp = pp + 1;
+                }
+                // 条件定值健全化——差分标记：BRANCH（pp）的 forward 目标
+                // t ∈ (pp, b0] ⇒ 位置 (pp, t) 可被跳过且循环仍继续（区间
+                // [pp+1, t−1] 覆盖 +1，终点 t 处 −1）；前缀累计 > 0 ⟺ 该位置
+                // 落在某条件分支的可跳过区域内。回跳/外跳目标（≤ pp 或 > b0）
+                // 不构成「跳过仍继续循环」，不计。
+                zz : ., mut = 0;
+                spn := b0 - t0 + 1;
+                loop { if zz >= spn { break; } w64(skp, zz * 8, 0); zz = zz + 1; }
+                pp = t0;
+                loop {
+                    if pp > b0 { break; }
+                    if iri_op(ist + pp) == IR_BRANCH {
+                        t2 := label_pos_of(iri_s2(ist + pp), lab_id, lab_ps, ln);
+                        t3 := label_pos_of(iri_s3(ist + pp), lab_id, lab_ps, ln);
+                        if t2 > pp && t2 <= b0 {
+                            w64(skp, (pp + 1 - t0) * 8, r64(skp, (pp + 1 - t0) * 8) + 1);
+                            w64(skp, (t2 - t0) * 8, r64(skp, (t2 - t0) * 8) - 1);
+                        }
+                        if t3 > pp && t3 <= b0 {
+                            w64(skp, (pp + 1 - t0) * 8, r64(skp, (pp + 1 - t0) * 8) + 1);
+                            w64(skp, (t3 - t0) * 8, r64(skp, (t3 - t0) * 8) - 1);
+                        }
+                    }
+                    pp = pp + 1;
+                }
+                // 前缀累计：skp[p−t0] > 0 ⟺ 位置 p 可被某条件分支跳过
+                acc : ., mut = 0;
+                pp = t0;
+                loop {
+                    if pp > b0 { break; }
+                    acc = acc + r64(skp, (pp - t0) * 8);
+                    if acc != 0 { w64(skp, (pp - t0) * 8, 1); }
+                    else { w64(skp, (pp - t0) * 8, 0); }
+                    pp = pp + 1;
+                }
+                // state-1（首引用 = 定值）var：定值点可被跳过 → 条件定值，
+                // 每轮未必刷新 → 旧值跨回边存活 → 携带（窗口扩至整函数）
+                iz = 0;
+                loop {
+                    if iz >= vc { break; }
+                    if r64(st, iz * 8) == 1 {
+                        dd := r64(st_def, iz * 8);
+                        if dd >= t0 && r64(skp, (dd - t0) * 8) != 0 {
+                            w64(car, iz * 8, 1);
+                        }
+                    }
+                    iz = iz + 1;
                 }
                 bi = bi + 1;
             }

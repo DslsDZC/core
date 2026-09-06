@@ -293,8 +293,11 @@ def check_regalloc_real_use() -> tuple:
     单调不复用 + 循环末只收集仍活跃 var → meta 恒空 → 后端全栈发射——正确但无
     寄存器加速）→ 本断言红；真实分配后 pairs > 0 → 绿。
 
-    覆盖源 = 6 个共存 int var（压 5 callee-saved 上限）：分配真实发生（≥1 对）
-    且必有栈驻留余数——驱逐/落 home（不分配 = 保留栈 home）路径共存验证。
+    计数载体注记（评审 I-2 措辞修正）：看门狗数的是**整语料** REG_ASSIGN 对
+    （被测 main + 15 个自动并入的标准库函数，funcs 16）——断言对象是总数 ≥ 5
+    （证明分配真实发生、防 rc=0 回退），不断言被测 main 的 6 变量各获分配。
+    6 共存 int var 的作用是把共存压力拉到 5 callee-saved 上限，使分配必然发生
+    且必有栈驻留余数（不分配 = 保留栈 home；分配器无驱逐事件，不设驱逐路径）。
     """
     src = "fn main()->int{a:=1;b:=2;c:=3;d:=4;e:=5;f:=6;return a+b+c+d+e+f;}\n"
     rc, out = check_regalloc(src, [])
@@ -309,8 +312,8 @@ def check_regalloc_real_use() -> tuple:
         return False, (f"regalloc-assign: {n} pairs — 寄存器从未真实分配（rc=0 "
                        f"缺陷回退）：\n{out[-500:]}")
     if n < 5:
-        return False, (f"regalloc-assign: {n} pairs < 5 — 6 共存 var 应吃满 "
-                       f"5 callee-saved：\n{out[-500:]}")
+        return False, (f"regalloc-assign: {n} pairs < 5 — 全语料（main + stdlib）"
+                       f"共存压力下应远超 5 对：\n{out[-500:]}")
     return True, f"regalloc real assignment OK ({n} pairs)"
 
 
@@ -347,6 +350,55 @@ def check_regalloc_loop_carry() -> tuple:
         if not ok:
             return False, f"loop-carry {name} rc={rc}, expected 20"
     return True, "loop-carried register semantics OK"
+
+
+def check_regalloc_cond_def_carry() -> tuple:
+    """CAG 复审 Critical 回归（条件定值跨回边存活）：条件定值 = span 内首引用
+    是定值指令（def-form）但未必每轮执行——跳过路径上旧值仍跨回边存活。
+
+    复现 A（v_noz）：x 的定值 `if i==0 { x = 7; }` 是回边 span 内 x 的首引用
+    （def-form），但 i==1 轮该 STORE 不执行 → s=s+x 读到的是上一轮的值——
+    x 实际携带。旧判定（只认「span 内首引用为读」为携带）把 x 判不携带 →
+    阶段 4 按文字窗口终点归还 x 的寄存器，循环尾 `i=i+1` 的文字区间不交的临时
+    var 拿到同一寄存器 → 每轮回边前污染 → 下轮读 x 读到 i+1 临时值（8=7+1）。
+    复现 B（conddef_repro3）：同形 + 尾 `z:=5; s=s+z;`（期望 24，错读 22）。
+
+    pre-CAG O2（rc=0 全栈发射）正确（14/24）→ 误编译由 CAG 寄存器真实分配引入。
+    断言 O2（真实分配）== 期望；O1（无分配路径基线）同断言。
+    """
+    for name, src, expect in (
+        ("v_noz", "fn main()->int{\n"
+                  "  i:=0;s:=0;\n"
+                  "  x : int, mut = 3;\n"
+                  "  loop {\n"
+                  "    if i>=2 { break; }\n"
+                  "    if i==0 { x = 7; }\n"
+                  "    s = s + x;\n"
+                  "    i = i + 1;\n"
+                  "  }\n"
+                  "  return s;\n"
+                  "}\n", 14),
+        ("conddef-z", "fn main()->int{\n"
+                      "  i:=0;s:=0;\n"
+                      "  x : int, mut = 3;\n"
+                      "  loop {\n"
+                      "    if i>=2 { break; }\n"
+                      "    if i==0 { x = 7; }\n"
+                      "    s = s + x;\n"
+                      "    i = i + 1;\n"
+                      "    z := 5;\n"
+                      "    s = s + z;\n"
+                      "  }\n"
+                      "  return s;\n"
+                      "}\n", 24),
+    ):
+        for mode, flags in (("O1-baseline", []), ("O2-regalloc", ["--opt-level", "2"])):
+            rc = build_and_run(src, flags)
+            ok = rc == expect
+            print(f"[{'PASS' if ok else 'FAIL'}] cond-def-carry {name} {mode}: rc={rc}")
+            if not ok:
+                return False, f"cond-def-carry {name} {mode} rc={rc}, expected {expect}"
+    return True, "conditional-def loop-carried register semantics OK"
 
 
 def check_regalloc_violations() -> tuple:
@@ -414,7 +466,7 @@ def main() -> int:
         print("[FAIL] missing build/corec")
         return 1
     passed = 0
-    total = 8
+    total = 9
     ok, msg = run_smoke()
     if ok:
         passed += 1
@@ -439,6 +491,10 @@ def main() -> int:
     if ok:
         passed += 1
     print(f"[{'PASS' if ok else 'FAIL'}] regalloc loop carry: {msg}")
+    ok, msg = check_regalloc_cond_def_carry()
+    if ok:
+        passed += 1
+    print(f"[{'PASS' if ok else 'FAIL'}] regalloc cond-def carry: {msg}")
     ok, msg = check_regalloc_violations()
     if ok:
         passed += 1
