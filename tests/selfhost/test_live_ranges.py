@@ -401,6 +401,99 @@ def check_regalloc_cond_def_carry() -> tuple:
     return True, "conditional-def loop-carried register semantics OK"
 
 
+def check_regalloc_else_def_carry() -> tuple:
+    """CAG 复审第二轮回归（else 臂条件定值 = BRANCH-skip 差分残留）。
+
+    同族机制残留于 else 臂：if-else 发射布局
+      BRANCH c, L_then, L_else; L_then: A; JUMP L_merge; L_else: B; JUMP L_merge;
+    中 else 体 B（`x = 7`）被 then 尾的无条件 JUMP 结构性跳过——阶段 2 差分标记
+    只扫 IR_BRANCH 的 forward 目标（B 正落在 BRANCH 自身 else 目标的标号处、
+    区间 [pp+1, t−1] 不含终点 t），漏 IR_JUMP → B 内定值 x 判「每轮必执行、
+    不携带」→ 阶段 4 文字窗口终点归还 x 寄存器 → 循环尾临时同寄存器 → 回边前
+    污染 → 下轮读 x 错值（p_else1/p_while 应 22 实得 20；pre-CAG O2 正确）。
+
+    修复 = 对 span 内 forward IR_JUMP (u, t)（t ∈ (u, b0]）同样生成 [u+1, t−1]
+    差分。over-mark 只损利用率、方向安全（continue/else 臂/链式 JUMP 推演无害）。
+
+    复现 A（p_else1）：loop + break 头 + `if i<2 {s=s+1} else {x=7}`（应 22）。
+    复现 B（p_while）：while 头条件同形 if-else（应 22）。
+    断言 O2（真实分配）== 期望；O1（无分配路径基线）同断言。
+    """
+    for name, src, expect in (
+        ("else1", "fn main()->int{\n"
+                  "  i:=0;s:=0;\n"
+                  "  x : int, mut = 3;\n"
+                  "  loop {\n"
+                  "    if i>=4 { break; }\n"
+                  "    if i<2 { s = s + 1; } else { x = 7; }\n"
+                  "    s = s + x;\n"
+                  "    i = i + 1;\n"
+                  "  }\n"
+                  "  return s;\n"
+                  "}\n", 22),
+        ("else-while", "fn main()->int{\n"
+                       "  i:=0;s:=0;\n"
+                       "  x : int, mut = 3;\n"
+                       "  while i < 4 {\n"
+                       "    if i<2 { s = s + 1; } else { x = 7; }\n"
+                       "    s = s + x;\n"
+                       "    i = i + 1;\n"
+                       "  }\n"
+                       "  return s;\n"
+                       "}\n", 22),
+    ):
+        for mode, flags in (("O1-baseline", []), ("O2-regalloc", ["--opt-level", "2"])):
+            rc = build_and_run(src, flags)
+            ok = rc == expect
+            print(f"[{'PASS' if ok else 'FAIL'}] else-def-carry {name} {mode}: rc={rc}")
+            if not ok:
+                return False, f"else-def-carry {name} {mode} rc={rc}, expected {expect}"
+    return True, "else-arm conditional-def loop-carried register semantics OK"
+
+
+def check_regalloc_else_controls() -> tuple:
+    """else 臂修复的控制组（无过标/无回归）：同族形状的既有绿行为必须保持。
+
+    - then2（p_then2）：`if i<2 {x=7} else {s=s+1}`——定值在 then 臂（BRANCH
+      else 目标区间已覆盖，第一轮修复路径）→ 30 保持（新增 JUMP 差分不得扰动）。
+    - cont（p_cont）：continue 臂 + then 臂定值 + else 读先行自刷新 s → 31 保持
+      （continue 回跳目标 ≤ 跳源，JUMP 差分不计回跳——误标会扩窗损利用率，
+      行为断言兜底正确性）。
+    断言 O2（真实分配）== 期望。
+    """
+    for name, src, expect in (
+        ("then2", "fn main()->int{\n"
+                  "  i:=0;s:=0;\n"
+                  "  x : int, mut = 3;\n"
+                  "  loop {\n"
+                  "    if i>=4 { break; }\n"
+                  "    if i<2 { x = 7; } else { s = s + 1; }\n"
+                  "    s = s + x;\n"
+                  "    i = i + 1;\n"
+                  "  }\n"
+                  "  return s;\n"
+                  "}\n", 30),
+        ("cont", "fn main()->int{\n"
+                 "  i:=0;s:=0;\n"
+                 "  x : int, mut = 3;\n"
+                 "  loop {\n"
+                 "    if i>=5 { break; }\n"
+                 "    if i==0 { i = i + 1; continue; }\n"
+                 "    if i<2 { x = 7; } else { s = s + 1; }\n"
+                 "    s = s + x;\n"
+                 "    i = i + 1;\n"
+                 "  }\n"
+                 "  return s;\n"
+                 "}\n", 31),
+    ):
+        rc = build_and_run(src, ["--opt-level", "2"])
+        ok = rc == expect
+        print(f"[{'PASS' if ok else 'FAIL'}] else-control {name} O2: rc={rc}")
+        if not ok:
+            return False, f"else-control {name} O2 rc={rc}, expected {expect}"
+    return True, "else-arm control shapes unchanged (then2=30, cont=31)"
+
+
 def check_regalloc_violations() -> tuple:
     """Task 5 红路径：注入冲突条目 → verify 返回违反（rc=1 + rule N 诊断行）。
     注入经测试钩子（cir 隐藏 debug 标志——真实构建路径永不注入）：
@@ -466,7 +559,7 @@ def main() -> int:
         print("[FAIL] missing build/corec")
         return 1
     passed = 0
-    total = 9
+    total = 11
     ok, msg = run_smoke()
     if ok:
         passed += 1
@@ -495,6 +588,14 @@ def main() -> int:
     if ok:
         passed += 1
     print(f"[{'PASS' if ok else 'FAIL'}] regalloc cond-def carry: {msg}")
+    ok, msg = check_regalloc_else_def_carry()
+    if ok:
+        passed += 1
+    print(f"[{'PASS' if ok else 'FAIL'}] regalloc else-def carry: {msg}")
+    ok, msg = check_regalloc_else_controls()
+    if ok:
+        passed += 1
+    print(f"[{'PASS' if ok else 'FAIL'}] regalloc else controls: {msg}")
     ok, msg = check_regalloc_violations()
     if ok:
         passed += 1

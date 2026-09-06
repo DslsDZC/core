@@ -1414,8 +1414,18 @@ fn alloc_registers() {
                 // 条件定值健全化——差分标记：BRANCH（pp）的 forward 目标
                 // t ∈ (pp, b0] ⇒ 位置 (pp, t) 可被跳过且循环仍继续（区间
                 // [pp+1, t−1] 覆盖 +1，终点 t 处 −1）；前缀累计 > 0 ⟺ 该位置
-                // 落在某条件分支的可跳过区域内。回跳/外跳目标（≤ pp 或 > b0）
-                // 不构成「跳过仍继续循环」，不计。
+                // 落在某可跳过区域内。回跳/外跳目标（≤ pp 或 > b0）不构成
+                // 「跳过仍继续循环」，不计。
+                // 第二轮健全化（复审 Critical 残留）：if-else 布局
+                //   BRANCH c, L_then, L_else; L_then: A; JUMP L_merge;
+                //   L_else: B; JUMP L_merge;
+                // 中 else 体 B 被 then 尾无条件 JUMP 结构性跳过——B 内定值
+                // 正落在 BRANCH 自身 else 目标的标号处（区间 [pp+1, t−1]
+                // 不含终点 t），首轮只扫 IR_BRANCH 漏 IR_JUMP → B 内 def 判
+                // 「每轮必执行」→ 同寄存器污染。对 span 内 forward IR_JUMP
+                // (pp→t) 同样生成 [pp+1, t−1] 差分：跳过仍继续循环的路径
+                // 等价（continue 前向形态同理；回跳 continue/break 外跳因
+                // 目标 ≤ pp 或 > b0 不计）。over-mark 只损利用率、方向安全。
                 zz : ., mut = 0;
                 spn := b0 - t0 + 1;
                 loop { if zz >= spn { break; } w64(skp, zz * 8, 0); zz = zz + 1; }
@@ -1432,6 +1442,12 @@ fn alloc_registers() {
                         if t3 > pp && t3 <= b0 {
                             w64(skp, (pp + 1 - t0) * 8, r64(skp, (pp + 1 - t0) * 8) + 1);
                             w64(skp, (t3 - t0) * 8, r64(skp, (t3 - t0) * 8) - 1);
+                        }
+                    } else if iri_op(ist + pp) == IR_JUMP {
+                        t1 := label_pos_of(iri_s1(ist + pp), lab_id, lab_ps, ln);
+                        if t1 > pp && t1 <= b0 {
+                            w64(skp, (pp + 1 - t0) * 8, r64(skp, (pp + 1 - t0) * 8) + 1);
+                            w64(skp, (t1 - t0) * 8, r64(skp, (t1 - t0) * 8) - 1);
                         }
                     }
                     pp = pp + 1;
