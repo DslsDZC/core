@@ -293,13 +293,24 @@ fn compute_live_ranges() {
 // ------------------------------------------------------------------
 // v6 条目版本化：变量 × 定值点切分版本条目
 // ------------------------------------------------------------------
-// Core IR 非 SSA——变量可多次定值。定值指令 = IR_ALLOC（局部槽初定值，interp
-// 置零）与该变量为目标的每次 IR_STORE（IR_STORE 形态 ρ(s1):=ρ(s2)——目标在 s1
-// 不在 dest，见 docs/ir-op-semantics.md §2.1）。每个定值切分一个新版本条目。
+// Core IR 非 SSA——变量可多次定值。定值识别（GC 批 2 扩权，格式定稿 §4.1
+// 「dest ≥ 0 = 定值点」）：
+//   · 每个写变量槽的指令 = 该变量的定值点——IR_ALLOC（局部槽初定值，interp
+//     置零）、IR_ALLOC_ARRAY/IR_ALLOC_STRUCT（数组/结构变量诞生，无初值声明
+//     不发 IR_ALLOC，如 `a : [int; N];`——见 ir_gen EXPR_LET 路径）、以及全部
+//     producer（CONST/BINARY/CALL/LOAD 族/DEREF/…，dest = 产出变量）。
+//   · IR_STORE 形态 ρ(s1):=ρ(s2)——定值目标在 s1 不在 dest（dest 恒 -1，见
+//     docs/ir-op-semantics.md §2.1），单列规则。
+//   · 例外（dest ≥ 0 但非变量定值，扫 IR 全集勘定 GC 批 2）：
+//       IR_STORE_INDEX_VAR —— dest = 被存值源（M[s1+8·s2] := ρ(dest)，值槽不写）
+//       IR_STORE_PTR      —— dest = runtime base 标注（provenance_verify.cr
+//                             改写：无结果指令用 dest 携带基址变量，源语义）
+//       IR_DYN_DISPATCH   —— dest = _dyncall 占位 var（分发不写槽）
+// 每个定值切分一个新版本条目。
 // 版本存在区间（全局指令序闭区间，与 Task 1 区间表同语义、坐标 +instr_start）：
 //   版本 j = [def_j, min(def_{j+1}−1, last_ref)]（末版 = [def_k, last_ref]；
 //   last_ref 恒 ≥ 末定值——定值写自身计入引用）。
-// 无定值但有引用的变量（函数参数、单次写临时值等）→ 单条目 def_instr=−1、
+// 无定值但有引用的变量（函数参数、无写临时值等）→ 单条目 def_instr=−1、
 // 区间 = [first_ref, last_ref]；从未引用（first_ref=−1）跳过。
 // 版本号不落盘：同 var 条目按 def_instr 升序（单遍扫描即升序），版本序 = 组内序号。
 // 调用前置：compute_live_ranges() 已先行（截断用 last_ref），func_i 升序调用
@@ -362,19 +373,22 @@ fn compute_entries(func_i: int) -> int {
             w64(prev, pz * 8, -1);
             pz = pz + 1;
         }
-        // 单遍扫描：ALLOC(dest=var) / STORE(s1=var) 命中函数段 → 定值 → 切版本
+        // 单遍扫描：定值点 = IR_STORE 的目标槽（s1=var）∪ 其余指令 dest≥0
+        // 命中函数段（格式定稿 §4.1——GC 批 2 扩权，见本区头：ALLOC_ARRAY/
+        // ALLOC_STRUCT 等内存对象诞生 + 全部 producer 直写并入版本切分；
+        // STORE_INDEX_VAR/STORE_PTR/DYN_DISPATCH 的 dest 非定值，不判）
         ii : ., mut = 0;
         loop {
             if ii >= ic { break; }
             inst := ist + ii;
             op := iri_op(inst);
             dv : ., mut = -1;
-            if op == IR_ALLOC {
-                d := iri_dest(inst);
-                if d >= vs && d < vs + vc { dv = d; }
-            } else if op == IR_STORE {
+            if op == IR_STORE {
                 s1 := iri_s1(inst);
                 if s1 >= vs && s1 < vs + vc { dv = s1; }
+            } else if op != IR_STORE_INDEX_VAR && op != IR_STORE_PTR && op != IR_DYN_DISPATCH {
+                d := iri_dest(inst);
+                if d >= vs && d < vs + vc { dv = d; }
             }
             if dv >= 0 {
                 lv := dv - vs;
@@ -435,7 +449,48 @@ fn compute_entries(func_i: int) -> int {
 
 // --dump-entries 调试通道输出（cir 命令调用，Task 2 测试载体）：
 // 每函数一段、一行一条目；坐标 = 全局指令序/全局变量索引（与表内一致），
-// v = 组内版本序（1-based），kind = 定值指令种类（ALLOC/STORE/-）。
+// v = 组内版本序（1-based），kind = 定值指令种类（def≥0 = producer opcode
+// 名，GC 批 2 后不再止于 ALLOC/STORE；def=-1 → "-"）。
+
+// 定值指令种类名（--dump-entries kind= 字段）：定值点 = dest≥0 producer
+// opcode ∪ IR_STORE(s1)（本区头规则）——只列会作为定值点出现的 opcode，
+// 未列 opcode 回退数字（不该出现；出现即探明新定值形态的信号）。
+fn ir_op_kind_name(op: int) -> string {
+    if op == IR_ALLOC { return "ALLOC"; }
+    if op == IR_ALLOC_STRUCT { return "ALLOC_STRUCT"; }
+    if op == IR_ALLOC_ARRAY { return "ALLOC_ARRAY"; }
+    if op == IR_STORE { return "STORE"; }
+    if op == IR_CONST { return "CONST"; }
+    if op == IR_LOAD { return "LOAD"; }
+    if op == IR_LOAD_FIELD { return "LOAD_FIELD"; }
+    if op == IR_LOAD_INDEX { return "LOAD_INDEX"; }
+    if op == IR_LOAD_INDEX_VAR { return "LOAD_INDEX_VAR"; }
+    if op == IR_BINARY { return "BINARY"; }
+    if op == IR_UNARY { return "UNARY"; }
+    if op == IR_CALL { return "CALL"; }
+    if op == IR_CALL_EXTERN { return "CALL_EXTERN"; }
+    if op == IR_HOTPATCH_ROUTE { return "HOTPATCH_ROUTE"; }
+    if op == IR_MAKE_ENUM { return "MAKE_ENUM"; }
+    if op == IR_REF { return "REF"; }
+    if op == IR_DEREF { return "DEREF"; }
+    if op == IR_LOAD_ENUM_TAG { return "LOAD_ENUM_TAG"; }
+    if op == IR_SLICE { return "SLICE"; }
+    if op == IR_ADDR_INDEX { return "ADDR_INDEX"; }
+    if op == IR_SPAWN { return "SPAWN"; }
+    if op == IR_AWAIT { return "AWAIT"; }
+    if op == IR_ARENA_NEW { return "ARENA_NEW"; }
+    if op == IR_DYN_PACK { return "DYN_PACK"; }
+    if op == IR_DYN_TAG { return "DYN_TAG"; }
+    if op == IR_DYN_VAL { return "DYN_VAL"; }
+    if op == IR_LAZY_THUNK { return "LAZY_THUNK"; }
+    if op == IR_LAZY_FORCE { return "LAZY_FORCE"; }
+    if op == IR_FNADDR { return "FNADDR"; }
+    if op == IR_I2F { return "I2F"; }
+    if op == IR_F2I { return "F2I"; }
+    if op == IR_PHI { return "PHI"; }
+    return "OP" + int_str(op);
+}
+
 fn dump_entries_summary() {
     fi : ., mut = 0;
     loop {
@@ -465,8 +520,7 @@ fn dump_entries_summary() {
             print(" def "); print(int_str(ent_def(e)));
             d := ent_def(e);
             if d >= 0 {
-                if iri_op(d) == IR_ALLOC { print(" kind=ALLOC"); }
-                else { print(" kind=STORE"); }
+                print(" kind="); print(ir_op_kind_name(iri_op(d)));
             } else {
                 print(" kind=-");
             }
@@ -735,10 +789,10 @@ fn rl_report_rule2(func_i: int, gv: int, inst: int) {
 
 // 规则 ②（框架）：寄存器驻留变量的读点必须有活跃版本覆盖。
 // 读点 = 指令 i 以 v 为源操作数（IR_STORE 的 s1 是写目标，排除；dest 从不读）。
-// 覆盖义务边界 = 首个版本化定值（IR_ALLOC/IR_STORE）之后——版本区间自定值点起
-// 连续覆盖至 last_ref，义务内读点恒有版本（构造不变量）；义务前读窗口（ALLOC_
-// ARRAY/ALLOC_STRUCT 等非版本化定值供给）待 compute_entries 按格式定稿 §4.1
-// 「dest ≥ 0 = 定值点」升级后自动纳入——本检查零改动（TODO 注记同 plan Task 2）。
+// 覆盖义务边界 = 首个版本化定值之后——GC 批 2 已按格式定稿 §4.1 把定值识别
+// 扩为 dest≥0 全定值（含 ALLOC_ARRAY/ALLOC_STRUCT 内存对象诞生），义务前读
+// 窗口（旧「非版本化定值供给」区）自动纳入：版本区间自定值点起连续覆盖至
+// last_ref，义务内读点恒有版本（构造不变量）——本检查零改动，承诺已验证。
 fn rl_rule2_func(func_i: int, vs: int, vc: int, ist: int, ic: int, es: int, ec: int) -> int {
     violations : ., mut = 0;
     lv : ., mut = 0;
@@ -1166,13 +1220,16 @@ fn try_inject_read_gap(func_i: int) -> int {
 }
 
 fn inject_read_gap() -> int {
-    fi : ., mut = 0;
+    // 函数迭代序 = 1..n-1 再 0：优先注入非 func 0 目标（F1 回归前提——规则 ② 的
+    // 坐标失明面只在 ist > 0 的函数上显形）。GC 批 2 后 _arena 等每函数首条
+    // def 使 func 0 恒可注入——若仍从 0 扫起，注入恒落 main，非 func 0 面失守。
+    fi : ., mut = 1;
     loop {
         if fi >= g_ir_func_count { break; }
         if try_inject_read_gap(fi) != 0 { return 1; }
         fi = fi + 1;
     }
-    return 0;
+    return try_inject_read_gap(0);
 }
 
 // ------------------------------------------------------------------

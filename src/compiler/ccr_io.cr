@@ -461,7 +461,8 @@ fn save_ccr(path: string) -> int {
         buf_write_i32(buf, pos, fe2); pos = pos + 4;
         buf_write_i32(buf, pos, le2); pos = pos + 4;
         // param_ents：参数变量的入参条目 = 该参数（行 vs+pi）的 def=-1 条目
-        // （函数内被 ALLOC/STORE 重定值或从未引用的参数无入参版本条目 → -1）
+        // （函数内被重定值——GC 批 2 后 = 任意 dest≥0 producer/STORE——或
+        // 从未引用的参数无入参版本条目 → -1）
         pp : ., mut = 0;
         loop {
             if pp >= pc { break; }

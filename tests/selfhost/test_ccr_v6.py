@@ -322,8 +322,10 @@ def test_ent_record_conversion_matches_dump():
     blocks = parse_entry_blocks(out)
     assert "main" in blocks, f"no main block in dump:\n{out}"
     mem_main = blocks["main"]
-    assert len([e for e in mem_main if e["def"] >= 0]) == 4, \
-        f"main should have 4 def'd entries for x, got {mem_main}"
+    # GC 批 2 后 main 的临时 producer 也有 def'd 条目——x 的 4 版本按 name 断言
+    x_ent = [e for e in mem_main if e["name"] == "x"]
+    assert len(x_ent) == 4 and all(e["def"] >= 0 for e in x_ent), \
+        f"main/x should have 4 def'd entries, got {x_ent}"
     # flatten all function blocks: the disk ENT spans every compiled func
     # (res_imports pulls in stdlib funcs, so the file covers > the source funcs)
     mem = [e for blk in blocks.values() for e in blk]
@@ -604,15 +606,24 @@ def test_sym_func_params_blocks():
         pdecls = add['var_decls'][:2]
         assert [strs[d['name']] for d in pdecls] == ['a', 'b']
         assert [d['type'] for d in pdecls] == [0, 0], "int param type != TI_INT"
-        # add 的条目：全 def=-1（无 ALLOC/STORE）；param_ents 指向 a/b 的入参条目
+        nod = v6.nod()
         a_block = ents[add['first_ent']:add['last_ent'] + 1]
-        assert all(en[2] == -1 for en in a_block), \
-            f"add has def'd entries: {a_block}"
-        for pi, pid in enumerate(add['param_ents']):
-            assert pid == add['first_ent'] + pi, \
-                f"param {pi} entry {pid} != block offset {pi}"
-            assert ents[pid][0] == g_base + pi and ents[pid][2] == -1, \
+        # GC 批 2（dest≥0 全定值）：add 的 producer 临时值（_arena/binary 组）有
+        # def'd 版本条目；a/b 参数无定值 → def=-1 单条目（块内扫描定位——参数
+        # def=-1 条目不再占据块首，位置式断言已不可用）
+        defd_add = [en for en in a_block if en[2] >= 0]
+        assert len(defd_add) >= 1, f"add has no def'd producer entries: {a_block}"
+        excluded = {16, 26, 44}  # STORE_INDEX_VAR/STORE_PTR/DYN_DISPATCH dest 非定值
+        assert not ({nod[en[2]][0] for en in defd_add} & excluded), \
+            f"add def'd entry from excluded op: {a_block}"
+        # param_ents 指向 a/b 的 def=-1 入参条目（var 扫描）；a/b 各恰一条
+        for pi, pvar in enumerate((g_base, g_base + 1)):
+            pid = add['param_ents'][pi]
+            assert pid >= 0, f"param {pi} entry missing: {add['param_ents']}"
+            assert ents[pid][0] == pvar and ents[pid][2] == -1, \
                 f"param {pi} entry wrong var/def: {ents[pid]}"
+            no_defs = [en for en in a_block if en[0] == pvar and en[2] == -1]
+            assert len(no_defs) == 1, f"param {pi}: def=-1 entries != 1: {no_defs}"
         # 文件条目块 = 函数序（main 块紧接 add 块——add 块非空）
         main_f = funcs[1]
         assert main_f['first_ent'] == add['last_ent'] + 1
@@ -623,14 +634,21 @@ def test_sym_func_params_blocks():
         assert funcs[1]['root_region'] == roots[1][0]
         assert roots[0][1][4] == add['first_ent'] and roots[0][1][5] == add['last_ent']
         assert roots[1][1][4] == main_f['first_ent'] and roots[1][1][5] == main_f['last_ent']
-        # main: x 重定值 → ALLOC+3×STORE = 4 个定值条目（与 dump-entries 同源；
-        # main 块内唯一的 def'd 组即 x 的版本序列）
+        # main: x 重定值 → ALLOC+3×STORE = 4 个版本条目（def_nod ops [6,9,9,9]；
+        # GC 批 2 后 main 还有 producer 组（CONST/BINARY/ARENA_NEW）——按组断言：
+        # ops 组合 [6,9,9,9] 的 4 版本组即 x）
         main_block = ents[main_f['first_ent']:main_f['last_ent'] + 1]
-        x_defs = [en for en in main_block if en[2] >= 0]
-        assert len(x_defs) == 4, \
-            f"main should have 4 def'd entries (x versions), got {len(x_defs)}"
-        assert all(x_defs[j][1] == x_defs[j - 1][1] + 1 for j in range(1, 4)), \
-            f"x versions not sequential: {x_defs}"
+        groups = ent_groups(main_block)
+        x_group = [g for g in groups.values()
+                   if len(g) == 4 and [nod[en[2]][0] for en in g] == [6, 9, 9, 9]]
+        assert len(x_group) == 1, \
+            f"main: no x group (4 versions, ALLOC+3 STORE): {main_block}"
+        assert [en[1] for en in x_group[0]] == [1, 2, 3, 4], \
+            f"x versions not sequential: {x_group[0]}"
+        # GC 批 2 扩权实证：main 的 def'd 条目数 > 4（临时 producer 组入条目）
+        defd_main = [en for en in main_block if en[2] >= 0]
+        assert len(defd_main) > 4, \
+            f"main should have producer temp def'd entries beyond x: {main_block}"
     finally:
         try:
             os.unlink(ccr_path)

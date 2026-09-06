@@ -100,12 +100,17 @@ def parse_entry_blocks(out: str) -> dict:
 
 
 def check_versioned_entries() -> tuple:
-    """Task 2：多定值变量版本切割断言。
+    """Task 2：多定值变量版本切割断言（GC 批 2 扩权后同步：定值 = dest≥0 全定值）。
 
     x := 1 在 IR 中 = IR_ALLOC + IR_STORE（let 初始化发射两条定值），
     再加 x=x+1 / x=x+2 两条 STORE → x 应有 4 个版本条目（1×ALLOC + 3×STORE），
     版本区间按 [def_j, min(def_{j+1}-1, last_ref)] 切割（全局指令序闭区间）：
     e_j.live_end == def_{j+1} - 1（j < 末版），末版 live_end = var 的 last_ref ≥ 其 def。
+
+    GC 批 2（定值识别扩权，格式定稿 §4.1 dest≥0 = 定值点）：producer 临时值
+    （CONST/BINARY/ARENA_NEW 等）也按定值切版本——按 name 分组断言（跨组断言
+    会因临时值条目数变化而脆弱）；每个 def'd 条目 ls == def 与同组版本链
+    不变量仍全表成立。
     """
     src = "fn identity(n:int)->int{return n;}\n" \
           "fn main()->int{x:=1;x=x+1;x=x+2;return x;}\n"
@@ -117,40 +122,116 @@ def check_versioned_entries() -> tuple:
         return False, f"no 'main' entry block in dump:\n{out[-500:]}"
     ent = blocks["main"]
 
-    multi = [x for x in ent if x["def"] >= 0]
+    # x 的 4 版本：ALLOC + 3×STORE（GC 批 2 语义下 x 只被 ALLOC/STORE 定值）
+    multi = [e for e in ent if e["name"] == "x"]
     if len(multi) != 4:
-        return False, f"main: expected 4 def'd entries for x (ALLOC+3 STORE), got {len(multi)}:\n{out}"
-    if len({x["var"] for x in multi}) != 1:
-        return False, f"main: def'd entries span multiple vars:\n{multi}"
+        return False, f"main/x: expected 4 version entries (ALLOC+3 STORE), got {len(multi)}:\n{out}"
     if [x["kind"] for x in multi] != ["ALLOC", "STORE", "STORE", "STORE"]:
-        return False, f"main: def kinds != ALLOC,STORE,STORE,STORE:\n{multi}"
+        return False, f"main/x: def kinds != ALLOC,STORE,STORE,STORE:\n{multi}"
     if [x["v"] for x in multi] != [1, 2, 3, 4]:
-        return False, f"main: version ordinals != 1..4:\n{multi}"
+        return False, f"main/x: version ordinals != 1..4:\n{multi}"
     defs = [x["def"] for x in multi]
     if any(defs[i] >= defs[i + 1] for i in range(3)):
-        return False, f"main: def points not strictly increasing:\n{defs}"
+        return False, f"main/x: def points not strictly increasing:\n{defs}"
     for x in multi:
         if x["ls"] != x["def"]:
-            return False, f"main: version live_start != def ({x}):\n{multi}"
+            return False, f"main/x: version live_start != def ({x}):\n{multi}"
     for i in range(3):
         if multi[i]["le"] != defs[i + 1] - 1:
-            return False, f"main: version {i+1} live_end != def[{i+1}]-1:\n{multi}"
+            return False, f"main/x: version {i+1} live_end != def[{i+1}]-1:\n{multi}"
     if multi[3]["le"] < multi[3]["def"]:
-        return False, f"main: last version live_end < its def:\n{multi}"
-    if not any(x["def"] == -1 for x in ent):
-        return False, "main: expected >=1 no-def entry (temps/_arena), none found"
-    if any(x["home"] != -1 or x["flags"] != 0 for x in ent):
+        return False, f"main/x: last version live_end < its def:\n{multi}"
+
+    # GC 批 2 扩权实证：main 里 producer 临时值（CONST/BINARY/ARENA_NEW）也有
+    # def'd 版本条目（旧实现止于 ALLOC/STORE——def'd 条目仅 x 一组 4 条）。
+    kinds = [e["kind"] for e in ent if e["def"] >= 0]
+    for want in ("ALLOC", "CONST", "BINARY", "ARENA_NEW"):
+        if want not in kinds:
+            return False, f"main: expected a def'd entry kind={want} (dest>=0 producers " \
+                          f"versioned), got kinds {sorted(set(kinds))}:\n{out}"
+    # 排除集实证：STORE_INDEX_VAR/STORE_PTR/DYN_DISPATCH 的 dest 非定值——不产生条目
+    if any(e["kind"] in ("STORE_INDEX_VAR", "STORE_PTR", "DYN_DISPATCH") for e in ent):
+        return False, f"main: excluded non-def dest op created an entry:\n{out}"
+    # 全表不变量：def'd 条目 ls == def；同 name 组内版本序 1..k（dump v 序）
+    for e in ent:
+        if e["def"] >= 0 and e["ls"] != e["def"]:
+            return False, f"main: def'd entry live_start != def ({e}):\n{ent}"
+        if e["def"] < 0 and e["kind"] != "-":
+            return False, f"main: no-def entry has a def kind ({e}):\n{ent}"
+    if any(e["home"] != -1 or e["flags"] != 0 for e in ent):
         return False, f"main: entries must have home=-1 flags=0 (unassigned):\n{ent}"
 
     # 无定值但有引用（函数参数）：单条目 def=-1，区间 [first_ref,last_ref]
     if "identity" not in blocks or not blocks["identity"]:
-        return False, f"identity: expected >=1 no-def entry:\n{out}"
-    for x in blocks["identity"]:
-        if x["def"] != -1 or x["kind"] != "-":
-            return False, f"identity: params must be single def=-1 entries:\n{blocks['identity']}"
-        if x["ls"] < 0 or x["ls"] > x["le"]:
-            return False, f"identity: bad no-def live range:\n{x}"
+        return False, f"identity: expected an entry block:\n{out}"
+    id_ent = blocks["identity"]
+    # 参数 n 单条目 def=-1（GC 批 2 后 identity 的 _arena 等 producer 有 def'd 条目）
+    n_ent = [e for e in id_ent if e["name"] == "n"]
+    if len(n_ent) != 1 or n_ent[0]["def"] != -1 or n_ent[0]["kind"] != "-":
+        return False, f"identity/n: param must be a single def=-1 entry:\n{id_ent}"
+    if n_ent[0]["ls"] < 0 or n_ent[0]["ls"] > n_ent[0]["le"]:
+        return False, f"identity/n: bad no-def live range:\n{n_ent[0]}"
     return True, "entries versioning OK"
+
+
+def check_array_birth_versions() -> tuple:
+    """GC 批 2（Task 2 评审 Important #2）：内存对象诞生 = 定值点。
+
+    `a : [int; 3]` 无初值声明不发 IR_ALLOC——旧实现只认 ALLOC/STORE 定值 →
+    a 首个版本化定值 = 后续 STORE 重定值，诞生与重定值之间的读窗口无条目覆盖。
+    dest≥0 全定值扩权后：a 的版本 = [ALLOC_ARRAY(诞生), STORE(重定值)] 两条，
+    区间按 [def_j, def_{j+1}-1] 切割——诞生版覆盖元素写/拷贝读（a[0]=5、
+    b := a），STORE 版覆盖重定值后读（a[0]+a[1]+a[i]）。"""
+    src = "fn main()->int{\n" \
+          "  a : [int; 3];\n" \
+          "  a[0] = 5; a[1] = 7;\n" \
+          "  b := a;\n" \
+          "  a = [1, 2, 3];\n" \
+          "  i := 0;\n" \
+          "  a[i] = 9;\n" \
+          "  return a[0] + a[1] + b[0] + a[i];\n" \
+          "}\n"
+    rc, out = dump_entries(src)
+    if rc != 0:
+        return False, f"cir --dump-entries rc={rc}\n{out[-500:]}"
+    blocks = parse_entry_blocks(out)
+    if "main" not in blocks:
+        return False, f"no 'main' entry block in dump:\n{out[-500:]}"
+    ent = blocks["main"]
+
+    a_ent = [e for e in ent if e["name"] == "a"]
+    if len(a_ent) != 2:
+        return False, f"main/a: expected 2 versions (ALLOC_ARRAY birth + STORE), got {len(a_ent)}:\n{out}"
+    if [e["kind"] for e in a_ent] != ["ALLOC_ARRAY", "STORE"]:
+        return False, f"main/a: kinds != ALLOC_ARRAY,STORE:\n{a_ent}"
+    if [e["v"] for e in a_ent] != [1, 2]:
+        return False, f"main/a: version ordinals != 1,2:\n{a_ent}"
+    d0, d1 = a_ent[0]["def"], a_ent[1]["def"]
+    if d0 >= d1:
+        return False, f"main/a: def points not increasing:\n{a_ent}"
+    if a_ent[0]["ls"] != d0 or a_ent[1]["ls"] != d1:
+        return False, f"main/a: version live_start != def:\n{a_ent}"
+    # 诞生版区间止于重定值前（元素写/读在定值点之后——ALLOC_ARRAY 版覆盖它们）
+    if a_ent[0]["le"] != d1 - 1:
+        return False, f"main/a: birth version live_end != def2-1:\n{a_ent}"
+    if a_ent[1]["le"] < d1:
+        return False, f"main/a: STORE version live_end < its def:\n{a_ent}"
+    # b := a（读 a）的指令在 a 诞生版区间内——元素写读窗口被条目覆盖的实证：
+    # a_ent[0] 区间 [d0, d1-1] 必须非空（有读才叫「窗口无覆盖」场景成立）
+    if a_ent[0]["le"] <= a_ent[0]["ls"]:
+        return False, f"main/a: birth version window empty (no reads between birth " \
+                      f"and redef?):\n{a_ent}"
+    # b 的版本 = [ALLOC, STORE]（拷贝声明）；i 同构
+    for nm, expect in (("b", ["ALLOC", "STORE"]), ("i", ["ALLOC", "STORE"])):
+        g = [e["kind"] for e in ent if e["name"] == nm]
+        if g != expect:
+            return False, f"main/{nm}: kinds != {expect}:\n{ent}"
+    # 排除集实证（动态索引写 a[i]=9：被存值 var 的 dest 直写不产生条目——
+    # 该值 var 组内版本数 = producer 数 1，无 STORE_INDEX_VAR 伪造 def）
+    for e in ent:
+        if e["def"] >= 0 and e["kind"] in ("STORE_INDEX_VAR", "STORE_PTR", "DYN_DISPATCH"):
+            return False, f"main: excluded non-def dest op created an entry ({e}):\n{ent}"
+    return True, "memory-object birth versioning OK"
 
 
 def run_smoke() -> tuple:
@@ -523,10 +604,14 @@ def check_regalloc_read_gap_nonfunc0() -> tuple:
 
     rl_rule2_func 曾以局部扫描下标 ii 对照条目表全局坐标（ent_def/ent_live_end
     存 ist+局部），非 func 0 函数（ist > 0）上规则 ② 失明（只漏报不误报）——
-    func 0 上 ii == inst 掩盖缺陷。本用例把 --inject-read-gap 的注入目标推到
-    func 9（sum6）：前导 noop 函数撑大 ist（实测 sum6 ist=49 > ic≈26，读点局部
-    下标永不越过全局 def）——旧实现漏报 rc=0（红），修复（三处比较改用
-    inst := ist + ii）后 rc=1 + func 9 (sum6) 规则 ② 诊断行（绿）。"""
+    func 0 上 ii == inst 掩盖缺陷。本用例要求 --inject-read-gap 注入到非 func 0
+    函数：旧实现漏报 rc=0（红），修复（三处比较改用 inst := ist + ii）后
+    rc=1 + 非 func 0 规则 ② 诊断行（绿）。
+
+    GC 批 2 注记：定值扩权后每函数的 _arena 等首条 def 使 func 0 恒可注入——
+    inject_read_gap 的迭代序改为 1..n-1 再 0（调试钩子，真实路径永不注入），
+    注入恒落非 func 0 函数；注入目标函数不再固定为 sum6（按函数序首个可注入
+    者定，此处为 ist>0 的 stdlib/用户函数）——断言 = func > 0 + rule 2。"""
     src = "fn main()->int{return n0(1,2);}\n" \
           "fn n0(a:int,b:int)->int{return a+b;}\n" \
           "fn n1(a:int,b:int)->int{return a+b;}\n" \
@@ -547,11 +632,11 @@ def check_regalloc_read_gap_nonfunc0() -> tuple:
                   out, re.MULTILINE)
     if not v:
         return False, f"check-regalloc +--inject-read-gap (non-func0): no violation line:\n{out[-500:]}"
-    if v.group(3) != "2" or v.group(2) != "sum6" or int(v.group(1)) == 0:
+    if v.group(3) != "2" or int(v.group(1)) == 0:
         return False, (f"check-regalloc +--inject-read-gap (non-func0): violation not on "
                        f"non-func-0 rule 2 (got func {v.group(1)} ({v.group(2)}) rule "
                        f"{v.group(3)}):\n{out[-500:]}")
-    return True, "read-gap detected on non-func-0 func (rule 2)"
+    return True, f"read-gap detected on non-func-0 func (rule 2, func {v.group(1)} {v.group(2)})"
 
 
 def check_coexist_oob_guard() -> tuple:
@@ -588,7 +673,7 @@ def main() -> int:
         print("[FAIL] missing build/corec")
         return 1
     passed = 0
-    total = 12
+    total = 13
     ok, msg = run_smoke()
     if ok:
         passed += 1
@@ -597,6 +682,10 @@ def main() -> int:
     if ok:
         passed += 1
     print(f"[{'PASS' if ok else 'FAIL'}] entries versioning: {msg}")
+    ok, msg = check_array_birth_versions()
+    if ok:
+        passed += 1
+    print(f"[{'PASS' if ok else 'FAIL'}] array-birth versioning: {msg}")
     ok, msg = check_coexistence()
     if ok:
         passed += 1
