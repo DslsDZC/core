@@ -488,7 +488,10 @@ fn dump_entries_summary() {
 // e1/e2 = 全局条目索引；func_i 保留兼容调用约定（跨函数指令区间天然
 // 不重叠，无需按函数过滤）。判定四条之共存互斥的输入。
 fn entries_coexist(func_i: int, e1: int, e2: int) -> int {
-    if e1 < 0 || e2 < 0 { return 0; }
+    // GC-1（M-5）：无上界校验收口——e1/e2 ≥ g_entry_count 属越界索引
+    // （条目表容量 ≥ 计数：槽后区域读到零填充/缓冲外 → 判定垃圾或崩溃），
+    // 防御性返回 0，风格与访问器约定一致（判定原语化前补）。
+    if e1 < 0 || e2 < 0 || e1 >= g_entry_count || e2 >= g_entry_count { return 0; }
     if e1 == e2 { return 0; }
     s1 := ent_live_start(e1); n1 := ent_live_end(e1);
     s2 := ent_live_start(e2); n2 := ent_live_end(e2);
@@ -570,6 +573,20 @@ fn dump_coexist_summary() {
         print(" home_conf "); println(int_str(coexist_home_conflicts(fi)));
         fi = fi + 1;
     }
+}
+
+// GC-1 测试探针（cir --inject-coexist-oob 载体；真实构建路径永不调用）：
+// entries_coexist 上界防御——e1/e2 = 首/次个越界条目索引（≥ g_entry_count）。
+// 守卫缺失时 accessor 对槽后区域越界读：条目表容量 ≥ 计数、alloc 零初始化
+// → 全零槽 [ls=0, le=0] 与任何区间相交 → 误判共存返回 1（读穿缓冲则崩溃）。
+// 输出 "coexist-oob-guard: <0|1>"，r != 0 → 退出码 1（测试断言 rc + 数值）。
+fn inject_coexist_oob() -> int {
+    e1 := g_entry_count;
+    e2 := g_entry_count + 1;
+    r := entries_coexist(0, e1, e2);
+    print("coexist-oob-guard: "); println(int_str(r));
+    if r != 0 { return 1; }
+    return 0;
 }
 
 // ===== v6 Task 5：判定消费最小闭环（一致性自检——共 specs/

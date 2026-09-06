@@ -430,16 +430,13 @@ fn save_ccr(path: string) -> int {
     // === SYM: funcs（24B 头 + param_ents + var 声明区——v5 func_meta 的
     // instr_start/count 由 root_region span 取代、var_start/count 由声明区
     // 行序游标取代；v5 vars 表并入声明区：行序 = 创建序、前 param_count 个
-    // = 参数。var 行序守卫：全局行 + 各函数块严格相接铺满 g_ir_vars）===
-    tv : ., mut = g_ir_global_count;
-    vfi : ., mut = 0;
-    loop {
-        if vfi >= g_ir_func_count { break; }
-        tv = tv + r64(g_ir_func_var_count, vfi * 8);
-        vfi = vfi + 1;
-    }
-    if tv != g_ir_var_count { return -1; }  // 行序有洞/错位 → 拒绝（防静默错文件）
-
+    // = 参数。var 行序守卫：每函数声明区起点 == 前缀累计（globals 行 + 前
+    // 函数 var 数），块序相接铺满 g_ir_vars）===
+    // GC-4（SYM 评审 M2）：位置级守卫——计数级（Σ == var_count + var_idx == gi）
+    // 总量守恒时察觉不到块错位（声明区左移/右移一格、总量不变 → 文件行序
+    // 静默漂移，ENT var_id 命名空间错位）。失配 = 函数非序发射 → 拒绝；与
+    // loader REG root span 校验（load 侧同域闭环）同风格。
+    vcursor : ., mut = g_ir_global_count;
     buf_write_u32(buf, pos, g_ir_func_count); pos = pos + 4;
     fi : ., mut = 0;
     loop {
@@ -448,6 +445,8 @@ fn save_ccr(path: string) -> int {
         if froot < 0 { return -1; }
         vc := r64(g_ir_func_var_count, fi * 8);
         vs := r64(g_ir_func_var_start, fi * 8);
+        if vs != vcursor { return -1; }  // 声明区起点 ≠ 前缀累计 → 行序错位
+        vcursor = vcursor + vc;
         pc := r64(g_ir_func_param_count, fi * 8);
         if pc > vc { return -1; }
         es := ccr_func_ent_start(fi);
@@ -490,6 +489,7 @@ fn save_ccr(path: string) -> int {
         }
         fi = fi + 1;
     }
+    if vcursor != g_ir_var_count { return -1; }  // 末块未铺满命名空间 → 洞
 
     // === SYM: string constants ===
     buf_write_u32(buf, pos, g_ir_str_const_count); pos = pos + 4;
@@ -667,6 +667,19 @@ fn save_ccr(path: string) -> int {
     written = syscall3(1, fd, buf, tsz);  // write(fd, buf, tsz)
     r2 := syscall3(3, fd, 0, 0);  // close(fd)
     if written != tsz { return -1; }
+    return 0;
+}
+
+// GC-4 测试钩子（corec ccr --inject-var-shift 载体；真实构建路径永不调用）：
+// func0 var 声明区起点左移 1 行（globals ≥ 1 时新块 [vs-1, vs-1+vc0) 恒留在
+// 命名空间内——行首行被 globals 末行顶替、行尾少写 func0 末行）。Σ 计数级
+// 守卫（Σ func var_count == g_ir_var_count，总量守恒）察觉不到；位置级守卫
+// （vs == 前缀累计）必须拒绝 save——模拟未来函数非序发射的静默错位。
+fn inject_var_shift() -> int {
+    if g_ir_func_count < 1 { return 1; }
+    vs := r64(g_ir_func_var_start, 0);
+    if vs < 1 { return 1; }  // 无 globals 行可借位 → 注入前置不满足
+    w64(g_ir_func_var_start, 0, vs - 1);
     return 0;
 }
 
@@ -1078,6 +1091,21 @@ fn load_ccr(data: string, fsize: int) -> int {
         iri_set_tk(ii, tk);
         g_ir_instr_count = ii + 1;
         ii = ii + 1;
+    }
+
+    // GC-3（SYM 评审 M1）：REG root span 对 NOD 空间上界校验——函数指令边界
+    // （root_region span）在 REG 段解析时回填，instr_cnt 直到 NOD 段才可知；
+    // 彼时只查了 rex ≥ ren（未闭合），无上界 → 越界 span 通过后 ELF 发射在
+    // NOD 空间外读指令（缓冲外静默/崩溃）。逐函数校验 instr_start + count
+    // ≤ instr_cnt（含负值拒绝；风格与 ENT ele > instr_cnt 拒绝一致——载荷
+    // 消费前的最后一次可拒绝点）。
+    rfi : ., mut = 0;
+    loop {
+        if rfi >= func_cnt { break; }
+        ris := r64(g_ir_func_instr_start, rfi * 8);
+        ric := r64(g_ir_func_instr_count, rfi * 8);
+        if ris < 0 || ric < 0 || ris + ric > instr_cnt { return -1; }
+        rfi = rfi + 1;
     }
 
     // === ENT: entries（28B each → 内存 24B 表）===

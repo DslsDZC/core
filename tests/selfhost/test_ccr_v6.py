@@ -638,12 +638,108 @@ def test_sym_func_params_blocks():
             pass
 
 
+def test_loader_rejects_root_span_beyond_nod_space():
+    """GC-3（SYM 评审 M1）：REG root span 对 NOD 空间上界校验。
+
+    loader 解析序 REG → NOD：root region（SG_FUNC 行）的 enter/exit 在 REG
+    段解析时就回填成函数指令边界，但 instr_cnt 直到 NOD 段才可知——彼时
+    无上界校验（ENT 有 ele > instr_cnt 拒绝先例）。损坏文件把末函数 root
+    region 的 exit_nod 推出 NOD 空间（exit == instr_cnt + 1）→ corearch 必须
+    拒绝（'invalid .ccr'）。守卫缺失时 loader 静默接受并在缓冲外读指令
+    发射（GC-1 同族数据面缺陷）。"""
+    src = ("fn main() -> int {\n"
+           "    s : ., mut = 0;\n"
+           "    for i in 0..4 { s = s + i; }\n"
+           "    return s;\n"
+           "}\n")
+    ccr_path = os.path.join(BASE, 'build/test_v6_rootspan.ccr')
+    try:
+        os.unlink(ccr_path)
+    except FileNotFoundError:
+        pass
+    try:
+        corec_ccr(src, ccr_path)
+        data = bytearray(read_ccr(ccr_path))
+        v6 = V6File(bytes(data))
+        regs = v6.reg()
+        nod_cnt = len(v6.nod())
+        # 末函数 root region（最后一个 kind==0 行）：span 末 = NOD 空间末
+        # （根行 span 连续铺满 NOD 空间的不变量），exit_nod += 1 → 越界
+        roots = [i for i, r in enumerate(regs) if r[0] == 0]
+        assert roots, f"no SG_FUNC rows in REG: {regs}"
+        rid = roots[-1]
+        assert regs[rid][3] == nod_cnt, \
+            f"last root exit {regs[rid][3]} != nod_count {nod_cnt}: {regs[rid]}"
+        reg_off, _ = v6.segs[5]
+        patch_at = reg_off + 4 + rid * REG_REC + 12  # exit_nod field (+12 in row)
+        struct.pack_into('<i', data, patch_at, regs[rid][3] + 1)
+        bad_path = ccr_path + '.oob'
+        with open(bad_path, 'wb') as fh:
+            fh.write(bytes(data))
+        r = subprocess.run([COREARCH, bad_path, '--elf', '--static',
+                            '-o', os.path.join(BASE, 'build/test_v6_rootspan.out')],
+                           capture_output=True, text=True, cwd=BASE, timeout=60)
+        assert r.returncode != 0, \
+            f"corearch accepted root span beyond NOD space: rc={r.returncode} {r.stdout!r}"
+        assert 'invalid' in (r.stdout + r.stderr), \
+            f"expected invalid-.ccr error, got: {r.stdout!r} {r.stderr!r}"
+    finally:
+        for p in (ccr_path, ccr_path + '.oob',
+                  os.path.join(BASE, 'build/test_v6_rootspan.out')):
+            try:
+                os.unlink(p)
+            except FileNotFoundError:
+                pass
+
+
+def test_save_rejects_var_block_misalignment():
+    """GC-4（SYM 评审 M2）：save var 行序位置级守卫。
+
+    计数级守卫（Σ func var_count == var_count + var_idx==gi）总量守恒时察觉
+    不到块错位——func0 声明区起点左移 1（--inject-var-shift 测试钩子，真实
+    构建路径永不注入）后 Σ 不变，旧实现静默落盘行序错位的文件（声明区/
+    var 命名空间漂移）。位置级守卫（vs == 前缀累计）必须拒绝：rc != 0、
+    不落盘。"""
+    src = ("fn add(a: int, b: int) -> int { return a + b; }\n"
+           "fn main() -> int {\n"
+           "    x := 1;\n"
+           "    return x + 1;\n"
+           "}\n")
+    ccr_path = os.path.join(BASE, 'build/test_v6_varshift.ccr')
+    with tempfile.NamedTemporaryFile('w', suffix='.cr', delete=False) as f:
+        f.write(src)
+        path = f.name
+    try:
+        os.unlink(ccr_path)
+    except FileNotFoundError:
+        pass
+    try:
+        r = subprocess.run([COREC, 'ccr', path, '-o', ccr_path,
+                            '--inject-var-shift'],
+                           capture_output=True, text=True, cwd=BASE, timeout=120)
+        out = r.stdout + r.stderr
+        assert r.returncode != 0, \
+            f"save accepted misaligned var block (rc=0):\n{out}"
+        assert 'inject-var-shift: precondition' not in out, \
+            f"hook precondition failed — test not exercising the guard:\n{out}"
+        assert not os.path.exists(ccr_path), \
+            "save wrote a .ccr file despite rejecting"
+    finally:
+        os.unlink(path)
+        try:
+            os.unlink(ccr_path)
+        except FileNotFoundError:
+            pass
+
+
 if __name__ == '__main__':
     tests = [test_header_segment_table_and_walk,
              test_ent_record_conversion_matches_dump,
              test_sym_reg_target_shape,
              test_sym_func_params_blocks,
              test_loader_rejects_non_v6_version,
+             test_loader_rejects_root_span_beyond_nod_space,
+             test_save_rejects_var_block_misalignment,
              test_ccr_v6_roundtrip_elf]
     failed = 0
     for t in tests:

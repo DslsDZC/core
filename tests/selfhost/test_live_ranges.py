@@ -554,12 +554,41 @@ def check_regalloc_read_gap_nonfunc0() -> tuple:
     return True, "read-gap detected on non-func-0 func (rule 2)"
 
 
+def check_coexist_oob_guard() -> tuple:
+    """GC-1（M-5）上界防御：entries_coexist 对越界条目索引（e1/e2 ≥
+    g_entry_count）必须返回 0——不越界读。守卫缺失时槽后区域是分配器零
+    填充（rt.s alloc zero-init；条目表容量 ≥ 计数），全零条目区间 [0,0]
+    与任何区间相交 → 误判共存返回 1（或读到缓冲外崩溃）。
+
+    --inject-coexist-oob 探针通道：输出 "coexist-oob-guard: <r>"，
+    r != 0（探针自检失败）→ 退出码 1。与 dump-coexist 摘要同源同前置
+    （compute_live_ranges），真实构建路径永不注入。"""
+    src = "fn main()->int{a:=1;b:=2;return a+b;}\n"
+    with tempfile.NamedTemporaryFile("w", suffix=".cr", delete=False) as f:
+        f.write(src)
+        path = f.name
+    try:
+        r = subprocess.run([str(COREC), "cir", path, "--inject-coexist-oob"],
+                           capture_output=True, text=True, cwd=BASE, timeout=120)
+        out = r.stdout + r.stderr
+    finally:
+        os.unlink(path)
+    if r.returncode != 0:
+        return False, f"cir --inject-coexist-oob rc={r.returncode}\n{out[-500:]}"
+    m = re.search(r"^coexist-oob-guard: (\d+)$", out, re.MULTILINE)
+    if not m:
+        return False, f"no coexist-oob-guard line:\n{out[-500:]}"
+    if m.group(1) != "0":
+        return False, f"coexist-oob-guard: OOB probe returned {m.group(1)}, want 0:\n{out[-500:]}"
+    return True, "coexist OOB guard OK"
+
+
 def main() -> int:
     if not COREC.exists():
         print("[FAIL] missing build/corec")
         return 1
     passed = 0
-    total = 11
+    total = 12
     ok, msg = run_smoke()
     if ok:
         passed += 1
@@ -572,6 +601,10 @@ def main() -> int:
     if ok:
         passed += 1
     print(f"[{'PASS' if ok else 'FAIL'}] coexistence: {msg}")
+    ok, msg = check_coexist_oob_guard()
+    if ok:
+        passed += 1
+    print(f"[{'PASS' if ok else 'FAIL'}] coexist OOB guard: {msg}")
     ok, msg = check_regalloc_consistency()
     if ok:
         passed += 1

@@ -202,6 +202,8 @@ fn corec_main() -> int {
     cli_flag_bool("inject-home-conflict", "", "Hidden debug: inject coexisting entries onto same home slot, then verify (Task 5 test hook)");
     cli_flag_bool("inject-reg-conflict", "", "Hidden debug: inject fake var->reg pair colliding with a real one, then verify (Task 5 test hook)");
     cli_flag_bool("inject-read-gap", "", "Hidden debug: truncate last version interval to def point, then verify (Task 5 test hook)");
+    cli_flag_bool("inject-coexist-oob", "", "Hidden debug: probe entries_coexist with OOB indices (GC-1 test hook)");
+    cli_flag_bool("inject-var-shift", "", "Hidden debug: shift func0 var decl block left by 1, then save (GC-4 test hook)");
 
     if cli_parse() != 0 { return 1; }
     // Parse -O flag (default O1)
@@ -504,6 +506,14 @@ fn corec_main() -> int {
             dump_entries_summary();
             return 0;
         }
+        // Hidden debug (--inject-coexist-oob): GC-1 upper-bound probe — entries_coexist
+        // called with indices >= g_entry_count must answer 0 (guard) instead of reading
+        // past the table (zero-filled slack reads as overlapping [0,0] intervals → 1).
+        // Same data/precondition as dump-coexist; real build paths never inject.
+        if cli_has("inject-coexist-oob") != 0 {
+            compute_live_ranges();
+            return inject_coexist_oob();
+        }
         // Hidden debug (--dump-coexist): coexistence summary — same data/precondition
         // as dump-entries; flags are mutually exclusive (dump-entries wins if both given).
         if cli_has("dump-coexist") != 0 {
@@ -590,6 +600,16 @@ fn corec_main() -> int {
         out := cli_get("output");
         if str_len(out) == 0 {
             out = default_out_path(src_path, ".ccr");
+        }
+        // Hidden debug (--inject-var-shift): GC-4 test hook — shift func0's var decl
+        // block start left by 1 (count-level guards can't see it; the position-level
+        // guard in save_ccr must reject). Real build paths never inject.
+        if cli_has("inject-var-shift") != 0 {
+            if inject_var_shift() != 0 {
+                print("error: inject-var-shift: precondition failed (func0 block start < 1)");
+                println("");
+                return 1;
+            }
         }
         r := save_ccr(out);
         if r != 0 {
