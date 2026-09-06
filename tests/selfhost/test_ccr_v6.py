@@ -656,6 +656,88 @@ def test_sym_func_params_blocks():
             pass
 
 
+def test_sym_param_ents_redefined_param():
+    """GC 批 3（SYM 评审 M3）：重定值参数 param_ents=-1 定向测试。
+
+    重定值参数（函数体对参数赋值，`n = n + 1`）无「入参版本」条目：参数槽 =
+    调用方传入（不发射 IR_ALLOC 初定值），compute_entries 尾部 def=-1 补条
+    pass 条件 prev[lv] < 0（从未定值）不满足 → 函数条目块内参数只有 def'd
+    版本条目 → save 侧 param_ents 扫描（ccr_io.cr：行 vs+pi 的 def=-1 条目）
+    落空 → 落盘 -1。对照 = 只读参数（identity/n）：尾部补条成立 → param_ents
+    = def=-1 条目 id。语料真实存在（stdlib 2 例）；此前无定向测试（评审 M3）。
+    行为记录非修复——入参版本条目建模 = 后续若判定②扩权需要（注记同步见
+    regalloc-consistency.cr 已知缺口）。"""
+    src = ("fn identity(n: int) -> int { return n; }\n"
+           "fn bump(n: int) -> int {\n"
+           "    n = n + 1;\n"
+           "    return n;\n"
+           "}\n"
+           "fn main() -> int { return bump(41); }\n")
+    ccr_path = os.path.join(BASE, 'build/test_v6_paraments.ccr')
+    try:
+        os.unlink(ccr_path)
+    except FileNotFoundError:
+        pass
+    try:
+        corec_ccr(src, ccr_path)
+        v6 = V6File(read_ccr(ccr_path))
+        sym = v6.sym_parse()
+        funcs = sym['funcs']
+        strs = v6.str_table()
+        ents = v6.ent()
+
+        def by_name(nm):
+            hits = [f for f in funcs if strs[f['name']] == nm]
+            assert len(hits) == 1, f"expected exactly one func {nm}, got {len(hits)}"
+            return funcs.index(hits[0])
+
+        ii = by_name('identity')
+        bi = by_name('bump')
+
+        # 参数 var 行 = 函数 var 声明区行首（globals 行 + 前缀 var_count 累计——
+        # 声明区跨函数相接铺满命名空间的落盘不变量）
+        def pvar_of(fi):
+            return len(sym['globals']) + sum(f['var_count'] for f in funcs[:fi])
+
+        # 只读参数（identity/n）：def=-1 入参条目存在 → param_ents = 条目 id
+        ip = pvar_of(ii)
+        iblk = ents[funcs[ii]['first_ent']:funcs[ii]['last_ent'] + 1]
+        pid = funcs[ii]['param_ents'][0]
+        assert pid >= 0, f"identity/n: param_ents={funcs[ii]['param_ents']} (want entry id)"
+        assert funcs[ii]['first_ent'] <= pid <= funcs[ii]['last_ent'], \
+            f"identity/n: param entry {pid} outside block {funcs[ii]['first_ent']}..{funcs[ii]['last_ent']}"
+        assert ents[pid][0] == ip and ents[pid][2] == -1, \
+            f"identity/n: param_ents points at wrong entry: {ents[pid]}"
+        no_defs = [en for en in iblk if en[0] == ip and en[2] == -1]
+        assert len(no_defs) == 1, f"identity/n: def=-1 entries != 1: {no_defs}"
+        # 重定值参数（bump/n）：全 def'd 条目、无 def=-1 → param_ents == -1。
+        # 与「未引用参数」同形 -1（ccr_io.cr 注记）区分：断言条目块内含该 var
+        # 的 def'd 条目（bump/n 是被引用的重定值路径，不是无条目情形）
+        bp = pvar_of(bi)
+        bblk = ents[funcs[bi]['first_ent']:funcs[bi]['last_ent'] + 1]
+        assert funcs[bi]['param_ents'] == [-1], \
+            f"bump/n: param_ents={funcs[bi]['param_ents']} (want [-1])"
+        bpar = [en for en in bblk if en[0] == bp]
+        assert bpar and all(en[2] >= 0 for en in bpar), \
+            f"bump/n: expected def'd entries only, got {bpar}"
+        # dump-entries 通道对照（内存条目表 = save 序列化源头）：
+        # identity/n 尾部补条单 def=-1 条目；bump/n 重定值 STORE 版无 def=-1
+        rc, out = dump_entries(src)
+        assert rc == 0, f"dump-entries rc={rc}\n{out[-500:]}"
+        blocks = parse_entry_blocks(out)
+        idn = [e for e in blocks['identity'] if e['name'] == 'n']
+        assert len(idn) == 1 and idn[0]['def'] == -1 and idn[0]['kind'] == '-', \
+            f"identity/n: expected single def=-1 entry, got {idn}"
+        bnp = [e for e in blocks['bump'] if e['name'] == 'n']
+        assert len(bnp) == 1 and bnp[0]['def'] >= 0 and bnp[0]['kind'] == 'STORE', \
+            f"bump/n: expected single STORE def'd entry, got {bnp}"
+    finally:
+        try:
+            os.unlink(ccr_path)
+        except FileNotFoundError:
+            pass
+
+
 def test_loader_rejects_root_span_beyond_nod_space():
     """GC-3（SYM 评审 M1）：REG root span 对 NOD 空间上界校验。
 
@@ -755,6 +837,7 @@ if __name__ == '__main__':
              test_ent_record_conversion_matches_dump,
              test_sym_reg_target_shape,
              test_sym_func_params_blocks,
+             test_sym_param_ents_redefined_param,
              test_loader_rejects_non_v6_version,
              test_loader_rejects_root_span_beyond_nod_space,
              test_save_rejects_var_block_misalignment,

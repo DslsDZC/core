@@ -121,6 +121,10 @@
 
 输入：图（NOD + 边 + REG）。步骤：
 1. 定值点收集：扫 NOD，dest ≥ 0 的节点 = 该变量的定值点 → 版本切分（def_nod、version）
+   ——两处 carve-out（规则全文与出处 = §3.4「版本化语义」，GC 批 2 勘定）：
+   ① IR_STORE 单列：定值目标在 s1（ρ(s1):=ρ(s2)，dest 恒 -1）——不走 dest 列；
+   ② 三 op 排除：STORE_INDEX_VAR/STORE_PTR/DYN_DISPATCH 的 dest ≥ 0 **非**定值
+   （值 = 被存值源/基址标注/占位）——不产版本。①/② 之外 dest ≥ 0 方为定值点
 2. 活区间：图坐标扫描（同 `alloc_registers` 的 [first_ref, last_ref] 逻辑，坐标单位 = NOD id）——版本 k 区间 = [def_k, def_{k+1}) 与 [def_k, last_ref+1) 的截断
 3. 参数/全局条目：def_nod = -1，区间 = [函数首节点, last_ref+1)
 

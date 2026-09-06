@@ -49,7 +49,12 @@
 //   - 判定/条目表与分配器同为文字区间模型（非 CFG 活性）——RegionCheck 图层
 //     接线时健全化（衔接决策 b 预留；行为语义锚兜底检测）
 //   - pass_stack_share 同文字模型理论风险（预存，无复现）
-//   - param_ents=-1（重定值参数无入参版本条目）= Task 2 数据面既有缺口
+//   - param_ents=-1（重定值参数无入参版本条目：尾部 def=-1 补条 pass 条件
+//     prev[lv]<0 = 从未定值才补，重定值参数全 def'd 条目 → 无入参版本条目；
+//     未引用参数同形——save 侧语义见 ccr_io.cr param_ents 扫描）= Task 2 数据面
+//     既有缺口（定向测试：tests/selfhost/test_ccr_v6.py::
+//     test_sym_param_ents_redefined_param——行为记录非修复；入参版本条目建模
+//     = 后续若判定②扩权需要）
 //   - M-5：entries_coexist 无上界校验（判定原语化前补）
 
 // 参考实现（唯一真源，勿在此复制代码）：
